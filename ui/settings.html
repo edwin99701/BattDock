@@ -478,7 +478,7 @@
     color: var(--text-secondary);
   }
 
-  /* 内嵌文档查看弹层 */
+  /* 内嵌可视化弹窗（支持设备清单 / 开源许可） */
   .modal-mask {
     position: fixed;
     inset: 0;
@@ -487,7 +487,7 @@
     display: none;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: 22px;
   }
 
   .modal-mask.open { display: flex; }
@@ -495,34 +495,193 @@
   .modal-box {
     width: 100%;
     max-width: 680px;
-    max-height: 82vh;
+    max-height: 84vh;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
     border-radius: 12px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.24);
   }
 
   .modal-head {
-    padding: 12px 16px;
+    padding: 13px 18px;
     border-bottom: 1px solid var(--border-hairline);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
+  }
+
+  .modal-title-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .modal-sub {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+  }
+
+  .modal-toolbar {
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border-hairline);
+    background: var(--bg-subpanel);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .filter-pills {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .filter-pill {
+    border: 1px solid var(--border-input);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.14s ease;
+  }
+
+  .filter-pill:hover {
+    color: var(--text-primary);
+    border-color: var(--brand);
+  }
+
+  .filter-pill.active {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #FFFFFF;
   }
 
   .modal-body {
     flex: 1;
     overflow-y: auto;
-    padding: 14px 18px;
-    font-family: Consolas, "Microsoft YaHei UI", monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
+    padding: 14px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .sup-card {
+    border: 1px solid var(--border-card);
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: var(--bg-subpanel);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sup-card.verified {
+    border-color: rgba(34, 197, 94, 0.35);
+    background: rgba(34, 197, 94, 0.06);
+  }
+
+  .sup-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .sup-brand {
+    font-size: 14px;
+    font-weight: 600;
     color: var(--text-primary);
-    user-select: text;
-    -webkit-user-select: text;
+  }
+
+  .sup-status {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+  }
+
+  .sup-status.verified {
+    background: rgba(34, 197, 94, 0.16);
+    color: #15803D;
+  }
+
+  .sup-status.ready {
+    background: rgba(37, 99, 235, 0.12);
+    color: var(--brand-text);
+  }
+
+  .sup-status.unsupported {
+    background: rgba(148, 163, 184, 0.18);
+    color: var(--text-secondary);
+  }
+
+  :root[data-theme="dark"] .sup-status.verified { color: #86EFAC; }
+
+  .sup-models {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .sup-tags {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+
+  .sup-tag {
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 6px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-hairline);
+    color: var(--text-secondary);
+  }
+
+  .lic-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-subpanel);
+    border: 1px solid var(--border-hairline);
+    border-radius: 8px;
+    padding: 10px 12px;
+    line-height: 1.55;
+  }
+
+  .lic-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .lic-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    border: 1px solid var(--border-hairline);
+    background: var(--bg-subpanel);
   }
 </style>
 </head>
@@ -531,8 +690,20 @@
   <div id="docModal" class="modal-mask" onclick="if(event.target===this)closeModal()">
     <div class="modal-box">
       <div class="modal-head">
-        <strong id="modalTitle">文档预览</strong>
+        <div class="modal-title-wrap">
+          <div id="modalTitle" class="modal-title">支持设备清单</div>
+          <div id="modalSub" class="modal-sub"></div>
+        </div>
         <button class="btn btn-sm" onclick="closeModal()">关闭</button>
+      </div>
+      <div id="modalToolbar" class="modal-toolbar" style="display:none">
+        <div class="filter-pills" id="supFilterPills">
+          <button class="filter-pill active" data-f="all" onclick="setSupFilter('all')">全部</button>
+          <button class="filter-pill" data-f="verified" onclick="setSupFilter('verified')">已实机验证</button>
+          <button class="filter-pill" data-f="ready" onclick="setSupFilter('ready')">协议已内置 · 待实测</button>
+          <button class="filter-pill" data-f="unsupported" onclick="setSupFilter('unsupported')">暂不支持</button>
+        </div>
+        <input id="supSearch" class="input" style="width:170px;height:28px;font-size:12px" placeholder="搜索品牌或型号..." oninput="renderSupportedModal()" />
       </div>
       <div id="modalContent" class="modal-body"></div>
     </div>
@@ -953,12 +1124,12 @@
               <button class="btn btn-sm" onclick="showToast('当前为本地私有筹备版 v2.1.0，尚未配置公开更新源')">查看说明</button>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">支持设备清单</span><span class="row-hint">明确区分已真机验证、协议已实现待实测与暂不支持</span></div>
-              <button class="btn btn-sm" onclick="openDoc('SUPPORTED_DEVICES.md')">查看清单</button>
+              <div class="row-text"><span class="row-label">支持设备清单</span><span class="row-hint">查看已支持的外设品牌、型号与实机验证状态</span></div>
+              <button class="btn btn-sm" onclick="openSupportedDevices()">查看清单</button>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">开源许可证与第三方许可说明</span><span class="row-hint">MIT 协议参考声明与 Python 第三方运行库许可证</span></div>
-              <button class="btn btn-sm" onclick="openDoc('THIRD_PARTY_LICENSES.md')">查看许可</button>
+              <div class="row-text"><span class="row-label">开源组件与许可声明</span><span class="row-hint">第三方运行库与参考协议的合规说明</span></div>
+              <button class="btn btn-sm" onclick="openLicensesModal()">查看许可</button>
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">诊断日志导出</span><span class="row-hint">导出脱敏 JSON 报告（不含隐私路径与序列号），便于排查兼容问题</span></div>
@@ -1216,12 +1387,154 @@
     window.pywebview?.api?.move_device_order(did, dir).then(applyState);
   }
 
-  function openDoc(name) {
-    window.pywebview?.api?.read_doc_file(name).then((res) => {
-      document.getElementById("modalTitle").textContent = res.title || name;
-      document.getElementById("modalContent").textContent = res.content || "";
-      document.getElementById("docModal").classList.add("open");
+  const SUPPORTED_CATALOG = [
+    {
+      brand: "VGN 蜻蜓（已实机验证）",
+      status: "verified",
+      statusText: "已实机验证",
+      models: "VGN Dragonfly F2 Pro Max",
+      tags: ["无线鼠标", "2.4GHz 无线", "USB 有线", "支持电压读取"],
+    },
+    {
+      brand: "VGN / VXE / ATK / 迈从 / LAMZU",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "VGN F2 Master+、F1 Pro / MOBA、Dragonfly 4K、VXE R1 Pro Max / SE+、ATK F1 / X1、迈从 A5 / G3 / A7 / L7 / K7 等",
+      tags: ["无线鼠标", "2.4GHz 无线", "USB 有线"],
+    },
+    {
+      brand: "Logitech 罗技",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "G Pro X Superlight / Superlight 2、G502 / G304 / G903、MX Master / Anywhere / Keys，以及 G533 / G535 / G633 / G733 / G935 / G PRO X 无线耳机",
+      tags: ["鼠标 / 键盘 / 耳机", "LIGHTSPEED / Unifying / Bolt", "USB 有线"],
+    },
+    {
+      brand: "Razer 雷蛇",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "毒蝰 Viper V2 Pro / V3 Pro / Ultimate、炼狱蝰蛇 DeathAdder V2 / V3 Pro、巴塞利斯蛇 Basilisk V3 Pro、八岐大蛇 Orochi V2、黑寡妇 V3 Pro 等",
+      tags: ["鼠标 / 键盘", "HyperSpeed 2.4GHz", "USB 有线"],
+    },
+    {
+      brand: "SteelSeries 赛睿",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "Aerox 3 / 5 / 9、Prime、Rival 3 / 650 鼠标；寒冰 Arctis 7 / 7+ / 9、Arctis Nova 5 / 7 / Pro、GameBuds 耳机",
+      tags: ["鼠标 / 耳机 / 耳塞", "2.4GHz 接收器", "基站"],
+    },
+    {
+      brand: "Corsair 海盗船",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "SLIPSTREAM 系列无线鼠标与键盘（Dark Core / Harpoon / Katar / M75 / Sabre / K65 等）；Void / HS70 / HS80 / Virtuoso 无线耳机",
+      tags: ["鼠标 / 键盘 / 耳机", "SLIPSTREAM 2.4GHz", "USB 有线"],
+    },
+    {
+      brand: "HyperX 极度未知",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "飓风 Cloud Alpha / Cloud II / Cloud III / Cloud II Core / Stinger 2 无线耳机；旋火 Pulsefire Haste / Haste 2 / Dart 无线鼠标",
+      tags: ["无线耳机 / 鼠标", "2.4GHz 无线"],
+    },
+    {
+      brand: "ASUS ROG / TUF 华硕",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "龙鳞 Harpe Ace / II Ace、月刃 Keris / AimPoint、战刃 Gladius II / III、战刃 Chakram X、TUF M4、夜魔 Azoth / 魔导士 Falchion、Omni 接收器；ROG Pelta / Delta II / Cetra / Strix Go 耳机",
+      tags: ["鼠标 / 键盘 / 耳机", "2.4GHz / Omni 接收器", "Cetra 支持左/右/盒电量"],
+    },
+    {
+      brand: "Sony 索尼 INZONE",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "Sony INZONE H5、INZONE H9 II 无线耳机；INZONE Buds 真无线耳塞",
+      tags: ["耳机 / 耳塞", "2.4GHz 接收器", "Buds 支持左/右/盒电量"],
+    },
+    {
+      brand: "Apple AirPods / Beats 与标准蓝牙外设",
+      status: "ready",
+      statusText: "协议已内置 · 待实测",
+      models: "AirPods 1/2/3/4、AirPods Pro 1/2/3、AirPods Max、Beats 全系；以及所有支持 Windows 标准蓝牙电量服务的蓝牙鼠标、耳机与键盘",
+      tags: ["蓝牙外设", "左/右/盒独立电量", "需电脑具备蓝牙模块"],
+    },
+    {
+      brand: "暂不支持的设备类型",
+      status: "unsupported",
+      statusText: "暂不支持",
+      models: "使用非公开加密私有协议的部分旧款雷柏 2.4G 鼠标；以及仅通过闭源内核驱动通信、不向系统开放标准 HID 或蓝牙接口的极少数外设。",
+      tags: ["安全策略：不盲写未知设备", "不安装第三方驱动"],
+    },
+  ];
+
+  const LICENSE_ITEMS = [
+    { name: "BatteryTray / BatteryMonitor", role: "参考其整理的公开硬件只读报文格式（本项目为独立 Python 实现）", lic: "MIT" },
+    { name: "hidapi", role: "免驱 USB HID 外设只读通信库", lic: "BSD-3-Clause" },
+    { name: "pywebview", role: "基于 Windows Edge WebView2 的轻量桌面窗口", lic: "BSD-3-Clause" },
+    { name: "pystray", role: "Windows 系统托盘图标、右键菜单与系统通知", lic: "LGPL-3.0" },
+    { name: "Pillow", role: "高清透明矢量电池图标渲染", lic: "MIT-CMU" },
+    { name: "pythonnet / clr-loader", role: "原生 WinForms 悬浮窗与极速无焦点低电量提醒弹窗", lic: "MIT" },
+  ];
+
+  let supFilter = "all";
+
+  function setSupFilter(f) {
+    supFilter = f;
+    document.querySelectorAll("#supFilterPills .filter-pill").forEach((b) => b.classList.toggle("active", b.dataset.f === f));
+    renderSupportedModal();
+  }
+
+  function renderSupportedModal() {
+    const q = (document.getElementById("supSearch").value || "").trim().toLowerCase();
+    const list = SUPPORTED_CATALOG.filter((item) => {
+      if (supFilter !== "all" && item.status !== supFilter) return false;
+      if (!q) return true;
+      return (item.brand + " " + item.models + " " + item.tags.join(" ")).toLowerCase().includes(q);
     });
+    const body = document.getElementById("modalContent");
+    if (list.length === 0) {
+      body.innerHTML = `<div style="padding:28px 0;text-align:center;color:var(--text-secondary);font-size:13px">没有找到匹配「${esc(q)}」的品牌或型号。您可以通过“导出诊断”反馈新设备信息。</div>`;
+      return;
+    }
+    body.innerHTML = list.map((item) => `
+      <div class="sup-card ${item.status === "verified" ? "verified" : ""}">
+        <div class="sup-card-top">
+          <span class="sup-brand">${esc(item.brand)}</span>
+          <span class="sup-status ${item.status}">${esc(item.statusText)}</span>
+        </div>
+        <div class="sup-models">${esc(item.models)}</div>
+        <div class="sup-tags">${item.tags.map((t) => `<span class="sup-tag">${esc(t)}</span>`).join("")}</div>
+      </div>`).join("");
+  }
+
+  function openSupportedDevices() {
+    document.getElementById("modalTitle").textContent = "支持设备清单";
+    document.getElementById("modalSub").textContent = "绿色表示已在真实硬件验证通过，蓝色表示已内置只读协议待对应真机实测";
+    document.getElementById("modalToolbar").style.display = "flex";
+    document.getElementById("supSearch").value = "";
+    setSupFilter("all");
+    document.getElementById("docModal").classList.add("open");
+  }
+
+  function openLicensesModal() {
+    document.getElementById("modalTitle").textContent = "开源组件与许可声明";
+    document.getElementById("modalSub").textContent = "遵循开源协议要求保留的组件与协议声明（未复制 GPL 或无许可源码）";
+    document.getElementById("modalToolbar").style.display = "none";
+    document.getElementById("modalContent").innerHTML = `
+      <div class="lic-note">
+        本软件所有品牌协议适配器均为独立 Python 实现，遵循开源合规要求，未复制 GPL-3.0 或无明确许可证仓库的源代码。以下为软件依赖的开源运行库及协议参考声明：
+      </div>
+      <div class="lic-grid">
+        ${LICENSE_ITEMS.map((it) => `
+          <div class="lic-item">
+            <div style="min-width:0">
+              <div style="font-weight:600;font-size:13px;color:var(--text-primary)">${esc(it.name)}</div>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${esc(it.role)}</div>
+            </div>
+            <span class="sup-tag" style="flex-shrink:0;font-weight:600">${esc(it.lic)}</span>
+          </div>`).join("")}
+      </div>`;
+    document.getElementById("docModal").classList.add("open");
   }
 
   function closeModal() {
