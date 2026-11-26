@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.6.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.6.1-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
 </a>
 
 </div>
@@ -115,18 +115,20 @@
 - **操作系统**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时，无需安装 Python）。
 
 ### 发布产物说明
-前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载：
-- **`BattDock-v2.6.0-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
-- **`BattDock-v2.6.0-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
+前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载（国内用户可直接点击下方国内加速直链）：
+- **`BattDock-v2.6.1-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Setup.exe) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Setup.exe)
+- **`BattDock-v2.6.1-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Windows-x64-Portable.zip) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Windows-x64-Portable.zip)
 - **`SHA256SUMS.txt`**：所有发布文件的 SHA-256 校验值清单，用于核对文件完整性。
 - **`update-summary.json`**：供软件内部直接读取的简明中文更新摘要。
-- **`VGNMouseBattery-v2.6.0-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
+- **`VGNMouseBattery-v2.6.1-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
 
-> **升级说明**：已安装 `v2.4.0`–`v2.5.2` 的用户可直接点击软件内「立即更新」一键自动覆盖并自动重启；`v2.3.0` 及更早版本请下载运行 **`BattDock-v2.6.0-Setup.exe`**（或便携版覆盖一次，个人配置保存在 `%LOCALAPPDATA%\BattDock\config.json` 完整保留）。
+> **升级说明**：软件内默认已开启**国内加速自动优选**（支持多节点测速择优、失败自动切源、自定义 HTTPS 加速前缀与 SHA-256 强制校验），可在「设置 → 关于软件 → 更新下载线路」随时切换。已安装 `v2.4.0`–`v2.6.0` 的用户可直接点击软件内「立即更新」一键升级。
 
 ### 首次启动与在线更新
 1. **开机静默自启**：在安装向导或「设置 → 常规设置」中开启开机自启，默认以 `--background` 静默驻留系统托盘，不弹出窗口。
-2. **在线检查与自动升级**：在「设置 → 关于软件」或托盘右键点击「检查更新」；发现新版本后点击「立即更新」即可自动下载、校验 SHA-256 完整性并自动重启完成升级。
+2. **国内加速在线更新**：在「设置 → 关于软件」可切换下载线路（默认「自动优选（国内加速）」）；点击「检查更新 → 立即更新」后自动择优高速下载、实时显示当前线路与速率、强制校验 SHA-256 完整性并自动重启完成升级。
 3. **配置保存与卸载**：个人配置保存于 `%LOCALAPPDATA%\BattDock\config.json`（旧版 `VGNMouseBattery` 配置首次启动时自动无损迁移）；安装版可在 Windows「设置 → 应用」中一键卸载，便携版可运行目录内的 `卸载BattDock.bat`。
 
 ### 常见问题与排查
@@ -144,7 +146,7 @@
 # 1. 安装依赖（Python 3.12+）
 pip install -r requirements.txt
 
-# 2. 运行全部单元测试（36 项）
+# 2. 运行全部单元测试（37 项）
 python -m unittest discover -s tests -v
 
 # 3. 源码启动 BattDock

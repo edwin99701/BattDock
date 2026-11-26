@@ -107,6 +107,8 @@ class AppConfig:
     auto_monitor: bool = True
     poll_interval_sec: int = 25
     auto_check_updates: bool = True
+    update_source: str = "auto"  # auto | cn | github | custom
+    update_custom_mirror: str = ""
     debug_logging: bool = False
 
     # 电量提醒（全局）

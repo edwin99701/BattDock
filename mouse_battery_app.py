@@ -1578,6 +1578,13 @@ class MouseBatteryApp:
             if key in patch and isinstance(patch[key], str):
                 setattr(self.cfg, key, patch[key])
 
+        if "update_source" in patch and isinstance(patch["update_source"], str):
+            val = patch["update_source"].strip().lower()
+            if val in ("auto", "cn", "github", "custom"):
+                self.cfg.update_source = val
+        if "update_custom_mirror" in patch and isinstance(patch["update_custom_mirror"], str):
+            self.cfg.update_custom_mirror = patch["update_custom_mirror"].strip()[:240]
+
         if "tier_rules" in patch and isinstance(patch["tier_rules"], list):
             cleaned_rules = []
             for r in patch["tier_rules"][:3]:
@@ -1766,7 +1773,11 @@ class MouseBatteryApp:
             self._push_state_to_ui()
 
         def _worker() -> None:
-            res = check_for_update(APP_VERSION)
+            res = check_for_update(
+                APP_VERSION,
+                update_source=self.cfg.update_source,
+                custom_mirror=self.cfg.update_custom_mirror,
+            )
             now_str = datetime.now().strftime("%H:%M")
             if not res.ok:
                 if silent:
@@ -1867,16 +1878,38 @@ class MouseBatteryApp:
             zip_path = work_root / asset_name
             extract_dir = work_root / "extracted"
             last_push = [0.0, -1]
+            speed_state = [time.monotonic(), 0, ""]
+
+            def _on_source(label: str) -> None:
+                speed_state[0] = time.monotonic()
+                speed_state[1] = 0
+                speed_state[2] = label
+                self._set_update_state(
+                    status="downloading",
+                    progress=0,
+                    message=f"正在连接{label}下载更新…",
+                )
 
             def _on_prog(done: int, total: int) -> None:
                 now = time.monotonic()
                 pct = int(min(99, round(done * 100 / total))) if total > 0 else 0
-                if pct != last_push[1] and (now - last_push[0] >= 0.2 or pct >= 99):
+                dt = now - speed_state[0]
+                if pct != last_push[1] and (now - last_push[0] >= 0.25 or pct >= 99):
+                    speed_bps = (done - speed_state[1]) / max(dt, 0.05) if dt > 0.05 else 0.0
+                    speed_state[0] = now
+                    speed_state[1] = done
                     last_push[0] = now
                     last_push[1] = pct
                     done_mb = round(done / (1024 * 1024), 1)
                     tot_mb = round(total / (1024 * 1024), 1) if total > 0 else 0.0
-                    msg = f"正在下载更新… {pct}%（{done_mb:.1f} / {tot_mb:.1f} MB）" if tot_mb > 0 else f"正在下载更新…（{done_mb:.1f} MB）"
+                    if speed_bps >= 1024 * 1024:
+                        spd = f" · {speed_bps / (1024 * 1024):.1f} MB/s"
+                    elif speed_bps >= 1024:
+                        spd = f" · {speed_bps / 1024:.0f} KB/s"
+                    else:
+                        spd = ""
+                    src_prefix = f"通过{speed_state[2]}下载…" if speed_state[2] else "正在下载更新…"
+                    msg = f"{src_prefix} {pct}%（{done_mb:.1f} / {tot_mb:.1f} MB{spd}）" if tot_mb > 0 else f"{src_prefix}（{done_mb:.1f} MB{spd}）"
                     self._set_update_state(
                         status="downloading",
                         progress=pct,
@@ -1886,16 +1919,27 @@ class MouseBatteryApp:
                     )
 
             try:
+                upd_src = self.cfg.update_source
+                upd_mirror = self.cfg.update_custom_mirror
                 download_update_asset(
                     asset_url=asset_url,
                     dest_zip=zip_path,
                     expected_size=asset_size,
                     on_progress=_on_prog,
                     cancel_event=self._update_cancel,
+                    update_source=upd_src,
+                    custom_mirror=upd_mirror,
+                    on_source_change=_on_source,
                 )
-                self._set_update_state(status="verifying", progress=100, message="正在校验文件…")
+                self._set_update_state(status="verifying", progress=100, message="正在校验文件完整性…")
                 if sha256_url:
-                    sha_ok = verify_downloaded_sha256(zip_path, asset_name, sha256_url)
+                    sha_ok = verify_downloaded_sha256(
+                        zip_path,
+                        asset_name,
+                        sha256_url,
+                        update_source=upd_src,
+                        custom_mirror=upd_mirror,
+                    )
                     if sha_ok is False:
                         raise ValueError("安装包 SHA-256 校验失败，已中止更新")
                 self._set_update_state(status="preparing", progress=100, message="正在准备安装…")

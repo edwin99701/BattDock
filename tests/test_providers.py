@@ -1018,6 +1018,86 @@ class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
         self.assertIn("wireless_headsets", names)
         self.assertIn("wireless_keyboards", names)
 
+    def test_v261_cn_mirror_update_sources_and_failover(self):
+        import tempfile
+        from unittest.mock import patch
+        import updater
+
+        # 1. 前缀规范化与 HTTPS 安全约束
+        self.assertEqual(updater.normalize_mirror_prefix("https://gh-proxy.org"), "https://gh-proxy.org/")
+        self.assertEqual(updater.normalize_mirror_prefix("https://ghfast.top/"), "https://ghfast.top/")
+        self.assertEqual(updater.normalize_mirror_prefix("http://insecure.example/"), "")
+        self.assertEqual(updater.normalize_mirror_prefix("not-a-url"), "")
+
+        raw_url = "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.0/BattDock-v2.6.0-Windows-x64-Portable.zip"
+
+        # 2. 四种线路策略生成的候选列表顺序与兜底
+        auto_list = updater.build_candidate_urls(raw_url, "auto")
+        self.assertTrue(auto_list[0][0].startswith("国内加速"))
+        self.assertEqual(auto_list[-1], ("GitHub 官方", raw_url))
+
+        cn_list = updater.build_candidate_urls(raw_url, "cn")
+        self.assertTrue(all(lbl.startswith("国内加速") for lbl, _ in cn_list))
+        self.assertTrue(all(u.startswith("https://") for _, u in cn_list))
+
+        gh_list = updater.build_candidate_urls(raw_url, "github")
+        self.assertEqual(gh_list, [("GitHub 官方", raw_url)])
+
+        custom_list = updater.build_candidate_urls(raw_url, "custom", "https://mirror.example.cn")
+        self.assertEqual(custom_list[0][1], f"https://mirror.example.cn/{raw_url}")
+        self.assertEqual(custom_list[-1], ("GitHub 官方", raw_url))
+
+        # 3. 节点故障自动切换验证：首节点失败自动切到第二节点并成功落盘
+        tried_urls = []
+
+        def fake_single(url, part_path, expected_size, on_progress, cancel_event, timeout):
+            tried_urls.append(url)
+            if len(tried_urls) == 1:
+                raise OSError("simulated mirror timeout")
+            part_path.write_bytes(b"PK\x03\x04fake-zip-payload")
+            return 20
+
+        with tempfile.TemporaryDirectory() as td, patch.object(updater, "_download_single_url", side_effect=fake_single):
+            dest = Path(td) / "update.zip"
+            sources_seen = []
+            out = updater.download_update_asset(
+                asset_url=raw_url,
+                dest_zip=dest,
+                update_source="auto",
+                probe_mirrors=False,
+                on_source_change=sources_seen.append,
+            )
+            self.assertEqual(out, dest)
+            self.assertEqual(len(tried_urls), 2)
+            self.assertEqual(len(sources_seen), 2)
+            self.assertTrue(dest.exists())
+
+        # 4. api.github.com 不可达时自动回退国内加速 update-summary.json 检查更新
+        fake_summary = b'{"version":"2.6.1","summary":["\xe5\x9b\xbd\xe5\x86\x85\xe5\x8a\xa0\xe9\x80\x9f\xe4\xb8\x8b\xe8\xbd\xbd"],"asset_name":"BattDock-v2.6.1-Windows-x64-Portable.zip","asset_size":37000000}'
+
+        class _FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return fake_summary
+
+        def fake_urlopen(req, timeout=10.0):
+            if "api.github.com" in req.full_url:
+                raise OSError("api blocked")
+            return _FakeResp()
+
+        with patch("updater.urllib.request.urlopen", side_effect=fake_urlopen):
+            res = updater.check_for_update("2.6.0", update_source="auto")
+            self.assertTrue(res.ok)
+            self.assertTrue(res.has_update)
+            self.assertEqual(res.latest_version, "2.6.1")
+            self.assertEqual(res.summary_items, ["国内加速下载"])
+            self.assertEqual(res.asset_size, 37000000)
+
 
 if __name__ == "__main__":
     unittest.main()

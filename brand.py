@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 APP_NAME = "BattDock"
-APP_VERSION = "2.6.0"
-APP_VERSION_TUPLE = (2, 6, 0, 0)
+APP_VERSION = "2.6.1"
+APP_VERSION_TUPLE = (2, 6, 1, 0)
 APP_DESCRIPTION_ZH = "轻量化 Windows 无线外设电量管理工具"
 
 APP_EXE_NAME = "BattDock.exe"
@@ -40,3 +40,12 @@ GITHUB_REPO = "wireless-peripheral-battery-monitor"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
 RELEASES_PAGE_URL = f"{GITHUB_REPO_URL}/releases"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+LATEST_DOWNLOAD_BASE = f"{GITHUB_REPO_URL}/releases/latest/download"
+
+# 经实测可用的公开 HTTPS 国内 GitHub Release 下载加速节点（按优先级排序，运行时自动测速择优并支持故障切换与官方直连兜底）
+CN_GITHUB_MIRRORS: tuple[tuple[str, str], ...] = (
+    ("gh-proxy.org", "https://gh-proxy.org/"),
+    ("gh-proxy.com", "https://gh-proxy.com/"),
+    ("ghfast.top", "https://ghfast.top/"),
+    ("ghfile.geekertao.top", "https://ghfile.geekertao.top/"),
+)

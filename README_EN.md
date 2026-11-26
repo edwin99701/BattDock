@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.6.0-111827?style=for-the-badge" alt="Download Latest BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.6.1-111827?style=for-the-badge" alt="Download Latest BattDock" />
 </a>
 
 </div>
@@ -74,7 +74,7 @@
 
 ## Download & Installation
 
-1. Go to [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) and download **`BattDock-v2.6.0-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.6.0-Windows-x64-Portable.zip`** (portable archive).
+1. Go to [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) and download **`BattDock-v2.6.1-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates with built-in China mirror acceleration) or **`BattDock-v2.6.1-Windows-x64-Portable.zip`** (portable archive).
 2. Run the installer or extract the ZIP and launch **`BattDock.exe`** (requires Windows 10 22H2 x64+ or Windows 11 x64).
 3. Settings are stored in `%LOCALAPPDATA%\BattDock\config.json` and preserved across updates. Legacy `VGNMouseBattery` configurations and autostart entries migrate automatically on first launch.
 

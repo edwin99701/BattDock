@@ -30,12 +30,18 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from urllib.parse import urlparse
+
 from brand import (
     APP_EXE_NAME,
     APP_NAME,
+    CN_GITHUB_MIRRORS,
     GITHUB_OWNER,
     GITHUB_REPO,
     GITHUB_REPO_URL,
+    LATEST_DOWNLOAD_BASE,
     LATEST_RELEASE_API,
     LEGACY_EXE_NAME,
     LEGACY_RUN_VALUE_NAME,
@@ -46,6 +52,99 @@ from brand import (
 
 SUMMARY_START_MARKER = "<!-- BATTDOCK_SUMMARY_START"
 SUMMARY_END_MARKER = "BATTDOCK_SUMMARY_END -->"
+
+UPDATE_SOURCE_AUTO = "auto"      # 自动优选：优先国内加速节点，失败自动切换备用节点并兜底 GitHub 直连
+UPDATE_SOURCE_CN = "cn"          # 仅使用国内加速节点
+UPDATE_SOURCE_GITHUB = "github"  # 始终直连 GitHub 官方
+UPDATE_SOURCE_CUSTOM = "custom"  # 使用用户自定义的国内 HTTPS 加速前缀
+
+
+def normalize_mirror_prefix(raw: str) -> str:
+    """规范化用户自定义的加速前缀，仅允许合法 HTTPS 地址，保证以 '/' 结尾。"""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if not s.lower().startswith("https://"):
+        return ""
+    parsed = urlparse(s)
+    if not parsed.netloc:
+        return ""
+    return s if s.endswith("/") else (s + "/")
+
+
+def build_candidate_urls(
+    original_url: str,
+    update_source: str = UPDATE_SOURCE_AUTO,
+    custom_mirror: str = "",
+) -> list[tuple[str, str]]:
+    """按更新线路策略生成候选下载列表 [(展示名称, 完整HTTPS链接)]，严格校验 HTTPS。"""
+    url = (original_url or "").strip()
+    if not url.startswith("https://"):
+        return []
+
+    is_github_download = url.startswith("https://github.com/")
+    src = (update_source or UPDATE_SOURCE_AUTO).strip().lower()
+    candidates: list[tuple[str, str]] = []
+
+    if src == UPDATE_SOURCE_GITHUB or not is_github_download:
+        candidates.append(("GitHub 官方", url))
+        return candidates
+
+    if src == UPDATE_SOURCE_CUSTOM:
+        prefix = normalize_mirror_prefix(custom_mirror)
+        if prefix:
+            host = urlparse(prefix).netloc or "自定义镜像"
+            candidates.append((f"自定义加速（{host}）", f"{prefix}{url}"))
+        for name, m_prefix in CN_GITHUB_MIRRORS:
+            candidates.append((f"国内加速（{name}）", f"{m_prefix}{url}"))
+        candidates.append(("GitHub 官方", url))
+        return candidates
+
+    for name, m_prefix in CN_GITHUB_MIRRORS:
+        candidates.append((f"国内加速（{name}）", f"{m_prefix}{url}"))
+
+    if src != UPDATE_SOURCE_CN:
+        candidates.append(("GitHub 官方", url))
+    return candidates
+
+
+def rank_candidate_urls(
+    candidates: list[tuple[str, str]],
+    probe_timeout: float = 3.5,
+) -> list[tuple[str, str]]:
+    """对多个候选加速节点并发做轻量 HEAD 探测，将最快响应的健康节点排在前面。"""
+    if len(candidates) <= 1:
+        return list(candidates)
+
+    def _probe(idx_item: tuple[int, tuple[str, str]]) -> tuple[int, float, tuple[str, str]]:
+        idx, (label, target_url) = idx_item
+        t0 = time.perf_counter()
+        req = urllib.request.Request(
+            target_url,
+            method="HEAD",
+            headers={"User-Agent": f"{APP_NAME}-Updater/1.0"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=probe_timeout) as resp:
+                status = getattr(resp, "status", 200)
+                if 200 <= status < 400:
+                    return (0, time.perf_counter() - t0, (label, target_url))
+        except Exception:
+            pass
+        return (1, 999.0 + idx, (label, target_url))
+
+    results: list[tuple[int, float, tuple[str, str]]] = []
+    with ThreadPoolExecutor(max_workers=min(5, len(candidates))) as pool:
+        futs = [pool.submit(_probe, (i, item)) for i, item in enumerate(candidates)]
+        for fut in as_completed(futs):
+            try:
+                results.append(fut.result())
+            except Exception:
+                pass
+    if not results:
+        return list(candidates)
+    results.sort(key=lambda x: (x[0], x[1]))
+    return [item for _, _, item in results]
 
 
 @dataclass
@@ -217,21 +316,27 @@ def extract_user_summary(body: str, max_items: int = 5) -> tuple[list[str], str]
     return items, ""
 
 
-def fetch_remote_summary_json(summary_url: str, timeout: float = 6.0) -> tuple[list[str], str]:
-    """若 Release 随附 update-summary.json，拉取其中的结构化用户摘要与重要提示。"""
-    if not summary_url or not summary_url.startswith("https://"):
-        return [], ""
-    req = urllib.request.Request(summary_url, headers={"User-Agent": f"{APP_NAME}-Updater/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            obj = json.loads(resp.read().decode("utf-8", errors="replace"))
-        if isinstance(obj, dict):
-            raw_items = obj.get("summary") or []
-            clean = [_strip_markdown_and_tech_noise(str(x)) for x in raw_items if str(x).strip()][:5]
-            notice = _strip_markdown_and_tech_noise(str(obj.get("important_notice") or ""))
-            return clean, notice
-    except Exception:
-        pass
+def fetch_remote_summary_json(
+    summary_url: str,
+    timeout: float = 6.0,
+    update_source: str = UPDATE_SOURCE_AUTO,
+    custom_mirror: str = "",
+) -> tuple[list[str], str]:
+    """若 Release 随附 update-summary.json，按加速线路拉取其中的结构化用户摘要与重要提示。"""
+    candidates = build_candidate_urls(summary_url, update_source=update_source, custom_mirror=custom_mirror)
+    for _label, url in candidates:
+        req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}-Updater/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                obj = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if isinstance(obj, dict):
+                raw_items = obj.get("summary") or []
+                clean = [_strip_markdown_and_tech_noise(str(x)) for x in raw_items if str(x).strip()][:5]
+                notice = _strip_markdown_and_tech_noise(str(obj.get("important_notice") or ""))
+                if clean or notice:
+                    return clean, notice
+        except Exception:
+            continue
     return [], ""
 
 
@@ -261,15 +366,28 @@ def compute_file_sha256(file_path: Path) -> str:
     return h.hexdigest().lower()
 
 
-def verify_downloaded_sha256(file_path: Path, asset_name: str, sha256_url: str, timeout: float = 10.0) -> Optional[bool]:
-    """如存在 SHA256SUMS.txt，则核对下载文件哈希。返回 True=校验通过，False=哈希不匹配，None=未提供清单。"""
-    if not sha256_url or not sha256_url.startswith("https://"):
-        return None
-    req = urllib.request.Request(sha256_url, headers={"User-Agent": f"{APP_NAME}-Updater/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            manifest_text = resp.read().decode("utf-8", errors="replace")
-    except Exception:
+def verify_downloaded_sha256(
+    file_path: Path,
+    asset_name: str,
+    sha256_url: str,
+    timeout: float = 10.0,
+    update_source: str = UPDATE_SOURCE_AUTO,
+    custom_mirror: str = "",
+) -> Optional[bool]:
+    """如存在 SHA256SUMS.txt，则核对下载文件哈希（支持国内镜像回退读取校验文件）。返回 True=通过，False=不匹配，None=未提供。"""
+    candidates = build_candidate_urls(sha256_url, update_source=update_source, custom_mirror=custom_mirror)
+    manifest_text = ""
+    for _label, url in candidates:
+        req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}-Updater/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                txt = resp.read().decode("utf-8", errors="replace")
+            if parse_sha256_manifest(txt):
+                manifest_text = txt
+                break
+        except Exception:
+            continue
+    if not manifest_text:
         return None
     table = parse_sha256_manifest(manifest_text)
     expected = table.get(Path(asset_name or file_path.name).name.lower())
@@ -323,41 +441,153 @@ def parse_github_release_payload(payload: dict[str, Any], current_version: str) 
     )
 
 
-def check_for_update(current_version: str, timeout: float = 10.0) -> UpdateCheckResult:
-    """请求 GitHub Releases 最新稳定版本信息，网络失败时返回友好中文提示。"""
+def _check_via_mirror_summary(
+    cur: str,
+    timeout: float,
+    update_source: str,
+    custom_mirror: str,
+) -> Optional[UpdateCheckResult]:
+    """纯国内加速通道检查更新：通过 releases/latest/download/update-summary.json 获取最新版本，免直连 api.github.com。"""
+    latest_summary_url = f"{LATEST_DOWNLOAD_BASE}/update-summary.json"
+    candidates = build_candidate_urls(
+        latest_summary_url,
+        update_source=update_source,
+        custom_mirror=custom_mirror,
+    )
+    for _label, url in candidates:
+        req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{cur or '2.6'}"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                obj = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if not isinstance(obj, dict):
+                continue
+            latest = normalize_version_str(str(obj.get("version") or ""))
+            if not latest:
+                continue
+            raw_items = obj.get("summary") or []
+            clean_items = [_strip_markdown_and_tech_noise(str(x)) for x in raw_items if str(x).strip()][:5]
+            notice = _strip_markdown_and_tech_noise(str(obj.get("important_notice") or ""))
+            asset_name = str(obj.get("asset_name") or f"{APP_NAME}-v{latest}-Windows-x64-Portable.zip").strip()
+            asset_size = int(obj.get("asset_size") or 0)
+            tag_base = f"{GITHUB_REPO_URL}/releases/download/v{latest}"
+            return UpdateCheckResult(
+                ok=True,
+                current_version=cur,
+                latest_version=latest,
+                has_update=is_newer_version(latest, cur),
+                release_url=f"{GITHUB_REPO_URL}/releases/tag/v{latest}",
+                release_notes="\n".join(f"• {x}" for x in clean_items),
+                summary_items=clean_items,
+                important_notice=notice,
+                asset_name=asset_name,
+                asset_url=f"{tag_base}/{asset_name}",
+                asset_size=asset_size,
+                sha256_url=f"{tag_base}/SHA256SUMS.txt",
+                summary_url=f"{tag_base}/update-summary.json",
+                published_at=str(obj.get("published_at") or ""),
+                error="",
+            )
+        except Exception:
+            continue
+    return None
+
+
+def check_for_update(
+    current_version: str,
+    timeout: float = 10.0,
+    update_source: str = UPDATE_SOURCE_AUTO,
+    custom_mirror: str = "",
+) -> UpdateCheckResult:
+    """请求最新稳定版本信息：支持国内加速通道免直连检查与 GitHub API 双向容错。"""
     cur = normalize_version_str(current_version)
+    src = (update_source or UPDATE_SOURCE_AUTO).strip().lower()
+
+    if src in (UPDATE_SOURCE_CN, UPDATE_SOURCE_CUSTOM):
+        mir_res = _check_via_mirror_summary(cur, min(timeout, 8.0), src, custom_mirror)
+        if mir_res is not None:
+            return mir_res
+        if src == UPDATE_SOURCE_CN:
+            return UpdateCheckResult(ok=False, current_version=cur, error="无法连接国内更新镜像，请稍后重试或切换下载线路。")
+
     req = urllib.request.Request(
         LATEST_RELEASE_API,
         headers={
-            "User-Agent": f"{APP_NAME}/{cur or '2.4'}",
+            "User-Agent": f"{APP_NAME}/{cur or '2.6'}",
             "Accept": "application/vnd.github+json",
         },
     )
+    api_err: Optional[str] = None
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             data = json.loads(raw)
             if not isinstance(data, dict):
-                return UpdateCheckResult(ok=False, current_version=cur, error="更新接口返回数据格式异常。")
-            res = parse_github_release_payload(data, cur)
-            # 若正文未含结构化摘要块但存在 update-summary.json，则补充拉取
-            if res.ok and res.summary_url and (not res.summary_items or not res.important_notice):
-                ext_items, ext_notice = fetch_remote_summary_json(res.summary_url, timeout=6.0)
-                if ext_items:
-                    res.summary_items = ext_items
-                if ext_notice and not res.important_notice:
-                    res.important_notice = ext_notice
-            return res
+                api_err = "更新接口返回数据格式异常。"
+            else:
+                res = parse_github_release_payload(data, cur)
+                if res.ok and res.summary_url and (not res.summary_items or not res.important_notice):
+                    ext_items, ext_notice = fetch_remote_summary_json(
+                        res.summary_url,
+                        timeout=6.0,
+                        update_source=src,
+                        custom_mirror=custom_mirror,
+                    )
+                    if ext_items:
+                        res.summary_items = ext_items
+                    if ext_notice and not res.important_notice:
+                        res.important_notice = ext_notice
+                return res
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return UpdateCheckResult(ok=False, current_version=cur, error="GitHub 仓库尚未发布正式版本。")
-        if e.code == 403:
-            return UpdateCheckResult(ok=False, current_version=cur, error="GitHub 接口请求频率受限，请稍后再试。")
-        return UpdateCheckResult(ok=False, current_version=cur, error=f"检查更新失败（HTTP {e.code}）。")
+            api_err = "GitHub 仓库尚未发布正式版本。"
+        elif e.code == 403:
+            api_err = "GitHub 接口请求频率受限，请稍后再试。"
+        else:
+            api_err = f"检查更新失败（HTTP {e.code}）。"
     except (urllib.error.URLError, TimeoutError, OSError):
-        return UpdateCheckResult(ok=False, current_version=cur, error="无法连接 GitHub，请检查网络连接或代理设置。")
+        api_err = "无法连接 GitHub，请检查网络连接或代理设置。"
     except Exception as e:
-        return UpdateCheckResult(ok=False, current_version=cur, error=f"检查更新出错：{e}")
+        api_err = f"检查更新出错：{e}"
+
+    if src == UPDATE_SOURCE_AUTO:
+        mir_res = _check_via_mirror_summary(cur, min(timeout, 8.0), UPDATE_SOURCE_CN, custom_mirror)
+        if mir_res is not None:
+            return mir_res
+
+    return UpdateCheckResult(ok=False, current_version=cur, error=api_err or "检查更新失败。")
+
+
+def _download_single_url(
+    url: str,
+    part_path: Path,
+    expected_size: int,
+    on_progress: Optional[Callable[[int, int], None]],
+    cancel_event: Optional[threading.Event],
+    timeout: float,
+) -> int:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"{APP_NAME}-Updater/1.0"},
+    )
+    downloaded = 0
+    with urllib.request.urlopen(req, timeout=timeout) as resp, part_path.open("wb") as f:
+        total_hdr = resp.headers.get("Content-Length")
+        total = int(total_hdr) if (total_hdr and total_hdr.isdigit()) else int(expected_size or 0)
+        if on_progress:
+            on_progress(0, total)
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("更新下载已取消")
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            f.write(chunk)
+            downloaded += len(chunk)
+            if on_progress:
+                on_progress(downloaded, total)
+    if downloaded <= 0 or (expected_size > 0 and downloaded < int(expected_size * 0.9)):
+        raise RuntimeError("更新包下载不完整，请重试")
+    return downloaded
 
 
 def download_update_asset(
@@ -366,48 +596,56 @@ def download_update_asset(
     expected_size: int = 0,
     on_progress: Optional[Callable[[int, int], None]] = None,
     cancel_event: Optional[threading.Event] = None,
-    timeout: float = 30.0,
+    timeout: float = 25.0,
+    update_source: str = UPDATE_SOURCE_AUTO,
+    custom_mirror: str = "",
+    on_source_change: Optional[Callable[[str], None]] = None,
+    probe_mirrors: bool = True,
 ) -> Path:
-    """仅通过 HTTPS 流式下载 Release ZIP 压缩包并持续回调真实进度。"""
+    """仅通过 HTTPS 流式下载 Release ZIP 压缩包，支持国内加速节点并发测速择优与失败自动切换。"""
     if not asset_url.startswith("https://"):
         raise ValueError("出于安全限制，仅允许通过 HTTPS 下载更新包")
 
+    candidates = build_candidate_urls(asset_url, update_source=update_source, custom_mirror=custom_mirror)
+    if not candidates:
+        raise ValueError("未找到可用的 HTTPS 下载地址")
+    if probe_mirrors and len(candidates) > 1:
+        candidates = rank_candidate_urls(candidates, probe_timeout=3.5)
+
     dest_zip.parent.mkdir(parents=True, exist_ok=True)
     part_path = dest_zip.with_suffix(".zip.part")
-    req = urllib.request.Request(
-        asset_url,
-        headers={"User-Agent": f"{APP_NAME}-Updater/1.0"},
-    )
-    downloaded = 0
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp, part_path.open("wb") as f:
-            total_hdr = resp.headers.get("Content-Length")
-            total = int(total_hdr) if (total_hdr and total_hdr.isdigit()) else int(expected_size or 0)
-            if on_progress:
-                on_progress(0, total)
-            while True:
-                if cancel_event is not None and cancel_event.is_set():
-                    raise RuntimeError("更新下载已取消")
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                f.write(chunk)
-                downloaded += len(chunk)
-                if on_progress:
-                    on_progress(downloaded, total)
-        if downloaded <= 0 or (expected_size > 0 and downloaded < int(expected_size * 0.9)):
-            raise RuntimeError("更新包下载不完整，请重试")
-        if dest_zip.exists():
-            dest_zip.unlink()
-        part_path.replace(dest_zip)
-        return dest_zip
-    except Exception:
+    last_error: Optional[Exception] = None
+
+    for label, url in candidates:
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("更新下载已取消")
+        if on_source_change:
+            on_source_change(label)
         try:
-            if part_path.exists():
-                part_path.unlink()
-        except OSError:
-            pass
-        raise
+            _download_single_url(
+                url=url,
+                part_path=part_path,
+                expected_size=expected_size,
+                on_progress=on_progress,
+                cancel_event=cancel_event,
+                timeout=timeout,
+            )
+            if dest_zip.exists():
+                dest_zip.unlink()
+            part_path.replace(dest_zip)
+            return dest_zip
+        except Exception as exc:
+            try:
+                if part_path.exists():
+                    part_path.unlink()
+            except OSError:
+                pass
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("更新下载已取消") from exc
+            last_error = exc
+            continue
+
+    raise RuntimeError(f"所有更新下载节点均不可用：{last_error}") from last_error
 
 
 def extract_and_verify_update(

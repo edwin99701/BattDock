@@ -7,7 +7,7 @@
 ## 一、项目定位、运行环境与技术栈
 
 - **软件名称**：**BattDock**（轻量化 Windows 无线外设电量管理工具，开源协议 MIT）
-- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前最新正式版 `v2.6.0`）
+- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前最新正式版 `v2.6.1`）
 - **兼容目标**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时，免 Python 环境、免官方驱动）
 - **开发与构建环境**：Python `3.12+`（验证版本 `3.12.10`）、`hidapi 0.15.0`、`pywebview 6.2.1`（WinForms + EdgeChromium）、`pystray 0.19.5`、`Pillow 13.0.0`、`pythonnet` / `clr-loader`、`PyInstaller 6.22.3`、`Inno Setup 6.7.3`（用户级安装于 `%LOCALAPPDATA%\Programs\Inno Setup 6`）
 - **当前本机硬件环境**：Windows 11 x64，物理连接 `VGN Dragonfly F2 Pro Max (VID 0x3554, PID 0xFB3E)`；本机**无蓝牙适配器**（蓝牙适配器缺失时 `BluetoothBatteryProvider` 必须静默返回 `[]` 且零报错）。
@@ -50,7 +50,7 @@ providers/
 installer/
   ├── BattDock.iss            Inno Setup 6 标准安装脚本（管理员安装 + 目录 users-modify 权限 + 防重复安装 + 卸载）
   └── ChineseSimplified.isl   UTF-8 BOM 简体中文安装向导语言包（Microsoft YaHei UI）
-tests/test_providers.py       36 项自动化单元测试（全协议解析 + 去重 + 提醒状态机 + 命名/图标/摘要/UI 不变量 + 更新脚本 + 生命周期/HID 缓存 + 无线耳机/键盘协议）
+tests/test_providers.py       37 项自动化单元测试（全协议解析 + 去重 + 提醒状态机 + 命名/图标/摘要/UI 不变量 + 国内镜像更新/故障切源 + 生命周期/HID 缓存 + 无线耳机/键盘协议）
 build_release.ps1             一键测试 → PyInstaller 构建 → Inno Setup 编译 Setup.exe → ZIP 打包 → SHA256SUMS.txt
 version_info.txt              Windows EXE 文件版本属性元数据（ProductName=BattDock）
 ```
