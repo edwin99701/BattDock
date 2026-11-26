@@ -122,7 +122,24 @@ New-Item -ItemType Directory -Force -Path $ReleaseAssetsDir | Out-Null
 
 $PortableZip = Join-Path $ReleaseAssetsDir "BattDock-v$AppVersion-Windows-x64-Portable.zip"
 $BridgeZip = Join-Path $ReleaseAssetsDir "VGNMouseBattery-v$AppVersion-win64-UpgradeBridge.zip"
+$SetupExe = Join-Path $ReleaseAssetsDir "BattDock-v$AppVersion-Setup.exe"
 $BridgeExe = Join-Path $BridgeDist "VGNMouseBattery.exe"
+
+# 若本机安装了 Inno Setup 6，则同步编译标准 Windows 安装程序（Setup.exe）
+$IsccCandidates = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe"
+)
+$IsccExe = $IsccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+$IssPath = Join-Path $Root "installer\BattDock.iss"
+if ($IsccExe -and (Test-Path $IssPath)) {
+    Write-Host "[5.5/6] 使用 Inno Setup 编译标准安装程序（BattDock-v$AppVersion-Setup.exe）..."
+    & $IsccExe "/DMyAppVersion=$AppVersion" $IssPath
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译安装程序失败。" }
+} else {
+    Write-Host "[5.5/6] 未检测到 Inno Setup 6，跳过 Setup.exe 编译（仅生成便携 ZIP）。"
+}
 
 & $PythonExe -c "
 import hashlib, zipfile
@@ -131,6 +148,7 @@ rel = Path(r'$ReleaseDir')
 pzip = Path(r'$PortableZip')
 bzip = Path(r'$BridgeZip')
 bexe = Path(r'$BridgeExe')
+setup_exe = Path(r'$SetupExe')
 
 with zipfile.ZipFile(pzip, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
     for f in sorted(rel.rglob('*')):
@@ -143,12 +161,16 @@ with zipfile.ZipFile(bzip, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             zf.write(f, 'BattDock/' + f.relative_to(rel).as_posix())
     zf.write(bexe, 'BattDock/VGNMouseBattery.exe')
 
+targets = [pzip, bzip]
+if setup_exe.is_file():
+    targets.insert(0, setup_exe)
+
 sums = []
-for fp in (pzip, bzip):
+for fp in targets:
     h = hashlib.sha256(fp.read_bytes()).hexdigest()
     sums.append(f'{h}  {fp.name}')
 (pzip.parent / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n', encoding='utf-8')
-print('ASSETS_OK:', pzip.name, round(pzip.stat().st_size/1048576, 2), 'MB |', bzip.name, round(bzip.stat().st_size/1048576, 2), 'MB')
+print('ASSETS_OK:', ' | '.join(f'{fp.name} ({round(fp.stat().st_size/1048576, 2)} MB)' for fp in targets))
 "
 if ($LASTEXITCODE -ne 0) { throw "打包发布产物 ZIP 失败。" }
 
