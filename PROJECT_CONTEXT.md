@@ -54,9 +54,9 @@ build_release.ps1          可重复执行的一键测试 + PyInstaller 打包�
 
 ## 四、关键技术决策与已攻克的坑
 
-1. **开机 `--background` 静默无弹窗（pywebview 6.2.1 Bug 规避）**：
-   - `pywebview` 在 `transparent=True` 且 `hidden=True` 时，导航完成回调 `EdgeChrome.on_navigation_start` 会强行调用 `form.Show()`。
-   - **已解决**：启动参数含 `--background` 时，对 `edgechromium.EdgeChrome.on_navigation_start` 打补丁跳过隐藏态 `Show()`；实测进程存活且 `IsWindowVisible == False`。
+1. **启动与设置窗口零闪烁 + 开机 `--background` 静默无弹窗**：
+   - `pywebview` 6.2.1 在 Windows WinForms 上会在网页未加载完时直接 `browser.Show()`（甚至 `hidden=True` 时执行 `browser.Show(); browser.Hide()`），且切 `FormBorderStyle=None` 时会裁掉非客户区宽高导致二次 resize 抖动。
+   - **已彻底解决**：通过 `_install_flicker_free_patch()` 在 `BrowserForm.__init__` 末尾先置 `Opacity = 0.0` + 传入匹配主题的 `background_color`，在不可见态完成精确居中尺寸、DWM 装饰、前端 `applyState()` 及双 `requestAnimationFrame` 首帧合成后，由前端 `ui_ready()` 通知后端一次性 `Opacity = 1.0` 原子显现；同时设置窗口关闭改为隐藏复用（仅退出程序时销毁），消除每次点设置的冷启动白屏与闪跳。
 2. **禁止创建句柄后修改 `native.ShowInTaskbar`**：
    - 修改 WinForms `ShowInTaskbar` 会触发 `RecreateHandle()` 导致 WebView2 抛出 `E_ABORT` 崩溃；保持默认即可。
 3. **Win11 原生毛玻璃参数**：

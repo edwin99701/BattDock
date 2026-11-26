@@ -268,6 +268,91 @@ def _apply_window_chrome(hwnd: int, is_dark: bool) -> None:
     _try_win11_round_corners(hwnd)
 
 
+_FLICKER_PATCH_INSTALLED = False
+
+
+def _install_flicker_free_patch() -> None:
+    """在 WinForms BrowserForm 创建瞬间设置 Opacity=0，待页面首帧与精确居中全部就绪后再原子显现。
+
+    彻底消除两类闪烁：
+    1. WebView2 冷初始化期间先露出空白纯色框再刷出页面；
+    2. WinForms 切换 frameless 时尺寸微缩后二次调整位置/大小造成的跳动，以及 hidden=True 时
+       pywebview 内部 Show()/Hide() 引发的一瞬闪现。
+    """
+    global _FLICKER_PATCH_INSTALLED
+    if _FLICKER_PATCH_INSTALLED or sys.platform != "win32":
+        return
+    try:
+        from webview.platforms import winforms
+
+        orig_init = winforms.BrowserView.BrowserForm.__init__
+
+        def _patched_init(form_self, window, cache_dir):
+            orig_init(form_self, window, cache_dir)
+            try:
+                form_self.Opacity = 0.0
+            except Exception:
+                pass
+
+        winforms.BrowserView.BrowserForm.__init__ = _patched_init
+        _FLICKER_PATCH_INSTALLED = True
+    except Exception:
+        pass
+
+
+def _set_form_visibility(win: Optional[webview.Window], visible: bool, opacity: float = 1.0, activate: bool = False) -> None:
+    """在 WinForms UI 线程原子控制窗体透明度与显隐，避免多次重绘闪烁。"""
+    if win is None:
+        return
+    native = getattr(win, "native", None)
+    if native is None:
+        return
+
+    def _do():
+        try:
+            if native.IsDisposed:
+                return
+            if visible:
+                if not native.Visible:
+                    native.Show()
+                native.Opacity = max(0.0, min(1.0, float(opacity)))
+                if activate:
+                    native.Activate()
+            else:
+                native.Opacity = 0.0
+                if native.Visible:
+                    native.Hide()
+        except Exception:
+            pass
+
+    try:
+        from System import Action
+
+        if getattr(native, "InvokeRequired", False):
+            native.Invoke(Action(_do))
+        else:
+            _do()
+    except Exception:
+        pass
+
+
+def _run_on_form_ui(win: Optional[webview.Window], fn) -> None:
+    if win is None:
+        return
+    native = getattr(win, "native", None)
+    if native is None:
+        return
+    try:
+        from System import Action
+
+        if getattr(native, "InvokeRequired", False):
+            native.Invoke(Action(fn))
+        else:
+            fn()
+    except Exception:
+        pass
+
+
 def ensure_app_ico() -> Optional[str]:
     try:
         APP_ICON_ICO.parent.mkdir(parents=True, exist_ok=True)
@@ -387,6 +472,10 @@ class MouseBatteryApp:
         self.settings_hwnd: int = 0
         self._main_maximized = False
         self._settings_maximized = False
+        self._main_revealed = False
+        self._settings_ready = False
+        self._settings_pending_reveal = False
+        self._reveal_lock = threading.Lock()
 
         self._alert_window = None
         self._alert_timer: Optional[threading.Timer] = None
@@ -587,53 +676,95 @@ class MouseBatteryApp:
         px, py, pw, ph = _compute_centered_rect(work, phys_w, phys_h, anchor_rect=anchor)
         return px, py, pw, ph, scale
 
+    def _theme_bg_hex(self) -> str:
+        return "#151820" if self._effective_theme() == "dark" else "#F5F6FA"
+
+    def _reveal_main_if_needed(self) -> None:
+        """在主窗口完成尺寸校准、居中与首帧渲染后，一次性原子显现（Opacity 0 -> 1）。"""
+        with self._reveal_lock:
+            if self._main_revealed or not self._allow_show or self.window is None:
+                return
+            self._main_revealed = True
+        if self.hwnd:
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            self._center_main_hwnd()
+        _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True)
+
+    def _reveal_settings_if_needed(self) -> None:
+        """在设置窗口完成定位、常规设置页渲染与 DWM 装饰后，一次性原子显现。"""
+        with self._reveal_lock:
+            if not self._settings_pending_reveal or self.settings_window is None:
+                return
+            self._settings_pending_reveal = False
+            self._settings_ready = True
+        if self.settings_hwnd:
+            _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
+            px, py, pw, ph, _ = self._compute_settings_target_phys_rect()
+            _set_window_pos(self.settings_hwnd, px, py, pw, ph)
+        _set_form_visibility(self.settings_window, visible=True, opacity=1.0, activate=True)
+
+    def on_ui_ready(self, target: str) -> None:
+        """前端首帧渲染完毕（双 requestAnimationFrame）后的就绪通知，触发无闪烁显现。"""
+        if target == "settings":
+            self._reveal_settings_if_needed()
+        else:
+            self._reveal_main_if_needed()
+
     def show_main_window(self) -> None:
-        """从系统托盘重新打开主窗口：先在隐藏态居中定位，再显示激活，避免先偏后跳的闪烁。"""
+        """从系统托盘重新打开主窗口：隐藏态先对齐精确居中坐标，再原子显现，彻底零闪烁。"""
         if self.window is None:
             return
         self._allow_show = True
+        with self._reveal_lock:
+            self._main_revealed = True
         if self.hwnd:
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
-            # 先定位到当前显示器居中位置，再显示，彻底消除跳动闪烁
             self._center_main_hwnd()
-        try:
-            self.window.show()
-            self.window.restore()
-        except Exception:
-            pass
-        if self.hwnd:
-            self._center_main_hwnd()
-            user32 = ctypes.windll.user32
-            user32.ShowWindow(wintypes.HWND(self.hwnd), 9)
-            user32.SetForegroundWindow(wintypes.HWND(self.hwnd))
         self._push_state_to_ui()
+        _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True)
+        if self.hwnd:
+            ctypes.windll.user32.SetForegroundWindow(wintypes.HWND(self.hwnd))
 
     def open_settings_window(self, section: str = "general") -> None:
-        """打开或前置独立设置窗口：默认进入“常规设置”，以主窗口为基准居中显示且避免闪烁。"""
+        """打开或前置独立设置窗口：默认进入“常规设置”，以主窗口为基准居中显示且零闪烁。"""
         target_sec = section or "general"
         px, py, pw, ph, scale = self._compute_settings_target_phys_rect()
 
+        # 若设置窗口实例已存在（隐藏复用），先保持 Opacity=0 完成切页、同步状态与精准居中，再一次性显现
         if self.settings_window is not None:
             try:
-                if self.settings_hwnd:
-                    _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
-                    _set_window_pos(self.settings_hwnd, px, py, pw, ph)
-                self.settings_window.show()
-                self.settings_window.restore()
-                if self.settings_hwnd:
-                    ctypes.windll.user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
-                    ctypes.windll.user32.SetForegroundWindow(wintypes.HWND(self.settings_hwnd))
-                self.settings_window.evaluate_js(f"window.switchSection && switchSection({json.dumps(target_sec)});")
-                self._push_state_to_ui()
-                return
+                native = getattr(self.settings_window, "native", None)
+                if native is not None and not native.IsDisposed:
+                    _set_form_visibility(self.settings_window, visible=True, opacity=0.0, activate=False)
+                    if self.settings_hwnd:
+                        _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
+                        if ctypes.windll.user32.IsZoomed(wintypes.HWND(self.settings_hwnd)):
+                            ctypes.windll.user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
+                            self._settings_maximized = False
+                        _set_window_pos(self.settings_hwnd, px, py, pw, ph)
+                    payload = json.dumps(self._build_state_dict(), ensure_ascii=False)
+                    with self._reveal_lock:
+                        self._settings_pending_reveal = True
+                    self.settings_window.evaluate_js(
+                        f"window.switchSection && switchSection({json.dumps(target_sec)});"
+                        f"window.applyState && applyState({payload});"
+                        f"requestAnimationFrame(()=>requestAnimationFrame(()=>window.pywebview?.api?.ui_ready()));"
+                    )
+                    threading.Timer(0.15, self._reveal_settings_if_needed).start()
+                    return
             except Exception:
                 self.settings_window = None
                 self.settings_hwnd = 0
 
+        # 首次创建设置窗口：通过 Opacity=0 预渲染，等首帧就绪后再一次性显现
         log_x = int(round(px / scale))
         log_y = int(round(py / scale))
         log_w = max(680, int(round(pw / scale)))
         log_h = max(460, int(round(ph / scale)))
+
+        with self._reveal_lock:
+            self._settings_ready = False
+            self._settings_pending_reveal = True
 
         url = f"{UI_SETTINGS_HTML.as_uri()}#{target_sec}"
         win = webview.create_window(
@@ -647,44 +778,40 @@ class MouseBatteryApp:
             frameless=True,
             easy_drag=False,
             transparent=False,
+            background_color=self._theme_bg_hex(),
             resizable=True,
             js_api=_JsApi(self, "settings"),
         )
         self.settings_window = win
 
         def _on_settings_loaded():
-            for _ in range(15):
+            for _ in range(20):
                 self.settings_hwnd = self._find_hwnd_for(win, SETTINGS_WINDOW_TITLE)
                 if self.settings_hwnd:
                     break
-                time.sleep(0.05)
+                time.sleep(0.04)
             if self.settings_hwnd:
                 _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
-                # 校验实际物理位置，如因系统 DPI 舍入有偏差 >2px 则静默微调对齐
                 tpx, tpy, tpw, tph, _ = self._compute_settings_target_phys_rect()
-                cx, cy, cw, ch = _get_window_rect(self.settings_hwnd)
-                if abs(cx - tpx) > 2 or abs(cy - tpy) > 2 or abs(cw - tpw) > 2 or abs(ch - tph) > 2:
-                    _set_window_pos(self.settings_hwnd, tpx, tpy, tpw, tph)
+                _set_window_pos(self.settings_hwnd, tpx, tpy, tpw, tph)
             self._push_state_to_ui()
+            # 兜底定时器：若前端回调异常延迟，最迟 0.8s 自动显现，绝不卡死
+            threading.Timer(0.8, self._reveal_settings_if_needed).start()
 
         def _on_settings_closed():
             self.settings_window = None
             self.settings_hwnd = 0
             self._settings_maximized = False
+            self._settings_ready = False
 
         win.events.loaded += _on_settings_loaded
         win.events.closed += _on_settings_closed
 
     def close_settings_window(self) -> None:
-        win = self.settings_window
-        if win is not None:
-            try:
-                win.destroy()
-            except Exception:
-                pass
-        self.settings_window = None
-        self.settings_hwnd = 0
-        self._settings_maximized = False
+        """隐藏并复用设置窗口实例（彻底避免下次打开重新冷启动 WebView2 导致的闪烁）。"""
+        if self.settings_window is not None:
+            _set_form_visibility(self.settings_window, visible=False, opacity=0.0)
+            self._settings_maximized = False
 
     def minimize_window(self, target: str = "main") -> None:
         win = self.settings_window if target == "settings" else self.window
@@ -715,11 +842,7 @@ class MouseBatteryApp:
         """按「关闭窗口时最小化至托盘」设置决定隐藏到托盘还是退出程序。"""
         if self.cfg.close_to_tray:
             self._allow_show = False
-            if self.window is not None:
-                try:
-                    self.window.hide()
-                except Exception:
-                    pass
+            _set_form_visibility(self.window, visible=False, opacity=0.0)
         else:
             self.quit_app()
 
@@ -1214,19 +1337,19 @@ class MouseBatteryApp:
 
         if self.hwnd:
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
-            # WinForms frameless 模式初始化时会裁掉非客户区尺寸，此处恢复精确目标尺寸并校准工作区居中（左上角不变，无跳动）
+            # WinForms frameless 模式初始化时会裁掉非客户区尺寸，此时窗口 Opacity=0，恢复精确目标尺寸并校准居中完全不可见
             work, scale = _get_window_monitor_work_area_and_scale(self.hwnd)
             target_w = int(round(max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0])) * scale))
             target_h = int(round(max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])) * scale))
             tpx, tpy, tpw, tph = _compute_centered_rect(work, target_w, target_h)
             _set_window_pos(self.hwnd, tpx, tpy, tpw, tph, topmost=self.cfg.topmost)
-            if not self._allow_show and self.window is not None:
-                try:
-                    self.window.hide()
-                except Exception:
-                    pass
+            if not self._allow_show:
+                _set_form_visibility(self.window, visible=False, opacity=0.0)
 
         self._push_state_to_ui()
+        if self._allow_show:
+            # 兜底定时器：确保最迟 0.8s 显现，正常情况下由前端 ui_ready() 在首帧就绪时立刻显现
+            threading.Timer(0.8, self._reveal_main_if_needed).start()
         self._start_tray()
         self._sync_floating_widget()
         threading.Thread(target=self._poll_loop, daemon=True).start()
@@ -1248,6 +1371,7 @@ class MouseBatteryApp:
             k32.CloseHandle(wintypes.HANDLE(ev))
 
     def run(self) -> None:
+        _install_flicker_free_patch()
         ico_path = ensure_app_ico()
         log_x, log_y, log_w, log_h = self._compute_main_initial_logical_bounds()
         self.window = webview.create_window(
@@ -1261,6 +1385,7 @@ class MouseBatteryApp:
             frameless=True,
             easy_drag=False,
             transparent=False,
+            background_color=self._theme_bg_hex(),
             hidden=self.start_hidden,
             on_top=self.cfg.topmost,
             resizable=True,
@@ -1278,6 +1403,9 @@ class _JsApi:
 
     def get_initial_state(self) -> dict[str, Any]:
         return self._app._build_state_dict()
+
+    def ui_ready(self) -> None:
+        self._app.on_ui_ready(self._target)
 
     def begin_drag(self, sx: int, sy: int) -> None:
         self._app.begin_drag(self._target, sx, sy)

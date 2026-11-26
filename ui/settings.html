@@ -1245,10 +1245,24 @@
     }
   });
 
+  let _uiReadySent = false;
+  function notifyReadyOnce() {
+    if (_uiReadySent) return;
+    _uiReadySent = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.pywebview?.api?.ui_ready();
+      });
+    });
+  }
+
   window.addEventListener("pywebviewready", () => {
     const hash = (location.hash || "").replace("#", "") || "general";
     switchSection(hash);
-    window.pywebview.api.get_initial_state().then(applyState);
+    window.pywebview.api.get_initial_state().then((st) => {
+      applyState(st);
+      notifyReadyOnce();
+    });
   });
 </script>
 </body>
