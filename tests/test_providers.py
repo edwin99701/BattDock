@@ -189,9 +189,9 @@ class TestAsusAndSony(unittest.TestCase):
         self.assertTrue(chg)
         self.assertEqual((sub.left_percent, sub.right_percent, sub.case_percent), (70, 85, 95))
 
-        # Strix Go 2.4: 3850 mV -> 75%
+        # Strix Go 2.4: 3850 mV -> 分段线性插值 79% (3800=75%, 4100=100%)
         sg = [0xFF, 0x1B] + [0] * 9 + [0x0A, 0x0F]
-        self.assertEqual(parse_asus_strix_go(sg), (True, 75, False, 3850))
+        self.assertEqual(parse_asus_strix_go(sg), (True, 79, False, 3850))
 
     def test_sony_inzone_h5_and_buds(self) -> None:
         req = build_sony_inzone_request()
@@ -1215,6 +1215,270 @@ class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
         names = [p.name for p in mgr.providers]
         self.assertIn("standard_hid", names)
         self.assertEqual(len(names), 11)
+
+    def test_v271_precision_mchose_guardrails_pulse3d_stdhid_and_ui(self):
+        import json
+        import tempfile
+        from unittest.mock import MagicMock, patch
+        import app_config
+        import updater
+        from providers.base import (
+            BatteryProvider,
+            KIND_HEADSET,
+            KIND_MOUSE,
+            build_hid_output_report,
+            map_range,
+            round_half_up,
+        )
+        from providers.corsair_hid import corsair_tenths_to_percent
+        from providers.extra_brands import parse_asus_strix_go
+        from providers.hyperx_hid import parse_hyperx_stinger_core_battery
+        from providers.manager import DeviceManager
+        from providers.razer_hid import raw_razer_level_to_percent
+        from providers.standard_hid import StandardHidBatteryProvider, scale_hid_battery_value
+        from providers.wireless_headsets import (
+            AIROHA_RACE_HEADSETS,
+            WirelessHeadsetsProvider,
+            collect_hid_mouse_keyboard_vps,
+            is_safe_mchose_headset_candidate,
+            parse_mchose_v9_pro_2_reply,
+            parse_poly_bt600_reply,
+        )
+
+        # 1. 全适配器取整/保底/插值精度校验
+        self.assertEqual(round_half_up(12.5), 13)
+        self.assertEqual(map_range(1, 0, 8), 13)
+        self.assertEqual(map_range(5, 0, 8), 63)
+        self.assertEqual(corsair_tenths_to_percent(859), 86)
+        self.assertEqual(corsair_tenths_to_percent(855), 86)
+        self.assertEqual(corsair_tenths_to_percent(1), 1)
+        self.assertIsNone(corsair_tenths_to_percent(0))
+        self.assertEqual(raw_razer_level_to_percent(1), 1)
+        self.assertIsNone(raw_razer_level_to_percent(0))
+        self.assertEqual(scale_hid_battery_value(1, 0, 255), 1)
+        self.assertIsNone(scale_hid_battery_value(0, 0, 255))
+        # Poly BT600: 4 档中第 2 档应四舍五入为 67%（非地板除 66%）
+        poly_4 = [0x07, 0x01, 0x01, 0x10, 0x00, 0x02, 0x00, 0x00, 0x03, 0x0A, 0x1A, 2, 4, 0]
+        self.assertEqual(parse_poly_bt600_reply(poly_4), (67, False))
+        # HyperX Stinger Core: 3999 mV 位于 (3954,80)..(4042,90)，四舍五入得 85%
+        stinger_3999 = [0xFF, 0x12, 0x05, 0, 0, 0, 0, 0, 0, 0x03, 0, 3999 & 0xFF, 3999 >> 8]
+        self.assertEqual(parse_hyperx_stinger_core_battery(stinger_3999), (85, False, False))
+        # ASUS ROG Strix Go 2.4: 3950 mV 位于 (3800,75)..(4100,100) 中点 -> 88%
+        strix_3950 = [0xFF, 0x1B, 0, 0, 0, 0, 0, 0, 0, 0x00, 0, 3950 & 0xFF, 3950 >> 8]
+        self.assertEqual(parse_asus_strix_go(strix_3950), (True, 88, False, 3950))
+
+        # 2. output_report_id 补 0x00 与迈从耳机安全护栏（严禁触碰 0x01 鼠键输入集合）
+        self.assertEqual(build_hid_output_report([0x55, 0x65, 0x01], 65, 0)[:4], [0x00, 0x55, 0x65, 0x01])
+        self.assertEqual(len(build_hid_output_report([0x55, 0x65, 0x01], 65, 0)), 65)
+        self.assertEqual(build_hid_output_report([0x55, 0x65, 0x01], 64, 0x55)[:3], [0x55, 0x65, 0x01])
+        # Audeze Maxwell 有线 PID 0x4B1A 已支持
+        self.assertIn((0x3329, 0x4B1A), AIROHA_RACE_HEADSETS)
+        self.assertTrue(AIROHA_RACE_HEADSETS[(0x3329, 0x4B1A)][3])
+        # 兼容前导 0x00 的迈从 MC 协议包
+        mc_body = [0x55, 0xAA, 0x01, 0x01, 0x03, 0x00, 0x01, 0x0B, 0x01, 72]
+        xor_v = 0
+        for b in mc_body[3:]:
+            xor_v ^= b
+        self.assertEqual(parse_mchose_v9_pro_2_reply([0x00] + mc_body + [xor_v]), (True, 72, False))
+
+        fake_snap = [
+            # 某迈从鼠标暴露了标准鼠标集合 0x01:0x02 与厂商集合 0xFF00 -> 整机严禁被耳机探测触碰
+            {"vendor_id": 0x3837, "product_id": 0x9001, "usage_page": 0x0001, "usage": 0x0002, "product_string": "MCHOSE Mouse"},
+            {"vendor_id": 0x3837, "product_id": 0x9001, "usage_page": 0xFF00, "usage": 0x0001, "product_string": "MCHOSE Mouse"},
+            # 某迈从无线耳机仅暴露音频 + 两个 Vendor 集合（0xFF01 无应答 + 0xFF90 有效）
+            {"vendor_id": 0x3837, "product_id": 0x6099, "usage_page": 0x000C, "usage": 0x0001, "product_string": "MCHOSE S9 Pro"},
+            {"vendor_id": 0x3837, "product_id": 0x6099, "usage_page": 0xFF01, "usage": 0x0001, "path": b"mchose-bad", "interface_number": 2, "product_string": "MCHOSE S9 Pro"},
+            {"vendor_id": 0x3837, "product_id": 0x6099, "usage_page": 0xFF90, "usage": 0x0001, "path": b"mchose-ok", "interface_number": 3, "product_string": "MCHOSE S9 Pro"},
+        ]
+        mk_vps = collect_hid_mouse_keyboard_vps(fake_snap)
+        self.assertIn((0x3837, 0x9001), mk_vps)
+        self.assertFalse(is_safe_mchose_headset_candidate(fake_snap[0], mk_vps))
+        self.assertFalse(is_safe_mchose_headset_candidate(fake_snap[1], mk_vps))
+        self.assertFalse(is_safe_mchose_headset_candidate(fake_snap[2], mk_vps))
+        self.assertTrue(is_safe_mchose_headset_candidate(fake_snap[4], mk_vps))
+
+        # 多集合不锁死 + 空包过滤模拟：第 1 个 Vendor 集合返回空包，第 2 个集合返回 85%
+        class _FakeMchoseHid:
+            def __init__(self):
+                self.path = b""
+                self.reads = []
+
+            def open_path(self, p):
+                self.path = p
+
+            def write(self, data):
+                if self.path == b"mchose-ok" and 0x55 in data and 0x65 in data:
+                    self.reads = [[0x00] * 64, [0x00, 0x55, 0x65, 85, 0x02] + [0x00] * 59]
+                else:
+                    self.reads = [[0x00] * 64]
+                return len(data)
+
+            def read(self, _n, _t=0):
+                return self.reads.pop(0) if self.reads else []
+
+            def close(self):
+                pass
+
+        wh_provider = WirelessHeadsetsProvider()
+        with patch("providers.wireless_headsets.hid.device", side_effect=_FakeMchoseHid), \
+             patch("providers.wireless_headsets.get_hid_report_lengths", return_value=(65, 65, 0)), \
+             patch("providers.wireless_headsets.get_hid_output_report_id", return_value=0):
+            found_hs = wh_provider.poll(fake_snap)
+        self.assertEqual(len(found_hs), 1)
+        self.assertEqual(found_hs[0].brand, "MCHOSE")
+        self.assertTrue(found_hs[0].online)
+        self.assertEqual(found_hs[0].percent, 85)
+
+        # 3. Sony PULSE 3D 常驻只读句柄：持续读取 + 异常/休眠唤醒/拔出/退出彻底释放
+        pulse_handles = []
+
+        class _FakePulseHid:
+            def __init__(self):
+                self.closed = False
+                self.raise_on_read = False
+                self.queue = [[0xB0, 0, 0, 77, 0x08, 0, 0, 0]]
+                pulse_handles.append(self)
+
+            def open_path(self, _p):
+                pass
+
+            def set_nonblocking(self, _v):
+                pass
+
+            def read(self, _n):
+                if self.raise_on_read:
+                    raise OSError("disconnected")
+                return self.queue.pop(0) if self.queue else []
+
+            def close(self):
+                self.closed = True
+
+        pulse_snap = [{
+            "vendor_id": 0x054C,
+            "product_id": 0x0D5E,
+            "usage_page": 0xFF01,
+            "usage": 0x0020,
+            "path": b"pulse3d-path",
+        }]
+        wh_p3 = WirelessHeadsetsProvider()
+        with patch("providers.wireless_headsets.hid.device", side_effect=_FakePulseHid):
+            res1 = wh_p3.poll(pulse_snap)
+            self.assertEqual(len(res1), 1)
+            self.assertEqual(res1[0].percent, 77)
+            self.assertEqual(len(pulse_handles), 1)
+            self.assertFalse(pulse_handles[0].closed)  # 保持常驻
+            # 休眠唤醒释放句柄
+            wh_p3.on_power_resume()
+            self.assertTrue(pulse_handles[0].closed)
+            # 再次轮询自动重建，遇到 OSError 立即释放
+            wh_p3.poll(pulse_snap)
+            self.assertEqual(len(pulse_handles), 2)
+            pulse_handles[1].raise_on_read = True
+            wh_p3.poll(pulse_snap)
+            self.assertTrue(pulse_handles[1].closed)
+            # 再次重建后拔出设备立即释放
+            wh_p3.poll(pulse_snap)
+            self.assertEqual(len(pulse_handles), 3)
+            self.assertEqual(wh_p3.poll([]), [])
+            self.assertTrue(pulse_handles[2].closed)
+            # 退出 stop() 释放
+            wh_p3.poll(pulse_snap)
+            self.assertEqual(len(pulse_handles), 4)
+            wh_p3.stop()
+            self.assertTrue(pulse_handles[3].closed)
+
+        # 4. standard_hid 放宽 VID 后，严格跳过专用适配器已在线与已登记休眠占位的 (vid, pid)
+        class _MockDedicated(BatteryProvider):
+            name = "mock_dedicated"
+            brand = "Dedicated"
+
+            def poll(self, _snap):
+                return [
+                    DeviceBattery("ded:online", "Logitech G Pro", "Logitech", KIND_MOUSE, vid=0x046D, pid=0xC547, connected=True, online=True, asleep=False, percent=90),
+                    DeviceBattery("ded:asleep", "VGN Dragonfly F2 Pro Max", "VGN", KIND_MOUSE, vid=0x3554, pid=0xFB3E, connected=True, online=False, asleep=True, percent=None),
+                ]
+
+        std_snap = [
+            {"vendor_id": 0x046D, "product_id": 0xC547, "path": b"p1", "product_string": "Logitech G Pro"},
+            {"vendor_id": 0x3554, "product_id": 0xFB3E, "path": b"p2", "product_string": "VGN F2 Pro Max"},
+            {"vendor_id": 0x046D, "product_id": 0x9999, "path": b"p3", "product_string": "Logitech Office Mouse"},
+        ]
+        mgr2 = DeviceManager(providers=[_MockDedicated(), StandardHidBatteryProvider()])
+        with patch("providers.standard_hid.get_hid_report_lengths", return_value=(0, 0, 8)), \
+             patch("providers.standard_hid.read_standard_hid_battery_strength", return_value=82):
+            merged = mgr2.poll(std_snap, force_query=True)
+        ids = {d.device_id for d in merged}
+        self.assertEqual(ids, {"ded:online", "ded:asleep", "stdhid:046d:9999"})
+
+        # 5. 老配置残留线路规范化、国内优先+GitHub静默回退、关于页精简与托盘勾选同步校验
+        with tempfile.TemporaryDirectory() as td:
+            old_cfg_file = Path(td) / "config.json"
+            old_cfg_file.write_text(
+                json.dumps({"update_source": "github", "update_custom_mirror": "https://dead.example/"}),
+                encoding="utf-8",
+            )
+            with patch.object(app_config, "CONFIG_PATH", old_cfg_file), \
+                 patch.object(app_config, "LEGACY_CONFIG_PATH", old_cfg_file):
+                loaded = app_config.load_config()
+            self.assertEqual(loaded.update_source, "auto")
+            self.assertEqual(loaded.update_custom_mirror, "")
+
+        # 国内镜像全失败时静默回退 GitHub API
+        called_urls = []
+
+        class _FakeGhResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "tag_name": "v2.7.2",
+                    "draft": False,
+                    "prerelease": False,
+                    "html_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/tag/v2.7.2",
+                    "body": "• 静默回退测试",
+                    "assets": [{
+                        "name": "BattDock-v2.7.2-Windows-x64-Portable.zip",
+                        "browser_download_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.2/BattDock-v2.7.2-Windows-x64-Portable.zip",
+                        "size": 123456,
+                    }],
+                }).encode("utf-8")
+
+        def _fake_fallback_open(req, timeout=10.0):
+            called_urls.append(req.full_url)
+            if "api.github.com" not in req.full_url:
+                raise OSError("cn mirror down")
+            return _FakeGhResp()
+
+        with patch("updater.urllib.request.urlopen", side_effect=_fake_fallback_open):
+            fb_res = updater.check_for_update("2.7.1", update_source="auto")
+        self.assertTrue(fb_res.ok)
+        self.assertEqual(fb_res.latest_version, "2.7.2")
+        self.assertTrue(any("api.github.com" in u for u in called_urls))
+        self.assertFalse("api.github.com" in called_urls[0])  # 国内高速通道优先
+
+        # 关于页与托盘结构不变量
+        root = Path(__file__).resolve().parent.parent
+        set_html = (root / "ui" / "settings.html").read_text(encoding="utf-8")
+        self.assertNotIn("更新下载线路", set_html)
+        self.assertNotIn("cs-updSource", set_html)
+        self.assertNotIn("inp-customMirror", set_html)
+        self.assertNotIn("checkedSuffix", set_html)
+        self.assertIn("项目主页", set_html)
+        self.assertIn("doCopyDiag", set_html)
+        self.assertIn("复制诊断", set_html)
+
+        app_src = (root / "mouse_battery_app.py").read_text(encoding="utf-8")
+        idx_open = app_src.index('f"打开 {APP_NAME}"')
+        idx_flt = app_src.index('"显示桌面悬浮窗"')
+        idx_set = app_src.index('"设置", lambda _i, _m: self.open_settings_window')
+        self.assertLess(idx_open, idx_flt)
+        self.assertLess(idx_flt, idx_set)
+        self.assertIn("checked=lambda _item: self._is_floating_enabled()", app_src)
+        self.assertIn("self._refresh_tray_menu()", app_src)
 
 
 if __name__ == "__main__":

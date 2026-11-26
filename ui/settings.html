@@ -548,6 +548,8 @@
   .about-name { font-size: 17px; font-weight: 700; line-height: 1.25; color: var(--text-primary); letter-spacing: -0.01em; }
   .about-ver { font-size: 13px; line-height: 1.25; color: var(--text-secondary); }
   .about-actions { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .btn-ico-text { display: inline-flex; align-items: center; gap: 6px; }
+  .btn-ico-text svg { flex-shrink: 0; display: block; }
 
   /* 软件更新面板（顶部版本对比 + 中部简明摘要 + 底部自动重启提示与操作按钮） */
   .update-banner {
@@ -1336,9 +1338,12 @@
               </div>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">GitHub 项目仓库</span><span class="row-hint">edwin99701/wireless-peripheral-battery-monitor（MIT 开源）</span></div>
+              <div class="row-text"><span class="row-label">项目主页</span><span class="row-hint">查看更新日志、使用说明与问题反馈</span></div>
               <div class="about-actions">
-                <button class="btn btn-sm" onclick="openRepoUrl()">打开仓库</button>
+                <button class="btn btn-sm btn-ico-text" onclick="openRepoUrl()">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5C6.2 1.5 1.5 6.2 1.5 12c0 4.64 3.01 8.58 7.18 9.97.53.1.72-.23.72-.5 0-.25-.01-1.07-.01-1.94-2.92.63-3.54-1.24-3.54-1.24-.48-1.21-1.17-1.53-1.17-1.53-.95-.65.07-.64.07-.64 1.05.07 1.61 1.08 1.61 1.08.94 1.61 2.46 1.14 3.06.87.09-.68.37-1.14.67-1.41-2.33-.26-4.78-1.17-4.78-5.19 0-1.15.41-2.09 1.08-2.82-.11-.27-.47-1.33.1-2.78 0 0 .88-.28 2.89 1.08a10.05 10.05 0 0 1 5.26 0c2.01-1.36 2.89-1.08 2.89-1.08.57 1.45.21 2.51.1 2.78.67.73 1.08 1.67 1.08 2.82 0 4.03-2.45 4.92-4.79 5.18.38.33.71.97.71 1.95 0 1.41-.01 2.55-.01 2.9 0 .28.19.61.73.5A10.51 10.51 0 0 0 22.5 12c0-5.8-4.7-10.5-10.5-10.5z"/></svg>
+                  <span>项目主页</span>
+                </button>
                 <button class="btn btn-sm" onclick="window.pywebview?.api?.open_project_folder()">本地目录</button>
               </div>
             </div>
@@ -1347,15 +1352,7 @@
               <button id="sw-autoUpdate" class="toggle" onclick="toggleBool('auto_check_updates')"><span class="toggle-knob"></span></button>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">更新下载线路</span><span class="row-hint">国内环境推荐「自动优选」，支持多加速节点自动择优与失败切换</span></div>
-              <div id="cs-updSource" class="cselect" style="width:196px"></div>
-            </div>
-            <div id="row-customMirror" class="row" style="display:none;">
-              <div class="row-text"><span class="row-label">自定义加速前缀</span><span class="row-hint">仅支持 HTTPS 前缀，例如 https://gh-proxy.org/</span></div>
-              <input id="inp-customMirror" class="text-input" style="width:210px" placeholder="https://your-mirror.example/" onchange="saveCustomMirror(this.value)" />
-            </div>
-            <div class="row">
-              <div class="row-text"><span class="row-label">软件更新</span><span id="updateStatusHint" class="row-hint">检查最新稳定版本（自动匹配最快下载线路）</span></div>
+              <div class="row-text"><span class="row-label">软件更新</span><span id="updateStatusHint" class="row-hint">检查最新稳定版本</span></div>
               <div class="about-actions">
                 <button id="btnCheckUpdate" class="btn btn-sm" onclick="doCheckUpdates()">检查更新</button>
                 <button id="btnCancelUpdate" class="btn btn-sm" style="display:none;" onclick="doCancelUpdate()">取消下载</button>
@@ -1401,8 +1398,11 @@
               <button class="btn btn-sm" onclick="openLicModal()">查看许可</button>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">诊断日志导出</span><span class="row-hint">导出脱敏 JSON 报告（不含隐私路径与序列号），便于排查兼容问题</span></div>
-              <button class="btn btn-primary btn-sm" onclick="doExportDiag()">导出诊断</button>
+              <div class="row-text"><span class="row-label">诊断日志导出</span><span class="row-hint">生成脱敏 JSON 报告（不含隐私路径与序列号），便于排查兼容问题</span></div>
+              <div class="about-actions">
+                <button id="btnCopyDiag" class="btn btn-sm" onclick="doCopyDiag()">复制诊断</button>
+                <button class="btn btn-primary btn-sm" onclick="doExportDiag()">导出诊断</button>
+              </div>
             </div>
           </div>
         </section>
@@ -2290,14 +2290,6 @@
     if (state.app_name) document.getElementById("aboutAppName").textContent = state.app_name;
     document.getElementById("aboutVer").textContent = state.app_version ? `v${state.app_version}` : "";
     setSw("sw-autoUpdate", cfg.auto_check_updates !== false);
-    const updSource = cfg.update_source || "auto";
-    setCustomSelectValue("cs-updSource", updSource);
-    const customMirrorRow = document.getElementById("row-customMirror");
-    if (customMirrorRow) customMirrorRow.style.display = updSource === "custom" ? "flex" : "none";
-    const customMirrorInp = document.getElementById("inp-customMirror");
-    if (customMirrorInp && document.activeElement !== customMirrorInp) {
-      customMirrorInp.value = cfg.update_custom_mirror || "";
-    }
     renderUpdateSection(state.update_state || {});
   }
 
@@ -2319,7 +2311,6 @@
     const btnFallback = document.getElementById("btnFallbackDownload");
     const btnInstall = document.getElementById("btnInstallUpdate");
 
-    const checkedSuffix = upd.checked_at ? `（${upd.checked_at}）` : "";
     const busy = status === "downloading" || status === "verifying" || status === "preparing" || status === "restarting";
 
     if (status === "checking") {
@@ -2334,13 +2325,13 @@
       btnCancel.style.display = status === "downloading" ? "inline-flex" : "none";
     } else if (status === "available") {
       const sizeMb = upd.asset_size ? ` · ${(upd.asset_size / (1024 * 1024)).toFixed(1)} MB` : "";
-      hint.textContent = `发现新版本 v${upd.latest_version}${sizeMb}${checkedSuffix}`;
+      hint.textContent = `发现新版本 v${upd.latest_version}${sizeMb}`;
       btnCheck.style.display = "inline-flex";
       btnCheck.disabled = false;
       btnCheck.textContent = "重新检查";
       btnCancel.style.display = "none";
     } else if (status === "up_to_date") {
-      hint.textContent = `已是最新版本${checkedSuffix}`;
+      hint.textContent = "已是最新版本";
       btnCheck.style.display = "inline-flex";
       btnCheck.disabled = false;
       btnCheck.textContent = "检查更新";
@@ -2352,7 +2343,7 @@
       btnCheck.textContent = "重试检查";
       btnCancel.style.display = "none";
     } else {
-      hint.textContent = "检查 GitHub Releases 最新稳定版本";
+      hint.textContent = "检查最新稳定版本";
       btnCheck.style.display = "inline-flex";
       btnCheck.disabled = false;
       btnCheck.textContent = "检查更新";
@@ -2424,26 +2415,6 @@
     { value: "custom", label: "自定义拖动位置" },
   ], (v) => patchFloating({ position_preset: v }));
   initCustomSelect("cs-fltDev", [{ value: "auto", label: "自动（优先最低电量设备）" }], (v) => patchFloating({ device_id: v }));
-  initCustomSelect("cs-updSource", [
-    { value: "auto", label: "自动优选（国内加速）" },
-    { value: "cn", label: "仅国内加速镜像" },
-    { value: "github", label: "GitHub 官方直连" },
-    { value: "custom", label: "自定义加速源" },
-  ], (v) => {
-    const row = document.getElementById("row-customMirror");
-    if (row) row.style.display = v === "custom" ? "flex" : "none";
-    patchSettings({ update_source: v });
-  });
-
-  function saveCustomMirror(raw) {
-    const val = (raw || "").trim();
-    if (val && !val.toLowerCase().startsWith("https://")) {
-      showToast("出于安全限制，自定义加速前缀必须以 https:// 开头");
-      return;
-    }
-    patchSettings({ update_custom_mirror: val });
-    showToast(val ? "已保存自定义加速前缀" : "已清空自定义加速前缀");
-  }
 
   function patchSettings(patch) { window.pywebview?.api?.update_settings(patch).then(applyState); }
 
@@ -2547,6 +2518,33 @@
   }
 
   function moveDev(did, dir) { window.pywebview?.api?.move_device_order(did, dir).then(applyState); }
+  function doCopyDiag() {
+    const btn = document.getElementById("btnCopyDiag");
+    if (btn) btn.disabled = true;
+    const p = window.pywebview?.api?.copy_diagnostics();
+    if (!p) {
+      if (btn) btn.disabled = false;
+      return;
+    }
+    p.then(async (res) => {
+      if (res && res.ok) {
+        showToast("已复制脱敏诊断报告到剪贴板");
+      } else if (res && res.text && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(res.text);
+          showToast("已复制脱敏诊断报告到剪贴板");
+        } catch (_e) {
+          showToast("复制失败，请改用「导出诊断」");
+        }
+      } else {
+        showToast("复制失败，请改用「导出诊断」");
+      }
+    }).catch(() => {
+      showToast("复制失败，请改用「导出诊断」");
+    }).finally(() => {
+      if (btn) btn.disabled = false;
+    });
+  }
   function doExportDiag() { window.pywebview?.api?.export_diagnostics().then((res) => { if (res && res.ok) showToast(`诊断报告已导出：${res.filename}`); }); }
   function doCheckUpdates() { window.pywebview?.api?.check_updates(false); }
   function doDismissUpdate() { window.pywebview?.api?.dismiss_update_notice().then(() => { if (appState?.update_state) { appState.update_state.dismissed = true; renderUpdateSection(appState.update_state); } }); }

@@ -1,5 +1,23 @@
 # 更新日志（CHANGELOG）
 
+## BattDock v2.7.1（2026-11-27）— 全适配器通信与电量精度修复、关于页精简与托盘悬浮窗开关
+
+### 无线外设通信稳定性、迈从耳机识别与电量精度修复
+- **彻底修复迈从（MCHOSE）无线耳机识别与多集合锁死（`providers/wireless_headsets.py`、`providers/base.py`）**：新增只读 Win32 `output_report_id` 描述符检测，无编号报告自动补前导 `0x00`；多 Vendor 集合改为按 `(vid, pid)` 聚合逐一尝试，杜绝首个无效集合提前锁死；提升读包帧数并过滤全零空包；新增 VID `0x3837 / 0x291D` 迈从耳机受控通用探测（严格排除标准鼠键输入集合 `0x01` 与已知鼠键 PID）。（协议已实现待真机实测）
+- **修复多品牌耳机/键鼠通信与常驻句柄释放（协议已实现待实测）**：
+  - **Airoha RACE & Alienware AW920H**：发查询帧后优先走只读控制管道 `HidD_GetInputReport(0x07)` 并兼容中断读取；补齐 Audeze Maxwell 有线 PID `0x4B1A`；
+  - **JBL / Jabra / Fractal Scape / MOONDROP GM01 Pro / Poly BT600**：统一改为多集合尝试与按真实报表长度定长补齐，Poly BT600 补齐 Hello ACK 握手流程；
+  - **Sony PULSE 3D**：改用锁保护常驻只读异步监听句柄，并在设备拔出、读写异常、`WM_DEVICECHANGE` 热插拔、`WM_POWERBROADCAST` 系统休眠唤醒及软件退出时彻底关闭释放；
+  - **全量其余适配器加固**：修复 MCHOSE 鼠标、无线键盘（CompX / SONiX / Evision / Semico / K87 V3 / Alienware / URX / 荣元）、HyperX、SteelSeries、Corsair、Logitech G 耳机、ASUS ROG / Sony INZONE 的多集合锁死、空包打断与休眠占位缓存，蓝牙 SetupAPI 兼容 4 字节 `UINT32` 电量值读取；
+  - **标准 HID 通用兜底（`providers/standard_hid.py`、`providers/manager.py`）**：放宽固定 VID 屏蔽，改由 `DeviceManager` 按精确 `(vid, pid)` 跳过专用适配器已在线及已登记休眠占位的设备，既覆盖同品牌新款标准 HID 设备又杜绝重复卡片。
+- **全适配器电量取整与插值精度修正**：统一 `providers/base.py` 为标准半入整四舍五入；修正 Corsair Bragi 千分比向下截断、HyperX Stinger Core 与 ASUS ROG Strix Go 2.4 电压分段线性插值、Poly BT600 向下整除以及 Razer / `standard_hid` 极低电量 `raw == 1` 被误判为休眠的边界问题；`VGN Dragonfly F2 Pro Max (3554:FB3E)` 经本机实测核验继续原样透传固件原生 `Byte[6]`。
+
+### 关于页精简、一键复制诊断与托盘悬浮窗开关
+- **精简「关于软件」页面与更新策略（`ui/settings.html`、`updater.py`、`app_config.py`）**：移除「更新下载线路」与「自定义加速前缀」设置项（后台默认国内高速通道优先并静默回退 GitHub，自动兼容升级旧配置）、移除检查更新时间戳、「GitHub 项目仓库」更新为黑白单色图标 +「项目主页」，底部诊断栏并排新增轻量「复制诊断」按钮（直接复制脱敏 JSON 至剪贴板）。
+- **新增托盘「显示桌面悬浮窗」原生勾选菜单（`mouse_battery_app.py`）**：在右键菜单「打开 BattDock」下方、「设置」上方新增原生勾选开关，与设置页实时双向同步并持久化。
+
+---
+
 ## BattDock v2.7.0（2026-11-26）— 修复 iKF 与蓝牙耳机漏识别、新增标准 HID 通用电池读取与多品牌耳机/键盘扩展
 
 ### 修复 iKF 与 Windows 蓝牙耳机/键盘漏识别

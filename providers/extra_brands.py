@@ -26,6 +26,7 @@ from .base import (
     SubBattery,
     get_hid_report_lengths,
     hid_drain,
+    interpolate_voltage,
     pad_report,
 )
 
@@ -291,8 +292,18 @@ def parse_asus_cetra_speednova(
     return (True, main_pct, l_chg or r_chg, sub)
 
 
+_STRIX_GO_CURVE: list[tuple[int, int]] = [
+    (4100, 100),
+    (3800, 75),
+    (3700, 50),
+    (3500, 25),
+    (3300, 10),
+    (3150, 0),
+]
+
+
 def parse_asus_strix_go(raw: list[int] | bytes) -> tuple[bool, Optional[int], bool, Optional[int]]:
-    """解析 ROG Strix Go 2.4 Feature Report 0xFF -> (online, percent, charging, mv)。"""
+    """解析 ROG Strix Go 2.4 Feature Report 0xFF -> (online, percent, charging, mv)（电压分段线性插值）。"""
     d = list(raw)
     if len(d) < 13 or d[0] != 0xFF or d[1] != 0x1B:
         return (False, None, False, None)
@@ -301,16 +312,7 @@ def parse_asus_strix_go(raw: list[int] | bytes) -> tuple[bool, Optional[int], bo
         return (True, None, True, mv if 3000 <= mv <= 4400 else None)
     if not (3000 <= mv <= 4400):
         return (True, None, False, None)
-    if mv >= 4100:
-        pct = 100
-    elif mv >= 3800:
-        pct = 75
-    elif mv >= 3700:
-        pct = 50
-    elif mv >= 3500:
-        pct = 25
-    else:
-        pct = 10
+    pct = interpolate_voltage(mv, _STRIX_GO_CURVE)
     return (True, pct, False, mv)
 
 
@@ -380,6 +382,9 @@ class ExtraBrandsProvider(BatteryProvider):
     name = "asus_sony_hid"
     brand = "ASUS / Sony"
 
+    def __init__(self) -> None:
+        self._cache: dict[str, DeviceBattery] = {}
+
     def _ask_asus_report(
         self,
         path: bytes,
@@ -394,10 +399,12 @@ class ExtraBrandsProvider(BatteryProvider):
             req = pad_report(report_len, [report_id, ASUS_CMD_GET, sub])
             if dev.write(req) <= 0:
                 return None
-            for _ in range(8):
+            for _ in range(10):
                 raw = dev.read(66, 120)
                 if not raw:
                     break
+                if not any(raw):
+                    continue
                 body = _strip_report_id(raw, report_id)
                 if len(body) >= 3 and (
                     (body[0] == ASUS_CMD_GET and body[1] == sub)
@@ -415,85 +422,96 @@ class ExtraBrandsProvider(BatteryProvider):
         return None
 
     def _poll_asus_direct(self, entries: list[dict], results: list[DeviceBattery]) -> None:
-        seen_pids: set[int] = set()
+        mouse_groups: dict[int, list[dict]] = {}
+        kb_groups: dict[int, list[dict]] = {}
         for item in entries:
             pid = int(item.get("product_id", 0))
-            if pid in seen_pids:
-                continue
             path = item.get("path")
             if not path:
                 continue
             iface = int(item.get("interface_number", -1))
             up = int(item.get("usage_page", 0))
-
             if pid in ASUS_MICE:
                 spec = ASUS_MICE[pid]
-                if iface != spec.interface or up < 0xFF00:
-                    continue
-                in_len, out_len, _ = get_hid_report_lengths(path)
-                if in_len < 64 or out_len < 64:
-                    continue
-                seen_pids.add(pid)
-                raw = self._ask_asus_report(path, 0x00, ASUS_SUB_MOUSE, max(65, out_len))
+                if iface == spec.interface and up >= 0xFF00:
+                    in_len, out_len, _ = get_hid_report_lengths(path)
+                    if in_len >= 64 and out_len >= 64:
+                        mouse_groups.setdefault(pid, []).append(item)
+            elif pid in ASUS_KEYBOARDS:
+                if iface == 1 and up == 0xFF00:
+                    in_len, out_len, _ = get_hid_report_lengths(path)
+                    if in_len >= 64 and out_len >= 64:
+                        kb_groups.setdefault(pid, []).append(item)
+
+        for pid, colls in mouse_groups.items():
+            spec = ASUS_MICE[pid]
+            online, asleep, pct, chg, detail = (False, True, None, False, "未响应")
+            for c in colls:
+                _, out_len, _ = get_hid_report_lengths(c["path"])
+                raw = self._ask_asus_report(c["path"], 0x00, ASUS_SUB_MOUSE, max(65, out_len))
                 if raw:
                     online, asleep, pct, chg, detail = parse_asus_mouse_reply(
                         raw, 0x00, spec.level_offset, spec.multiplier, spec.charging_offset, spec.cell_battery
                     )
-                else:
-                    online, asleep, pct, chg, detail = (False, False, None, False, "未响应")
-                results.append(
-                    DeviceBattery(
-                        device_id=f"asus:{pid:04x}",
-                        name=spec.name,
-                        brand="ASUS ROG",
-                        kind=KIND_MOUSE,
-                        connection_mode="有线" if spec.is_wired else "2.4G",
-                        vid=ASUS_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        asleep=asleep,
-                        percent=pct,
-                        charging=chg,
-                        full=chg and pct == 100,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail=detail,
-                        provider_name=self.name,
-                    )
-                )
-            elif pid in ASUS_KEYBOARDS:
-                name, is_wired, lvl_off = ASUS_KEYBOARDS[pid]
-                if iface != 1 or up != 0xFF00:
-                    continue
-                in_len, out_len, _ = get_hid_report_lengths(path)
-                if in_len < 64 or out_len < 64:
-                    continue
-                seen_pids.add(pid)
-                raw = self._ask_asus_report(path, 0x00, ASUS_SUB_KEYBOARD, max(65, out_len))
+                    if online:
+                        break
+            dev_id = f"asus:{pid:04x}"
+            prev = self._cache.get(dev_id)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=spec.name,
+                brand="ASUS ROG",
+                kind=KIND_MOUSE,
+                connection_mode="有线" if spec.is_wired else "2.4G",
+                vid=ASUS_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=asleep or not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=chg,
+                full=chg and pct == 100,
+                support_status=STATUS_PROTOCOL,
+                status_detail=detail,
+                provider_name=self.name,
+            )
+            if online:
+                self._cache[dev_id] = item
+            results.append(item)
+
+        for pid, colls in kb_groups.items():
+            name, is_wired, lvl_off = ASUS_KEYBOARDS[pid]
+            online, asleep, pct, chg, detail = (False, True, None, False, "未响应")
+            for c in colls:
+                _, out_len, _ = get_hid_report_lengths(c["path"])
+                raw = self._ask_asus_report(c["path"], 0x00, ASUS_SUB_KEYBOARD, max(65, out_len))
                 if raw:
                     online, asleep, pct, chg, detail = parse_asus_keyboard_reply(raw, 0x00, lvl_off)
-                else:
-                    online, asleep, pct, chg, detail = (False, False, None, False, "未响应")
-                results.append(
-                    DeviceBattery(
-                        device_id=f"asus:{pid:04x}",
-                        name=name,
-                        brand="ASUS ROG",
-                        kind=KIND_KEYBOARD,
-                        connection_mode="有线" if is_wired else "2.4G",
-                        vid=ASUS_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        asleep=asleep,
-                        percent=pct,
-                        charging=chg,
-                        full=chg and pct == 100,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail=detail,
-                        provider_name=self.name,
-                    )
-                )
+                    if online:
+                        break
+            dev_id = f"asus:{pid:04x}"
+            prev = self._cache.get(dev_id)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand="ASUS ROG",
+                kind=KIND_KEYBOARD,
+                connection_mode="有线" if is_wired else "2.4G",
+                vid=ASUS_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=asleep or not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=chg,
+                full=chg and pct == 100,
+                support_status=STATUS_PROTOCOL,
+                status_detail=detail,
+                provider_name=self.name,
+            )
+            if online:
+                self._cache[dev_id] = item
+            results.append(item)
 
     def _poll_asus_receivers(self, entries: list[dict], results: list[DeviceBattery]) -> None:
         recv_entries = [
@@ -593,182 +611,216 @@ class ExtraBrandsProvider(BatteryProvider):
                     )
 
     def _poll_asus_headsets(self, entries: list[dict], results: list[DeviceBattery]) -> None:
-        seen: set[int] = set()
+        grouped: dict[int, list[dict]] = {}
         for item in entries:
             pid = int(item.get("product_id", 0))
-            if pid not in ASUS_HEADSETS or pid in seen:
+            if pid not in ASUS_HEADSETS or not item.get("path"):
                 continue
-            path = item.get("path")
-            if not path:
-                continue
-            name, proto = ASUS_HEADSETS[pid]
+            _name, proto = ASUS_HEADSETS[pid]
             up = int(item.get("usage_page", 0))
-            in_len, out_len, feat_len = get_hid_report_lengths(path)
+            in_len, out_len, feat_len = get_hid_report_lengths(item["path"])
             if proto == "strix_go":
-                if feat_len < 64:
-                    continue
-                seen.add(pid)
-                dev = hid.device()
-                try:
-                    dev.open_path(path)
-                    dev.send_feature_report(pad_report(64, [0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01]))
-                    time.sleep(0.035)
-                    reply = dev.get_feature_report(0xFF, 64)
-                    online, pct, chg, mv = parse_asus_strix_go(reply) if reply else (False, None, False, None)
-                except OSError:
-                    online, pct, chg, mv = (False, None, False, None)
-                finally:
+                if feat_len >= 64:
+                    grouped.setdefault(pid, []).append(item)
+            elif up == 0xFF00 and out_len >= 64:
+                grouped.setdefault(pid, []).append(item)
+
+        for pid, colls in grouped.items():
+            name, proto = ASUS_HEADSETS[pid]
+            dev_id = f"asus-hs:{pid:04x}"
+            prev = self._cache.get(dev_id)
+            if proto == "strix_go":
+                online, pct, chg, mv = (False, None, False, None)
+                for c in colls:
+                    dev = hid.device()
                     try:
-                        dev.close()
-                    except Exception:
-                        pass
-                results.append(
-                    DeviceBattery(
-                        device_id=f"asus-hs:{pid:04x}",
-                        name=name,
-                        brand="ASUS ROG",
-                        kind=KIND_HEADSET,
-                        connection_mode="2.4G",
-                        vid=ASUS_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        percent=pct,
-                        charging=chg,
-                        voltage_mv=mv,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="" if online else "未响应",
-                        provider_name=self.name,
-                    )
+                        dev.open_path(c["path"])
+                        dev.send_feature_report(pad_report(64, [0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01]))
+                        time.sleep(0.035)
+                        reply = dev.get_feature_report(0xFF, 64)
+                        online, pct, chg, mv = parse_asus_strix_go(reply) if reply else (False, None, False, None)
+                        if online:
+                            break
+                    except OSError:
+                        continue
+                    finally:
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand="ASUS ROG",
+                    kind=KIND_HEADSET,
+                    connection_mode="2.4G",
+                    vid=ASUS_VID,
+                    pid=pid,
+                    connected=True,
+                    online=online,
+                    asleep=not online,
+                    percent=pct if online else (prev.percent if prev else None),
+                    charging=chg,
+                    voltage_mv=mv if online else (prev.voltage_mv if prev else None),
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="" if online else "未响应 / 休眠",
+                    provider_name=self.name,
                 )
+                if online:
+                    self._cache[dev_id] = item
+                results.append(item)
             else:
-                if up != 0xFF00 or out_len < 64:
-                    continue
-                seen.add(pid)
-                dev = hid.device()
                 online = False
-                pct: Optional[int] = None
+                pct = None
                 chg = False
                 sub: Optional[SubBattery] = None
-                try:
-                    dev.open_path(path)
-                    hid_drain(dev, 64, 4, 5)
-                    sub_cmd = 0x12 if proto == "cetra_open" else 0x07
-                    dev.write(pad_report(64, [0xCC, 0x12, sub_cmd]))
-                    bat_raw = dev.read(64, 350)
-                    chg_raw = None
-                    if proto in ("rog_cc", "cetra_speednova") and bat_raw:
-                        dev.write(pad_report(64, [0xCC, 0x12, 0x08]))
-                        chg_raw = dev.read(64, 250)
-                    if bat_raw:
-                        if proto == "rog_cc":
-                            online, pct, chg = parse_asus_rog_headset_cc(bat_raw, chg_raw)
-                        elif proto == "cetra_speednova":
-                            online, pct, chg, sub = parse_asus_cetra_speednova(bat_raw, chg_raw)
-                        elif proto == "cetra_open":
-                            b = list(bat_raw)
-                            if len(b) >= 8 and b[0] == 0xCC and b[1] == 0x12 and b[5:7] != [0xFF, 0xAA]:
-                                left = b[5] if 1 <= b[5] <= 100 else None
-                                right = b[6] if 1 <= b[6] <= 100 else None
-                                case = b[7] if 1 <= b[7] <= 100 else None
-                                valid = [x for x in (left, right) if x is not None]
-                                if valid or case is not None:
-                                    online = True
-                                    pct = min(valid) if valid else case
-                                    sub = SubBattery(left_percent=left, right_percent=right, case_percent=case)
-                except OSError:
-                    pass
-                finally:
+                for c in colls:
+                    dev = hid.device()
                     try:
-                        dev.close()
-                    except Exception:
-                        pass
-                results.append(
-                    DeviceBattery(
-                        device_id=f"asus-hs:{pid:04x}",
-                        name=name,
-                        brand="ASUS ROG",
-                        kind=KIND_EARBUDS if "cetra" in proto else KIND_HEADSET,
-                        connection_mode="2.4G",
-                        vid=ASUS_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        percent=pct,
-                        charging=chg,
-                        full=chg and pct == 100,
-                        sub_batteries=sub,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="" if online else "未响应 / 休眠",
-                        provider_name=self.name,
-                    )
+                        dev.open_path(c["path"])
+                        hid_drain(dev, 64, 4, 5)
+                        sub_cmd = 0x12 if proto == "cetra_open" else 0x07
+                        dev.write(pad_report(64, [0xCC, 0x12, sub_cmd]))
+                        bat_raw = None
+                        for _ in range(6):
+                            r0 = dev.read(64, 140)
+                            if not r0:
+                                break
+                            if any(r0) and r0[0] == 0xCC and r0[1] == 0x12:
+                                bat_raw = r0
+                                break
+                        chg_raw = None
+                        if proto in ("rog_cc", "cetra_speednova") and bat_raw:
+                            dev.write(pad_report(64, [0xCC, 0x12, 0x08]))
+                            for _ in range(4):
+                                r1 = dev.read(64, 120)
+                                if not r1:
+                                    break
+                                if any(r1) and r1[0] == 0xCC and r1[1] == 0x12:
+                                    chg_raw = r1
+                                    break
+                        if bat_raw:
+                            if proto == "rog_cc":
+                                online, pct, chg = parse_asus_rog_headset_cc(bat_raw, chg_raw)
+                            elif proto == "cetra_speednova":
+                                online, pct, chg, sub = parse_asus_cetra_speednova(bat_raw, chg_raw)
+                            elif proto == "cetra_open":
+                                b = list(bat_raw)
+                                if len(b) >= 8 and b[0] == 0xCC and b[1] == 0x12 and b[5:7] != [0xFF, 0xAA]:
+                                    left = b[5] if 1 <= b[5] <= 100 else None
+                                    right = b[6] if 1 <= b[6] <= 100 else None
+                                    case = b[7] if 1 <= b[7] <= 100 else None
+                                    valid = [x for x in (left, right) if x is not None]
+                                    if valid or case is not None:
+                                        online = True
+                                        pct = min(valid) if valid else case
+                                        sub = SubBattery(left_percent=left, right_percent=right, case_percent=case)
+                        if online:
+                            break
+                    except OSError:
+                        continue
+                    finally:
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand="ASUS ROG",
+                    kind=KIND_EARBUDS if "cetra" in proto else KIND_HEADSET,
+                    connection_mode="2.4G",
+                    vid=ASUS_VID,
+                    pid=pid,
+                    connected=True,
+                    online=online,
+                    asleep=not online,
+                    percent=pct if online else (prev.percent if prev else None),
+                    charging=chg,
+                    full=chg and pct == 100,
+                    sub_batteries=sub if online else (prev.sub_batteries if prev else None),
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="" if online else "未响应 / 休眠",
+                    provider_name=self.name,
                 )
+                if online:
+                    self._cache[dev_id] = item
+                results.append(item)
 
     def _poll_sony_inzone(self, entries: list[dict], results: list[DeviceBattery]) -> None:
-        seen: set[int] = set()
+        grouped: dict[int, list[dict]] = {}
         for item in entries:
             pid = int(item.get("product_id", 0))
-            if pid not in SONY_INZONE_MODELS or pid in seen:
+            if pid not in SONY_INZONE_MODELS or not item.get("path"):
                 continue
-            path = item.get("path")
-            if not path or int(item.get("usage_page", 0)) != 0xFF04:
+            if int(item.get("usage_page", 0)) != 0xFF04:
                 continue
-            _, out_len, _ = get_hid_report_lengths(path)
-            if out_len < 64:
-                continue
-            seen.add(pid)
+            _, out_len, _ = get_hid_report_lengths(item["path"])
+            if out_len >= 64:
+                grouped.setdefault(pid, []).append(item)
+
+        for pid, colls in grouped.items():
             name, mode = SONY_INZONE_MODELS[pid]
             req = build_sony_inzone_request()
-            dev = hid.device()
             online = False
             pct: Optional[int] = None
             chg = False
             sub: Optional[SubBattery] = None
-            try:
-                dev.open_path(path)
-                hid_drain(dev, 64, 4, 5)
-                dev.write(req)
-                for _ in range(10):
-                    raw = dev.read(64, 150)
-                    if not raw:
-                        break
-                    if mode == "h5":
-                        ok, p, c = parse_sony_inzone_h5(raw)
-                        if ok:
-                            online, pct, chg = ok, p, c
-                            break
-                    else:
-                        ok, p, c, sb = parse_sony_inzone_buds(raw)
-                        if ok:
-                            online, pct, chg, sub = ok, p, c, sb
-                            break
-            except OSError:
-                pass
-            finally:
+            for c in colls:
+                dev = hid.device()
                 try:
-                    dev.close()
-                except Exception:
-                    pass
-            results.append(
-                DeviceBattery(
-                    device_id=f"sony:{pid:04x}",
-                    name=name,
-                    brand="Sony",
-                    kind=KIND_EARBUDS if mode == "buds" else KIND_HEADSET,
-                    connection_mode="2.4G",
-                    vid=SONY_VID,
-                    pid=pid,
-                    connected=True,
-                    online=online,
-                    percent=pct,
-                    charging=chg,
-                    full=chg and pct == 100,
-                    sub_batteries=sub,
-                    support_status=STATUS_PROTOCOL,
-                    status_detail="" if online else "未连接耳机 / 充电盒内",
-                    provider_name=self.name,
-                )
+                    dev.open_path(c["path"])
+                    hid_drain(dev, 64, 4, 5)
+                    dev.write(req)
+                    for _ in range(12):
+                        raw = dev.read(64, 150)
+                        if not raw:
+                            break
+                        if not any(raw):
+                            continue
+                        if mode == "h5":
+                            ok, p, ch = parse_sony_inzone_h5(raw)
+                            if ok:
+                                online, pct, chg = ok, p, ch
+                                break
+                        else:
+                            ok, p, ch, sb = parse_sony_inzone_buds(raw)
+                            if ok:
+                                online, pct, chg, sub = ok, p, ch, sb
+                                break
+                    if online:
+                        break
+                except OSError:
+                    continue
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+            dev_id = f"sony:{pid:04x}"
+            prev = self._cache.get(dev_id)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand="Sony",
+                kind=KIND_EARBUDS if mode == "buds" else KIND_HEADSET,
+                connection_mode="2.4G",
+                vid=SONY_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=chg,
+                full=chg and pct == 100,
+                sub_batteries=sub if online else (prev.sub_batteries if prev else None),
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if online else "未连接耳机 / 充电盒内",
+                provider_name=self.name,
             )
+            if online:
+                self._cache[dev_id] = item
+            results.append(item)
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         results: list[DeviceBattery] = []

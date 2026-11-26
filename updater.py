@@ -498,21 +498,22 @@ def check_for_update(
     update_source: str = UPDATE_SOURCE_AUTO,
     custom_mirror: str = "",
 ) -> UpdateCheckResult:
-    """请求最新稳定版本信息：支持国内加速通道免直连检查与 GitHub API 双向容错。"""
+    """请求最新稳定版本信息：默认国内高速通道优先，失败静默回退 GitHub 官方接口。"""
     cur = normalize_version_str(current_version)
     src = (update_source or UPDATE_SOURCE_AUTO).strip().lower()
 
-    if src in (UPDATE_SOURCE_CN, UPDATE_SOURCE_CUSTOM):
-        mir_res = _check_via_mirror_summary(cur, min(timeout, 8.0), src, custom_mirror)
+    if src in (UPDATE_SOURCE_AUTO, UPDATE_SOURCE_CN, UPDATE_SOURCE_CUSTOM):
+        mir_src = UPDATE_SOURCE_CN if src == UPDATE_SOURCE_AUTO else src
+        mir_res = _check_via_mirror_summary(cur, min(timeout, 6.0), mir_src, custom_mirror)
         if mir_res is not None:
             return mir_res
         if src == UPDATE_SOURCE_CN:
-            return UpdateCheckResult(ok=False, current_version=cur, error="无法连接国内更新镜像，请稍后重试或切换下载线路。")
+            return UpdateCheckResult(ok=False, current_version=cur, error="无法连接更新服务器，请稍后重试。")
 
     req = urllib.request.Request(
         LATEST_RELEASE_API,
         headers={
-            "User-Agent": f"{APP_NAME}/{cur or '2.6'}",
+            "User-Agent": f"{APP_NAME}/{cur or '2.7'}",
             "Accept": "application/vnd.github+json",
         },
     )
@@ -539,20 +540,15 @@ def check_for_update(
                 return res
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            api_err = "GitHub 仓库尚未发布正式版本。"
+            api_err = "尚未发布正式版本。"
         elif e.code == 403:
-            api_err = "GitHub 接口请求频率受限，请稍后再试。"
+            api_err = "更新接口请求频率受限，请稍后再试。"
         else:
             api_err = f"检查更新失败（HTTP {e.code}）。"
     except (urllib.error.URLError, TimeoutError, OSError):
-        api_err = "无法连接 GitHub，请检查网络连接或代理设置。"
+        api_err = "无法连接更新服务器，请检查网络连接或稍后重试。"
     except Exception as e:
         api_err = f"检查更新出错：{e}"
-
-    if src == UPDATE_SOURCE_AUTO:
-        mir_res = _check_via_mirror_summary(cur, min(timeout, 8.0), UPDATE_SOURCE_CN, custom_mirror)
-        if mir_res is not None:
-            return mir_res
 
     return UpdateCheckResult(ok=False, current_version=cur, error=api_err or "检查更新失败。")
 

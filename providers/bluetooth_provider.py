@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ctypes
+import struct
 import sys
 import threading
 import time
@@ -579,7 +580,7 @@ def query_windows_bluetooth_pnp_batteries(provider_name: str = "bluetooth") -> l
                     if not inst_id:
                         continue
 
-                    # 1. 读取电量属性（可选：根节点通常没有，HFP/GATT 子节点才有）
+                    # 1. 读取电量属性（兼容 1 字节 BYTE 与 4 字节小端 UINT32，防止高位非零值截断误报）
                     pct: Optional[int] = None
                     prop_type = wintypes.ULONG(0)
                     bat_buf = (ctypes.c_ubyte * 4)()
@@ -596,9 +597,15 @@ def query_windows_bluetooth_pnp_batteries(provider_name: str = "bluetooth") -> l
                             0,
                         )
                         and req_size.value >= 1
-                        and 0 <= int(bat_buf[0]) <= 100
                     ):
-                        pct = int(bat_buf[0])
+                        if req_size.value >= 4:
+                            raw_bat = struct.unpack_from("<I", bytes(bat_buf), 0)[0]
+                        elif req_size.value == 2:
+                            raw_bat = struct.unpack_from("<H", bytes(bat_buf), 0)[0]
+                        else:
+                            raw_bat = int(bat_buf[0])
+                        if 0 <= raw_bat <= 100:
+                            pct = int(raw_bat)
 
                     # 2. 读取在线状态
                     is_conn: Optional[bool] = None

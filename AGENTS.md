@@ -56,7 +56,7 @@
 2. **自动更新机制要求**：仅识别稳定正式版（过滤 draft/prerelease）、仅 HTTPS 下载、强制匹配 `BattDock-*Portable*.zip`（忽略 `.exe` 安装包与旧版桥接包）、校验 `SHA256SUMS.txt` 与 ZIP 防 Zip Slip、**同盘目录回滚**（`._battdock_rollback_<pid>` 建于目标目录同卷，杜绝跨盘 `Move-Item` 失败）、使用 `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` + `DEVNULL` 启动更新脚本、主进程退出后 `os._exit(0)` 释放文件锁并自动重启新版、保留用户配置与无关文件、清理全部临时文件。
 3. **两套更新说明规范（长期强制）**：
    - **软件内简明摘要**：通过随附 Release 资产 `update-summary.json` 提供 3–5 条面向普通用户的简明中文条目（每条尽量 `<= 25` 字，零 Markdown 符号/源码文件名/提交号/HTML 标签）；重大升级提示写入 `important_notice`。
-   - **GitHub Release 正文**：同样简洁大方，顶部直接以纯净 `•` 列表列出核心更新；**严禁在 Release 正文顶部插入 `<!-- BATTDOCK_SUMMARY_START ... -->` HTML 注释**，以免旧版客户端直接将注释与 JSON 当作纯文本显示成乱码。
+   - **GitHub Release 正文**：保持清爽易读的纯文本排版，**严禁使用 `•`、`###`/`####`、`-`/`*` 列表符号、嵌套缩进符号、`**`、反引号等杂乱格式符号**，统一使用简洁中文小节标题、自然数字编号（如 `1.`、`2.`）与干净段落；同时**严禁在 Release 正文顶部插入 `<!-- BATTDOCK_SUMMARY_START ... -->` HTML 注释**，以免旧版客户端展示乱码。
 4. **标准打包与发布流程**：
    - 统一使用 `build_release.ps1` 自动执行：单元测试 → PyInstaller 构建 `BattDock.exe` 与旧版桥接器 → Inno Setup 6 编译标准中文安装程序 `BattDock-vX.Y.Z-Setup.exe`（`PrivilegesRequired=admin` + `[Dirs] Permissions: users-modify` + `runasoriginaluser`）→ 打包便携 ZIP、桥接 ZIP 与 `SHA256SUMS.txt`。
    - 发布前必须做隐私/敏感信息扫描（零本机路径、零 Token、**不提交本地参考 PNG 原图**），采用 `Draft Release → 核对全部 5 个资产 → 正式发布并设为 Latest → 线上验证更新接口与直链 HTTP 200` 流程。

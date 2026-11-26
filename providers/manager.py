@@ -22,6 +22,7 @@ from .base import (
     STATUS_PROTOCOL,
     STATUS_UNSUPPORTED,
     STATUS_VERIFIED,
+    clear_hid_caps_cache,
 )
 from .bluetooth_provider import BluetoothBatteryProvider
 from .corsair_hid import CorsairHidProvider
@@ -111,6 +112,8 @@ class DeviceManager:
         self._total_full_scans: int = 0
         self._total_timeouts: int = 0
         self._total_retries: int = 0
+        # 记录已由专用适配器接管（含在线与休眠占位）的 (vid, pid)，供 standard_hid 兜底精确跳过防重复卡片
+        self._dedicated_claimed_vps: set[tuple[int, int]] = set()
         self._debug_logging: bool = os.environ.get("BATTDOCK_DEBUG_LOG", "").strip().lower() in ("1", "true", "yes")
         self._debug_log_path: Optional[Path] = debug_log_path
 
@@ -123,10 +126,28 @@ class DeviceManager:
                 self._debug_log_path = log_path
 
     def mark_hid_dirty(self, reason: str = "device_change") -> None:
-        """标记 HID 拓扑已变化（由 Windows WM_DEVICECHANGE 或 IO 异常恢复触发）。"""
+        """标记 HID 拓扑已变化（由 Windows WM_DEVICECHANGE 或 IO 异常恢复触发），并通知适配器重置旧句柄。"""
         with self._poll_lock:
             self._hid_dirty = True
             self._hid_dirty_reason = str(reason or "device_change")
+            clear_hid_caps_cache()
+            for provider in self.providers:
+                try:
+                    provider.on_device_change()
+                except Exception:
+                    pass
+
+    def notify_power_event(self, event: str = "resume") -> None:
+        """系统进入休眠或从休眠唤醒时通知全部适配器释放常驻句柄并刷新拓扑缓存。"""
+        with self._poll_lock:
+            self._hid_dirty = True
+            self._hid_dirty_reason = f"power_{event}"
+            clear_hid_caps_cache()
+            for provider in self.providers:
+                try:
+                    provider.on_power_resume()
+                except Exception:
+                    pass
 
     def _should_rescan_hid(self, now_mono: float, force_rescan: bool, reason: str) -> tuple[bool, str]:
         if self._cached_hid_snapshot is None:
@@ -158,11 +179,33 @@ class DeviceManager:
         except Exception:
             pass
 
-    def _invoke_provider(self, provider: BatteryProvider, hid_snapshot: list[dict], force_query: bool) -> list[DeviceBattery]:
+    def _invoke_provider(
+        self,
+        provider: BatteryProvider,
+        hid_snapshot: list[dict],
+        force_query: bool,
+        *,
+        exclude_vps: Optional[set[tuple[int, int]]] = None,
+    ) -> list[DeviceBattery]:
+        kwargs: dict[str, Any] = {}
         if force_query:
+            kwargs["force"] = True
+        if exclude_vps is not None and provider.name == "standard_hid":
+            kwargs["exclude_vps"] = exclude_vps
+        if kwargs:
             try:
-                return provider.poll(hid_snapshot, force=True)  # type: ignore[call-arg]
+                return provider.poll(hid_snapshot, **kwargs)  # type: ignore[call-arg]
             except TypeError:
+                if "exclude_vps" in kwargs:
+                    try:
+                        return provider.poll(hid_snapshot, exclude_vps=exclude_vps)  # type: ignore[call-arg]
+                    except TypeError:
+                        pass
+                if force_query:
+                    try:
+                        return provider.poll(hid_snapshot, force=True)  # type: ignore[call-arg]
+                    except TypeError:
+                        pass
                 return provider.poll(hid_snapshot)
         return provider.poll(hid_snapshot)
 
@@ -208,16 +251,31 @@ class DeviceManager:
             raw_devices: list[DeviceBattery] = []
             self._provider_errors.clear()
 
+            # 清理已拔出设备的历史专用认领记录，保留当前在场硬件
+            present_vps: set[tuple[int, int]] = {
+                (int(item.get("vendor_id", 0)), int(item.get("product_id", 0)))
+                for item in hid_snapshot
+                if int(item.get("vendor_id", 0)) and int(item.get("product_id", 0))
+            }
+            self._dedicated_claimed_vps &= present_vps
+
             round_timeouts = 0
             round_retries = 0
             round_io_error = False
             round_skipped_backoff = False
 
-            for provider in self.providers:
+            # 先执行所有专用适配器（及蓝牙），再将全部已接管（含在线与休眠占位）的 (vid, pid) 传给 standard_hid 防重复卡片
+            dedicated_providers = [p for p in self.providers if p.name != "standard_hid"]
+            fallback_providers = [p for p in self.providers if p.name == "standard_hid"]
+
+            for provider in dedicated_providers:
                 try:
                     found = self._invoke_provider(provider, hid_snapshot, force_query)
                     if found:
                         raw_devices.extend(found)
+                        for dev in found:
+                            if dev.vid and dev.pid:
+                                self._dedicated_claimed_vps.add((int(dev.vid), int(dev.pid)))
                     get_stats = getattr(provider, "get_last_query_stats", None)
                     if callable(get_stats):
                         pstats = get_stats() or {}
@@ -227,6 +285,22 @@ class DeviceManager:
                             round_io_error = True
                         if pstats.get("skipped_backoff"):
                             round_skipped_backoff = True
+                except Exception as exc:
+                    self._provider_errors[provider.name] = f"{type(exc).__name__}: {exc}"
+                    if isinstance(exc, OSError):
+                        round_io_error = True
+
+            claimed_snapshot = set(self._dedicated_claimed_vps)
+            for provider in fallback_providers:
+                try:
+                    found = self._invoke_provider(
+                        provider,
+                        hid_snapshot,
+                        force_query,
+                        exclude_vps=claimed_snapshot,
+                    )
+                    if found:
+                        raw_devices.extend(found)
                 except Exception as exc:
                     self._provider_errors[provider.name] = f"{type(exc).__name__}: {exc}"
                     if isinstance(exc, OSError):

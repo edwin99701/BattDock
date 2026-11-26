@@ -178,7 +178,7 @@ class _HidppLink:
                     r = d.read(rlen, 25)
                 except OSError:
                     continue
-                if not r or len(r) < 5:
+                if not r or len(r) < 5 or not any(r):
                     continue
                 if r[0] not in (0x10, 0x11) or r[1] != dev_idx:
                     continue
@@ -247,6 +247,7 @@ class LogitechHidppProvider(BatteryProvider):
 
     def __init__(self) -> None:
         self._slots: dict[str, _SlotCache] = {}
+        self._headset_cache: dict[str, DeviceBattery] = {}
 
     def _describe_slot(self, link: _HidppLink, dev_idx: int, pid: int) -> Optional[_SlotCache]:
         slot = _SlotCache(
@@ -291,65 +292,74 @@ class LogitechHidppProvider(BatteryProvider):
 
     def _poll_headsets(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        seen_pids: set[int] = set()
+        grouped: dict[int, list[dict]] = {}
         for d in hid_snapshot:
             if d.get("vendor_id") != LOGITECH_VID:
                 continue
-            pid = d.get("product_id", 0)
-            if pid not in LOGITECH_HEADSETS or pid in seen_pids:
+            pid = int(d.get("product_id", 0))
+            if pid not in LOGITECH_HEADSETS or not d.get("path"):
                 continue
-            name, up, u, fidx, cmd, curve = LOGITECH_HEADSETS[pid]
+            _name, up, u, _fidx, _cmd, _curve = LOGITECH_HEADSETS[pid]
             if d.get("usage_page") != up or d.get("usage") != u:
                 continue
-            path = d.get("path")
-            if not path:
-                continue
-            seen_pids.add(pid)
+            grouped.setdefault(pid, []).append(d)
 
-            dev = hid.device()
+        for pid, colls in grouped.items():
+            name, _up, _u, fidx, cmd, curve = LOGITECH_HEADSETS[pid]
             parsed = None
-            try:
-                dev.open_path(path)
-                hid_drain(dev, 20, 4, 10)
-                pkt = pad_report(20, [0x11, 0xFF, fidx, cmd])
-                dev.write(pkt)
-                for _ in range(4):
-                    raw = dev.read(20, 250)
-                    if not raw:
-                        break
-                    if len(raw) >= 7 and raw[0] == 0x11 and raw[2] == fidx:
-                        parsed = parse_logitech_headset_voltage(raw, curve)
-                        break
-            except OSError:
-                parsed = None
-            finally:
+            for c in colls:
+                path = c["path"]
+                in_len, out_len, _ = get_hid_report_lengths(path)
+                rlen = max(20, in_len)
+                dev = hid.device()
                 try:
-                    dev.close()
-                except Exception:
-                    pass
+                    dev.open_path(path)
+                    hid_drain(dev, rlen, 4, 10)
+                    pkt = pad_report(max(20, out_len), [0x11, 0xFF, fidx, cmd])
+                    dev.write(pkt)
+                    for _ in range(8):
+                        raw = dev.read(rlen, 220)
+                        if not raw:
+                            break
+                        if not any(raw):
+                            continue
+                        if len(raw) >= 7 and raw[0] == 0x11 and raw[2] == fidx:
+                            parsed = parse_logitech_headset_voltage(raw, curve)
+                            break
+                    if parsed is not None and parsed[0]:
+                        break
+                except OSError:
+                    continue
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
 
-            if parsed is not None:
-                online, pct, charging, mv = parsed
-                out.append(
-                    DeviceBattery(
-                        device_id=f"logitech:headset:{pid:04x}",
-                        name=name,
-                        brand="Logitech",
-                        kind=KIND_HEADSET,
-                        connection_mode="2.4G",
-                        vid=LOGITECH_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        asleep=not online,
-                        percent=pct,
-                        charging=charging,
-                        voltage_mv=mv,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="" if online else "耳机离线或休眠",
-                        provider_name=self.name,
-                    )
-                )
+            dev_id = f"logitech:headset:{pid:04x}"
+            prev = self._headset_cache.get(dev_id)
+            online, pct, charging, mv = parsed if parsed else (False, None, False, None)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand="Logitech",
+                kind=KIND_HEADSET,
+                connection_mode="2.4G",
+                vid=LOGITECH_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=charging,
+                voltage_mv=mv if online else (prev.voltage_mv if prev else None),
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if online else "耳机离线或休眠",
+                provider_name=self.name,
+            )
+            if online:
+                self._headset_cache[dev_id] = item
+            out.append(item)
         return out
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:

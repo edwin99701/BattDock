@@ -1635,8 +1635,27 @@ class MouseBatteryApp:
 
         self._push_state_to_ui()
         self._update_tray_visual()
+        self._refresh_tray_menu()
         self._sync_floating_widget()
         return self._build_state_dict()
+
+    def _is_floating_enabled(self) -> bool:
+        return bool(get_floating_config(self.cfg).enabled)
+
+    def _refresh_tray_menu(self) -> None:
+        """刷新系统托盘原生菜单勾选状态（使设置页与托盘右键菜单保持双向同步）。"""
+        tray = self._tray
+        if tray is not None:
+            try:
+                tray.update_menu()
+            except Exception:
+                pass
+
+    def toggle_floating_widget(self) -> bool:
+        """切换桌面悬浮窗显隐，持久化配置并双向同步设置页与托盘勾选状态。"""
+        next_enabled = not self._is_floating_enabled()
+        self.update_settings({"floating": {"enabled": next_enabled}})
+        return next_enabled
 
     def update_device_pref(self, device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         """更新单台设备独立配置（重命名、隐藏、暂停监控、排序、独立阈值）。"""
@@ -1693,6 +1712,72 @@ class MouseBatteryApp:
 
     def preview_sound(self, sound_name: str = "default") -> None:
         threading.Thread(target=play_alert_sound, args=(sound_name,), daemon=True).start()
+
+    def _copy_text_to_clipboard(self, text: str) -> bool:
+        """使用 Windows 原生剪贴板 API 写入 UTF-16 文本（无需焦点或外部依赖，64 位句柄安全）。"""
+        if sys.platform != "win32":
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            k32 = ctypes.windll.kernel32
+            user32.OpenClipboard.argtypes = [wintypes.HWND]
+            user32.OpenClipboard.restype = wintypes.BOOL
+            user32.EmptyClipboard.argtypes = []
+            user32.EmptyClipboard.restype = wintypes.BOOL
+            user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+            user32.SetClipboardData.restype = ctypes.c_void_p
+            user32.CloseClipboard.argtypes = []
+            user32.CloseClipboard.restype = wintypes.BOOL
+            k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            k32.GlobalAlloc.restype = ctypes.c_void_p
+            k32.GlobalLock.argtypes = [ctypes.c_void_p]
+            k32.GlobalLock.restype = ctypes.c_void_p
+            k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            k32.GlobalUnlock.restype = wintypes.BOOL
+            k32.GlobalFree.argtypes = [ctypes.c_void_p]
+            k32.GlobalFree.restype = ctypes.c_void_p
+
+            raw = (text + "\x00").encode("utf-16-le")
+            GMEM_MOVEABLE = 0x0002
+            CF_UNICODETEXT = 13
+            if not user32.OpenClipboard(None):
+                return False
+            hmem = None
+            try:
+                user32.EmptyClipboard()
+                hmem = k32.GlobalAlloc(GMEM_MOVEABLE, len(raw))
+                if not hmem:
+                    return False
+                ptr = k32.GlobalLock(hmem)
+                if not ptr:
+                    k32.GlobalFree(hmem)
+                    hmem = None
+                    return False
+                try:
+                    ctypes.memmove(ptr, raw, len(raw))
+                finally:
+                    k32.GlobalUnlock(hmem)
+                if not user32.SetClipboardData(CF_UNICODETEXT, hmem):
+                    k32.GlobalFree(hmem)
+                    hmem = None
+                    return False
+                # SetClipboardData 成功后系统接管内存所有权，绝不可再 GlobalFree
+                hmem = None
+                return True
+            finally:
+                user32.CloseClipboard()
+        except Exception:
+            return False
+
+    def copy_diagnostics(self) -> dict[str, Any]:
+        """生成轻量脱敏 JSON 诊断信息并直接复制到剪贴板（不产生磁盘文件）。"""
+        with self._poll_lock:
+            report = self.manager.export_diagnostics(
+                active_monitor_tasks=len(self._active_bg_threads),
+            )
+        payload = json.dumps(report, ensure_ascii=False, indent=2)
+        copied = self._copy_text_to_clipboard(payload)
+        return {"ok": copied, "length": len(payload), "text": payload}
 
     def export_diagnostics(self) -> dict[str, Any]:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1773,12 +1858,13 @@ class MouseBatteryApp:
             self._push_state_to_ui()
 
         def _worker() -> None:
+            # 统一默认国内高速通道优先并静默兜底 GitHub 官方接口
             res = check_for_update(
                 APP_VERSION,
-                update_source=self.cfg.update_source,
-                custom_mirror=self.cfg.update_custom_mirror,
+                update_source="auto",
+                custom_mirror="",
             )
-            now_str = datetime.now().strftime("%H:%M")
+            now_str = ""
             if not res.ok:
                 if silent:
                     with self._update_lock:
@@ -1880,14 +1966,14 @@ class MouseBatteryApp:
             last_push = [0.0, -1]
             speed_state = [time.monotonic(), 0, ""]
 
-            def _on_source(label: str) -> None:
+            def _on_source(_label: str) -> None:
                 speed_state[0] = time.monotonic()
                 speed_state[1] = 0
-                speed_state[2] = label
+                speed_state[2] = ""
                 self._set_update_state(
                     status="downloading",
                     progress=0,
-                    message=f"正在连接{label}下载更新…",
+                    message="正在下载更新…",
                 )
 
             def _on_prog(done: int, total: int) -> None:
@@ -1908,8 +1994,7 @@ class MouseBatteryApp:
                         spd = f" · {speed_bps / 1024:.0f} KB/s"
                     else:
                         spd = ""
-                    src_prefix = f"通过{speed_state[2]}下载…" if speed_state[2] else "正在下载更新…"
-                    msg = f"{src_prefix} {pct}%（{done_mb:.1f} / {tot_mb:.1f} MB{spd}）" if tot_mb > 0 else f"{src_prefix}（{done_mb:.1f} MB{spd}）"
+                    msg = f"正在下载更新… {pct}%（{done_mb:.1f} / {tot_mb:.1f} MB{spd}）" if tot_mb > 0 else f"正在下载更新…（{done_mb:.1f} MB{spd}）"
                     self._set_update_state(
                         status="downloading",
                         progress=pct,
@@ -1919,8 +2004,9 @@ class MouseBatteryApp:
                     )
 
             try:
-                upd_src = self.cfg.update_source
-                upd_mirror = self.cfg.update_custom_mirror
+                # 后台默认国内高速通道优先、并发择优并静默兜底 GitHub 官方
+                upd_src = "auto"
+                upd_mirror = ""
                 download_update_asset(
                     asset_url=asset_url,
                     dest_zip=zip_path,
@@ -2400,8 +2486,28 @@ class MouseBatteryApp:
         self._device_change_timer = timer
         timer.start()
 
+    def _on_power_event(self, resuming: bool) -> None:
+        """系统进入休眠或从休眠唤醒时释放常驻 HID 句柄，并在唤醒后延迟重建拓扑缓存。"""
+        if self._stop_event.is_set():
+            return
+        self.manager.notify_power_event("resume" if resuming else "suspend")
+        if not resuming or not self.cfg.auto_monitor:
+            return
+        if self._device_change_timer is not None:
+            try:
+                self._device_change_timer.cancel()
+            except Exception:
+                pass
+        timer = threading.Timer(
+            2.0,
+            lambda: self._poll_once(reason="power_resume", force_rescan=True, force_query=True),
+        )
+        timer.daemon = True
+        self._device_change_timer = timer
+        timer.start()
+
     def _device_change_watch_loop(self) -> None:
-        """轻量级 Win32 WM_DEVICECHANGE 监听窗口：仅在 HID 硬件插拔时刷新拓扑缓存，平时零总线扫描。"""
+        """轻量级 Win32 WM_DEVICECHANGE + WM_POWERBROADCAST 监听窗口：热插拔与系统休眠唤醒同步刷新/释放句柄。"""
         if sys.platform != "win32":
             return
         self._active_bg_threads.add("device_change_watch")
@@ -2413,6 +2519,10 @@ class MouseBatteryApp:
             user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
             user32.DefWindowProcW.restype = ctypes.c_ssize_t
 
+            WM_POWERBROADCAST = 0x0218
+            PBT_APMSUSPEND = 0x0004
+            PBT_APMRESUMESUSPEND = 0x0007
+            PBT_APMRESUMEAUTOMATIC = 0x0012
             WM_DEVICECHANGE = 0x0219
             DBT_DEVICEARRIVAL = 0x8000
             DBT_DEVICEREMOVECOMPLETE = 0x8004
@@ -2455,6 +2565,11 @@ class MouseBatteryApp:
             def _wnd_proc(h, msg, wp, lp):
                 if msg == WM_DEVICECHANGE and wp in (DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVNODES_CHANGED):
                     self._on_hardware_device_change()
+                elif msg == WM_POWERBROADCAST:
+                    if wp == PBT_APMSUSPEND:
+                        self._on_power_event(resuming=False)
+                    elif wp in (PBT_APMRESUMESUSPEND, PBT_APMRESUMEAUTOMATIC):
+                        self._on_power_event(resuming=True)
                 return user32.DefWindowProcW(h, msg, wp, lp)
 
             cb = WNDPROC(_wnd_proc)
@@ -2571,6 +2686,11 @@ class MouseBatteryApp:
     def _start_tray(self) -> None:
         tray_menu = pystray.Menu(
             pystray.MenuItem(f"打开 {APP_NAME}", lambda _i, _m: self.show_main_window(), default=True),
+            pystray.MenuItem(
+                "显示桌面悬浮窗",
+                lambda _i, _m: self.toggle_floating_widget(),
+                checked=lambda _item: self._is_floating_enabled(),
+            ),
             pystray.MenuItem("设置", lambda _i, _m: self.open_settings_window("general")),
             pystray.MenuItem(
                 "检查更新",
@@ -2718,6 +2838,9 @@ class _JsApi:
 
     def preview_sound(self, sound_name: str = "default") -> None:
         self._app.preview_sound(sound_name)
+
+    def copy_diagnostics(self) -> dict[str, Any]:
+        return self._app.copy_diagnostics()
 
     def export_diagnostics(self) -> dict[str, Any]:
         return self._app.export_diagnostics()

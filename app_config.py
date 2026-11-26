@@ -302,6 +302,9 @@ def load_config() -> AppConfig:
             cfg.width = 760
         if cfg.height < 400:
             cfg.height = 480
+        # v2.7.1 起移除界面线路选项，统一走后台默认国内高速优先并静默兜底，防止老配置残留慢源或失效自定义镜像锁死
+        cfg.update_source = "auto"
+        cfg.update_custom_mirror = ""
         return cfg
     except Exception:
         return AppConfig()

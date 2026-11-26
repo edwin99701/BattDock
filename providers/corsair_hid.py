@@ -23,6 +23,7 @@ from .base import (
     get_hid_report_lengths,
     hid_drain,
     pad_report,
+    round_half_up,
 )
 
 CORSAIR_VID = 0x1B1C
@@ -142,18 +143,33 @@ def parse_bragi_headset_reply(reply: list[int] | bytes, target: int) -> Optional
     return r[4] | (r[5] << 8) | (r[6] << 16) | (r[7] << 24)
 
 
+def corsair_tenths_to_percent(tenths: int, *, allow_zero: bool = False) -> Optional[int]:
+    """将 Corsair Bragi 0..1000 千分比电量按标准四舍五入转换为百分比（非零有效读数保底 1%）。"""
+    val = int(tenths)
+    if val < 0 or val > 1000:
+        return None
+    if val == 0:
+        return 0 if allow_zero else None
+    return max(1, min(100, round_half_up(val / 10.0)))
+
+
 class CorsairHidProvider(BatteryProvider):
     name = "corsair_hid"
     brand = "Corsair"
+
+    def __init__(self) -> None:
+        self._cache: dict[str, DeviceBattery] = {}
 
     def _read_bragi_prop(self, dev: hid.device, target: int, prop_id: int, report_len: int = 65) -> Optional[int]:
         req = pad_report(report_len, [0x00, target, 0x02, prop_id])
         try:
             dev.write(req)
-            for _ in range(4):
-                raw = dev.read(report_len, 220)
+            for _ in range(8):
+                raw = dev.read(report_len, 180)
                 if not raw:
                     break
+                if not any(raw):
+                    continue
                 val = parse_bragi_property(raw, target & 0x07)
                 if val is not None:
                     return val
@@ -194,36 +210,40 @@ class CorsairHidProvider(BatteryProvider):
                         if tenths is None or not (0 <= tenths <= 1000):
                             continue
                         pwr = self._read_bragi_prop(dev, target, 0x10, out_len) or 2
+                        pct = corsair_tenths_to_percent(tenths, allow_zero=(pwr == 1))
+                        if pct is None:
+                            continue
                         child_pid = self._read_bragi_prop(dev, target, 0x12, out_len) or 0
                         name, kind = CORSAIR_PERIPHERALS.get(
                             child_pid,
                             (SLIPSTREAM_RECEIVERS[pid] or f"Corsair Wireless ({child_pid:04X})", KIND_MOUSE),
                         )
-                        out.append(
-                            DeviceBattery(
-                                device_id=f"corsair:{child_pid or pid:04x}:{slot}",
-                                name=name,
-                                brand="Corsair",
-                                kind=kind,
-                                connection_mode="2.4G",
-                                vid=CORSAIR_VID,
-                                pid=child_pid or pid,
-                                connected=True,
-                                online=True,
-                                percent=min(100, tenths // 10),
-                                charging=pwr == 1,
-                                full=pwr == 3,
-                                support_status=STATUS_PROTOCOL,
-                                provider_name=self.name,
-                            )
+                        item = DeviceBattery(
+                            device_id=f"corsair:{child_pid or pid:04x}:{slot}",
+                            name=name,
+                            brand="Corsair",
+                            kind=kind,
+                            connection_mode="2.4G",
+                            vid=CORSAIR_VID,
+                            pid=child_pid or pid,
+                            connected=True,
+                            online=True,
+                            percent=pct,
+                            charging=pwr == 1,
+                            full=pwr == 3,
+                            support_status=STATUS_PROTOCOL,
+                            provider_name=self.name,
                         )
+                        self._cache[item.device_id] = item
+                        out.append(item)
                 else:
                     name, kind = CORSAIR_PERIPHERALS[pid]
                     tenths = self._read_bragi_prop(dev, 0x08, 0x0F, out_len)
                     if tenths is not None and 0 <= tenths <= 1000:
                         pwr = self._read_bragi_prop(dev, 0x08, 0x10, out_len) or 1
-                        out.append(
-                            DeviceBattery(
+                        pct = corsair_tenths_to_percent(tenths, allow_zero=(pwr == 1))
+                        if pct is not None:
+                            item = DeviceBattery(
                                 device_id=f"corsair:{pid:04x}",
                                 name=name,
                                 brand="Corsair",
@@ -233,13 +253,14 @@ class CorsairHidProvider(BatteryProvider):
                                 pid=pid,
                                 connected=True,
                                 online=True,
-                                percent=min(100, tenths // 10),
+                                percent=pct,
                                 charging=pwr == 1,
                                 full=pwr == 3,
                                 support_status=STATUS_PROTOCOL,
                                 provider_name=self.name,
                             )
-                        )
+                            self._cache[item.device_id] = item
+                            out.append(item)
             except OSError:
                 pass
             finally:
@@ -253,10 +274,12 @@ class CorsairHidProvider(BatteryProvider):
         req = pad_report(64, [0x02, target, 0x02, prop_id]) if numbered else pad_report(65, [0x00, 0x02, target, 0x02, prop_id])
         try:
             dev.write(req)
-            for _ in range(8):
-                raw = dev.read(65, 220)
+            for _ in range(10):
+                raw = dev.read(65, 200)
                 if not raw:
                     break
+                if not any(raw):
+                    continue
                 val = parse_bragi_headset_reply(raw, target)
                 if val is not None:
                     return val
@@ -266,13 +289,14 @@ class CorsairHidProvider(BatteryProvider):
 
     def _poll_headsets(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        seen: set[int] = set()
+        void_groups: dict[int, list[dict]] = {}
+        bragi_groups: dict[int, list[dict]] = {}
+        v2_groups: dict[int, list[dict]] = {}
+
         for d in hid_snapshot:
             if d.get("vendor_id") != CORSAIR_VID:
                 continue
             pid = int(d.get("product_id", 0))
-            if pid in seen:
-                continue
             path = d.get("path")
             if not path:
                 continue
@@ -280,113 +304,134 @@ class CorsairHidProvider(BatteryProvider):
             u = int(d.get("usage", 0))
             iface = int(d.get("interface_number", -1))
 
-            # 1. Corsair Void / HS70
             if pid in VOID_HEADSET_PIDS and up == 0xFFC5 and u == 0x0001:
-                seen.add(pid)
+                void_groups.setdefault(pid, []).append(d)
+            elif pid in BRAGI_HEADSET_MODELS and up == BRAGI_PAGE and u == BRAGI_USAGE and iface in (-1, 3):
+                bragi_groups.setdefault(pid, []).append(d)
+            elif pid in BRAGI_V2_HEADSETS:
+                _k, _n, req_iface = BRAGI_V2_HEADSETS[pid]
+                if iface == req_iface and up >= 0xFF00:
+                    in_len, out_len, _ = get_hid_report_lengths(path)
+                    if out_len >= 64 and in_len >= 64:
+                        v2_groups.setdefault(pid, []).append(d)
+
+        # 1. Corsair Void / HS70
+        for pid, colls in void_groups.items():
+            parsed = None
+            for c in colls:
                 dev = hid.device()
-                parsed = None
                 try:
-                    dev.open_path(path)
+                    dev.open_path(c["path"])
                     hid_drain(dev, 64, 4, 10)
                     dev.write([0xC9, 0x64])
-                    for _ in range(4):
-                        raw = dev.read(64, 250)
+                    for _ in range(8):
+                        raw = dev.read(64, 220)
                         if not raw:
                             break
+                        if not any(raw):
+                            continue
                         parsed = parse_corsair_void_reply(raw)
                         if parsed is not None:
                             break
+                    if parsed is not None and parsed[0]:
+                        break
                 except OSError:
-                    parsed = None
+                    continue
                 finally:
                     try:
                         dev.close()
                     except Exception:
                         pass
-                online, pct, charging = parsed if parsed else (False, None, False)
-                out.append(
-                    DeviceBattery(
-                        device_id=f"corsair:void:{pid:04x}",
-                        name="Corsair Void / HS70 Wireless",
-                        brand="Corsair",
-                        kind=KIND_HEADSET,
-                        connection_mode="2.4G",
-                        vid=CORSAIR_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        asleep=not online,
-                        percent=pct,
-                        charging=charging,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="" if online else "耳机离线或休眠",
-                        provider_name=self.name,
-                    )
-                )
+            dev_id = f"corsair:void:{pid:04x}"
+            online, pct, charging = parsed if parsed else (False, None, False)
+            prev = self._cache.get(dev_id)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name="Corsair Void / HS70 Wireless",
+                brand="Corsair",
+                kind=KIND_HEADSET,
+                connection_mode="2.4G",
+                vid=CORSAIR_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=charging,
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if online else "耳机离线或休眠",
+                provider_name=self.name,
+            )
+            if online:
+                self._cache[dev_id] = item
+            out.append(item)
 
-            # 2. Corsair Virtuoso / XT / SE & HS80 RGB Wireless (Bragi Report 02 on FF42:0001 interface 3)
-            elif pid in BRAGI_HEADSET_MODELS and up == BRAGI_PAGE and u == BRAGI_USAGE and (iface in (-1, 3)):
-                seen.add(pid)
-                key, name, is_wired = BRAGI_HEADSET_MODELS[pid]
-                online, pct, chg, full = False, None, False, False
+        # 2. Corsair Virtuoso / XT / SE & HS80 RGB Wireless
+        for pid, colls in bragi_groups.items():
+            key, name, is_wired = BRAGI_HEADSET_MODELS[pid]
+            online, pct, chg, full = False, None, False, False
+            for c in colls:
                 dev = hid.device()
                 try:
-                    dev.open_path(path)
+                    dev.open_path(c["path"])
                     hid_drain(dev, 64, 4, 5)
                     targets = (0x08, 0x09) if is_wired else (0x09,)
                     for tgt in targets:
                         tenths = self._read_bragi_headset_prop(dev, tgt, 0x0F, numbered=True)
                         if tenths is not None and 0 <= tenths <= 1000:
                             pwr = self._read_bragi_headset_prop(dev, tgt, 0x10, numbered=True)
-                            online = True
-                            pct = min(100, tenths // 10)
-                            chg = pwr == 1
-                            full = pwr == 3
-                            break
+                            cpct = corsair_tenths_to_percent(tenths, allow_zero=(pwr == 1))
+                            if cpct is not None:
+                                online = True
+                                pct = cpct
+                                chg = pwr == 1
+                                full = pwr == 3
+                                break
+                    if online:
+                        break
                 except OSError:
-                    pass
+                    continue
                 finally:
                     try:
                         dev.close()
                     except Exception:
                         pass
-                out.append(
-                    DeviceBattery(
-                        device_id=f"corsair:{key}",
-                        name=name,
-                        brand="Corsair",
-                        kind=KIND_HEADSET,
-                        connection_mode="有线" if (is_wired or chg) else "2.4G",
-                        vid=CORSAIR_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        asleep=not online,
-                        percent=pct,
-                        charging=chg and not full,
-                        full=full,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="" if online else "耳机离线或休眠",
-                        provider_name=self.name,
-                    )
-                )
+            dev_id = f"corsair:{key}"
+            prev = self._cache.get(dev_id)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand="Corsair",
+                kind=KIND_HEADSET,
+                connection_mode="有线" if (is_wired or chg) else "2.4G",
+                vid=CORSAIR_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=chg and not full,
+                full=full,
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if online else "耳机离线或休眠",
+                provider_name=self.name,
+            )
+            if online:
+                self._cache[dev_id] = item
+            out.append(item)
 
-            # 3. Corsair Void v2 / Virtuoso MAX / HS80 MAX Wireless (wireless_v2 on interface 3/4)
-            elif pid in BRAGI_V2_HEADSETS:
-                key, name, req_iface = BRAGI_V2_HEADSETS[pid]
-                if iface != req_iface or up < 0xFF00:
-                    continue
+        # 3. Corsair Void v2 / Virtuoso MAX / HS80 MAX Wireless
+        for pid, colls in v2_groups.items():
+            key, name, _req_iface = BRAGI_V2_HEADSETS[pid]
+            online, pct = False, None
+            for c in colls:
+                path = c["path"]
                 in_len, out_len, _ = get_hid_report_lengths(path)
-                if out_len < 64 or in_len < 64:
-                    continue
-                seen.add(pid)
                 numbered = out_len == 64
-                online, pct = False, None
                 dev = hid.device()
                 try:
                     dev.open_path(path)
                     hid_drain(dev, in_len, 4, 5)
-                    # 仅发送只读属性请求 0x13/0x12/0x0F，不切换软件模式
                     for init_prop in (0x13, 0x12):
                         req = pad_report(64, [0x02, 0x08, 0x02, init_prop]) if numbered else pad_report(65, [0x00, 0x02, 0x08, 0x02, init_prop])
                         dev.write(req)
@@ -395,34 +440,41 @@ class CorsairHidProvider(BatteryProvider):
                         for _ in range(3):
                             tenths = self._read_bragi_headset_prop(dev, 0x09, 0x0F, numbered=numbered)
                             if tenths is not None and 1 <= tenths <= 1000:
-                                online = True
-                                pct = min(100, tenths // 10)
-                                break
+                                cpct = corsair_tenths_to_percent(tenths, allow_zero=False)
+                                if cpct is not None:
+                                    online = True
+                                    pct = cpct
+                                    break
+                    if online:
+                        break
                 except OSError:
-                    pass
+                    continue
                 finally:
                     try:
                         dev.close()
                     except Exception:
                         pass
-                out.append(
-                    DeviceBattery(
-                        device_id=f"corsair:{key}:{pid:04x}",
-                        name=name,
-                        brand="Corsair",
-                        kind=KIND_HEADSET,
-                        connection_mode="2.4G",
-                        vid=CORSAIR_VID,
-                        pid=pid,
-                        connected=True,
-                        online=online,
-                        asleep=not online,
-                        percent=pct,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="" if online else "耳机离线或休眠",
-                        provider_name=self.name,
-                    )
-                )
+            dev_id = f"corsair:{key}:{pid:04x}"
+            prev = self._cache.get(dev_id)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand="Corsair",
+                kind=KIND_HEADSET,
+                connection_mode="2.4G",
+                vid=CORSAIR_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=not online,
+                percent=pct if online else (prev.percent if prev else None),
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if online else "耳机离线或休眠",
+                provider_name=self.name,
+            )
+            if online:
+                self._cache[dev_id] = item
+            out.append(item)
         return out
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:

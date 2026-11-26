@@ -1,8 +1,8 @@
 # PROGRESS.md — BattDock 项目真实开发进度看板
 
-> 最后更新：2026-11-26  
-> 当前最新正式版本：**BattDock v2.7.0**（iKF 与蓝牙耳机 MAC 聚合修复、标准 USB HID 通用电池与多品牌耳机/键盘扩展）  
-> 关键历史基线：v1 单设备基线 `8075917` ｜ v2.0 多品牌底层基线 `45e9cd4` ｜ v2.3.0 品牌升级 `7a3bb61` ｜ v2.4.0 图标与更新重构 `7efafee` ｜ v2.5.0 体验升级 `448cd83` ｜ v2.5.1 Win10 圆角修复 `4e7df67` ｜ v2.5.2 稳定性修复 `1432b35` ｜ v2.6.0 无线键鼠耳机扩展 `e20a534` ｜ v2.6.1 国内更新加速 `757abf6`
+> 最后更新：2026-11-27  
+> 当前开发版本：**BattDock v2.7.1**（全适配器通信与电量精度修复、迈从耳机与 PULSE 3D 专项加固、关于页精简与托盘悬浮窗开关；本地待验收）  
+> 关键历史基线：v1 单设备基线 `8075917` ｜ v2.0 多品牌底层基线 `45e9cd4` ｜ v2.3.0 品牌升级 `7a3bb61` ｜ v2.4.0 图标与更新重构 `7efafee` ｜ v2.5.0 体验升级 `448cd83` ｜ v2.5.1 Win10 圆角修复 `4e7df67` ｜ v2.5.2 稳定性修复 `1432b35` ｜ v2.6.0 无线键鼠耳机扩展 `e20a534` ｜ v2.6.1 国内更新加速 `757abf6` ｜ v2.7.0 蓝牙聚合与标准 HID `8ce3fdb`
 
 ---
 
@@ -49,11 +49,17 @@
 - [x] **新增标准 USB HID 通用电池兜底适配器（`providers/standard_hid.py`）**：零写操作只读读取 USB HID `Battery Strength (0x06:0x20)` 特征报告，广谱覆盖所有遵循标准 HID 电量规范的无线耳机、键盘与鼠标。
 - [x] **继续扩充无线耳机与无线键盘品牌协议**：新增 Alienware AW920H、Poly Voyager (BT600)、Jabra Link 380/390/Evolve2/3、Fractal Design Scape、MOONDROP 水月雨 GM01 Pro、Sony PULSE 3D、JBL Quantum 520X 无线耳机以及荣元（Rongyuan）2.4G 键盘接收器平台（80+ PID）与 URX Core75 无线键盘；全量 38/38 单元测试通过。
 
+### 阶段 8：全适配器通信与取整精度修复、关于页精简与托盘悬浮窗开关（v2.7.1）
+- [x] **VGN 实机原始报文核查与全适配器取整精度修复**：实测确认 `VGN Dragonfly F2 Pro Max (3554:FB3E)` 固件原生按 5% 步进上报 `Byte[6]`，保持原样透传；全量修复 Corsair Bragi 千分比四舍五入、HyperX Stinger Core 与 ASUS ROG Strix Go 2.4 电压分段线性插值、Poly BT600 四舍五入、Razer/`standard_hid` `raw=1` 保底 `1%` 及 `base.py` 统一标准半入整舍入。
+- [x] **迈从耳机识别与全部 11 个适配器通信/休眠占位加固**：补齐 `output_report_id` 只读检测与自动前导 `0x00` 补齐、多集合聚合防锁死、空包过滤、VID `0x3837/0x291D` 迈从耳机受控通用探测（严禁触碰鼠键标准输入集合 `0x01`）、Airoha RACE / Alienware AW920H 控制管道 `HidD_GetInputReport(0x07)` + Audeze Maxwell 有线 `0x4B1A`、Poly BT600 定长补齐与 Hello ACK 握手、`Sony PULSE 3D` 常驻只读句柄全生命周期释放（拔出/异常/`WM_DEVICECHANGE`/`WM_POWERBROADCAST` 休眠唤醒/退出）、`standard_hid.py` 按精确 `(vid, pid)` 跳过专用适配器在线及休眠占位防重复卡片、蓝牙 SetupAPI 兼容 4 字节 `UINT32` 电量属性。
+- [x] **关于页精简与「复制诊断」**：移除「更新下载线路」与自定义前缀（后台默认国内高速通道优先并静默回退 GitHub，自动兼容老配置）、移除检查更新时间戳、「GitHub 仓库」改为黑白单色图标 +「项目主页」、底部并排新增轻量「复制诊断」按钮（原生 Win32 剪贴板写入）。
+- [x] **系统托盘右键菜单补充**：在「打开 BattDock」下方、「设置」上方新增原生勾选菜单项「显示桌面悬浮窗」，与设置页双向同步并持久化。
+
 ---
 
 ## 二、当前状态
 
-- **BattDock v2.7.0** 已完成编码、文档同步与 38/38 单元测试，正在打包构建并发布至 GitHub Releases（Latest）。
+- **BattDock v2.7.1** 已完成全部代码改动、文档同步、39/39 自动化单元测试与本地安装包/便携包构建，待用户本地实测验收后再推送 GitHub Release。
 
 ---
 

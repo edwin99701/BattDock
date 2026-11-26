@@ -26,6 +26,7 @@ from .base import (
     KIND_OTHER,
     STATUS_PROTOCOL,
     get_hid_report_lengths,
+    round_half_up,
 )
 
 GENERIC_DEVICE_PAGE = 0x0006
@@ -33,20 +34,18 @@ BATTERY_STRENGTH_USAGE = 0x0020
 HIDP_FEATURE = 2
 HIDP_STATUS_SUCCESS = 0x00110000
 
-# 已由专用品牌适配器覆盖的厂商 VID（避免重复查询或重复显示）
-DEDICATED_VENDOR_IDS = {
-    0x046D,  # Logitech
-    0x1532,  # Razer
-    0x1038,  # SteelSeries
-    0x1B1C,  # Corsair
-    0x03F0,  # HP / HyperX
-    0x0951,  # Kingston / HyperX
-    0x054C,  # Sony
-    0x0B05,  # ASUS ROG
-    0x3554,  # VGN / CompX
-}
+# 保留常量仅作向后兼容参考；v2.7.1 起不再按 VID 一刀切拦截，改由 DeviceManager 按精确 (vid, pid) 跳过专用适配器已接管（含在线与休眠占位）的设备
+DEDICATED_VENDOR_IDS: set[int] = set()
 
 _BRAND_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("logitech", "Logitech"),
+    ("razer", "Razer"),
+    ("steelseries", "SteelSeries"),
+    ("corsair", "Corsair"),
+    ("hyperx", "HyperX"),
+    ("asus", "ASUS"),
+    ("rog ", "ASUS"),
+    ("sony", "Sony"),
     ("ikf", "iKF"),
     ("edifier", "Edifier"),
     ("hecate", "Edifier"),
@@ -88,12 +87,13 @@ _BRAND_KEYWORDS: tuple[tuple[str, str], ...] = (
 
 
 def scale_hid_battery_value(raw: int, logical_min: int, logical_max: int) -> Optional[int]:
-    """按 HID 报告描述符中的 LogicalMin..LogicalMax 映射为 1..100%，0 或越界视为无效读数。"""
+    """按 HID 报告描述符中的 LogicalMin..LogicalMax 映射为 1..100%（标准四舍五入，下界/越界无效，>lo 保底 1%）。"""
     lo, hi = (0, 100) if logical_max <= logical_min else (int(logical_min), int(logical_max))
-    pct = int(round((int(raw) - lo) * 100.0 / float(hi - lo)))
-    if 1 <= pct <= 100:
-        return pct
-    return None
+    val = int(raw)
+    if val <= lo or val > hi:
+        return None
+    pct = round_half_up((val - lo) * 100.0 / float(hi - lo))
+    return max(1, min(100, pct))
 
 
 def infer_standard_hid_brand_and_kind(
@@ -245,17 +245,27 @@ class StandardHidBatteryProvider(BatteryProvider):
         self._last_poll_mono: float = 0.0
         self._cached: list[DeviceBattery] = []
 
-    def poll(self, hid_snapshot: list[dict], force: bool = False) -> list[DeviceBattery]:
+    def poll(
+        self,
+        hid_snapshot: list[dict],
+        force: bool = False,
+        exclude_vps: Optional[set[tuple[int, int]]] = None,
+    ) -> list[DeviceBattery]:
+        excluded = set(exclude_vps or ())
         now_mono = time.monotonic()
         if not force and self._last_poll_mono > 0 and (now_mono - self._last_poll_mono) < self.THROTTLE_SEC:
-            return list(self._cached)
+            return [
+                d
+                for d in self._cached
+                if (int(d.vid or 0), int(d.pid or 0)) not in excluded
+            ]
 
         out: list[DeviceBattery] = []
         seen_vp: set[tuple[int, int]] = set()
         for d in hid_snapshot:
             vid = int(d.get("vendor_id", 0))
             pid = int(d.get("product_id", 0))
-            if vid == 0 or vid in DEDICATED_VENDOR_IDS or (vid, pid) in seen_vp:
+            if vid == 0 or (vid, pid) in excluded or (vid, pid) in seen_vp:
                 continue
             path = d.get("path")
             if not path:

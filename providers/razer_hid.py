@@ -22,6 +22,7 @@ from .base import (
     KIND_MOUSE,
     STATUS_PROTOCOL,
     get_hid_report_lengths,
+    round_half_up,
 )
 
 RAZER_VID = 0x1532
@@ -131,11 +132,12 @@ def parse_razer_reply(reply: list[int] | bytes, cmd_class: int, cmd_id: int) -> 
 
 
 def raw_razer_level_to_percent(raw_byte: int) -> Optional[int]:
-    """将 0..255 原始电量转换为 1..100%，0 视为休眠无效读数。"""
-    pct = int(round(raw_byte * 100.0 / 255.0))
-    if pct <= 0:
+    """将 0..255 原始电量转换为 1..100%（标准四舍五入，0 视为休眠无效，>=1 保底 1%）。"""
+    raw = int(raw_byte)
+    if raw <= 0:
         return None
-    return min(100, pct)
+    pct = round_half_up(min(255, raw) * 100.0 / 255.0)
+    return max(1, min(100, pct))
 
 
 class RazerHidProvider(BatteryProvider):

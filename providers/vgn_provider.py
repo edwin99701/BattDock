@@ -91,6 +91,8 @@ def parse_mchose_feature_reply(raw: list[int] | bytes) -> Optional[tuple[int, in
     charging = decoded[11] != 0
     if logical_vid == 0 or logical_pid == 0 or not (0 <= pct <= 100):
         return None
+    if pct == 0 and not charging:
+        return None
     return logical_vid, logical_pid, pct, charging
 
 
@@ -172,39 +174,50 @@ class VgnCompxProvider(BatteryProvider):
 
     def _poll_mchose(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         results: list[DeviceBattery] = []
-        seen_keys: set[tuple[int, int]] = set()
+        grouped: dict[tuple[int, int], list[dict]] = {}
         for d in hid_snapshot:
-            vid = d.get("vendor_id", 0)
-            pid = d.get("product_id", 0)
-            if (vid, pid) not in MCHOSE_MODELS:
+            vid = int(d.get("vendor_id", 0))
+            pid = int(d.get("product_id", 0))
+            if (vid, pid) not in MCHOSE_MODELS or not d.get("path"):
                 continue
-            if d.get("interface_number") != 2 or d.get("usage_page") not in (0xFF01, 0xFF0B):
+            if d.get("usage_page", 0) < 0xFF00:
                 continue
-            if (vid, pid) in seen_keys:
+            if d.get("interface_number") not in (-1, 2) and d.get("usage_page") not in (0xFF01, 0xFF0B):
                 continue
-            seen_keys.add((vid, pid))
-            path = d.get("path")
-            if not path:
-                continue
+            grouped.setdefault((vid, pid), []).append(d)
 
-            dev = hid.device()
+        for (vid, pid), colls in grouped.items():
+            # 优先尝试 Interface 2 + FF01/FF0B + FeatureReport >= 21 的集合，避免多集合锁死
+            colls.sort(
+                key=lambda item: (
+                    0 if (item.get("interface_number") == 2 and item.get("usage_page") in (0xFF01, 0xFF0B)) else 1,
+                    0 if get_hid_report_lengths(item["path"])[2] >= 21 else 1,
+                )
+            )
             parsed = None
-            try:
-                dev.open_path(path)
-                req = [0xFF] * 21
-                req[0] = 0x11
-                req[1] = 0x06 ^ 0xFF
-                if dev.send_feature_report(req) >= 21:
-                    time.sleep(0.012)
-                    raw = dev.get_feature_report(0x11, 65)
-                    parsed = parse_mchose_feature_reply(raw)
-            except OSError:
-                parsed = None
-            finally:
+            for d in colls:
+                path = d["path"]
+                _, _, feat_len = get_hid_report_lengths(path)
+                req_len = max(21, feat_len) if feat_len > 0 else 21
+                dev = hid.device()
                 try:
-                    dev.close()
-                except Exception:
-                    pass
+                    dev.open_path(path)
+                    req = [0xFF] * req_len
+                    req[0] = 0x11
+                    req[1] = 0x06 ^ 0xFF
+                    if dev.send_feature_report(req) >= 21:
+                        time.sleep(0.012)
+                        raw = dev.get_feature_report(0x11, max(65, feat_len))
+                        parsed = parse_mchose_feature_reply(raw)
+                        if parsed is not None:
+                            break
+                except OSError:
+                    parsed = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
 
             dev_id = f"mchose:{vid:04x}:{pid:04x}"
             if parsed is not None:

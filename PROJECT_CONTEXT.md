@@ -7,7 +7,7 @@
 ## 一、项目定位、运行环境与技术栈
 
 - **软件名称**：**BattDock**（轻量化 Windows 无线外设电量管理工具，开源协议 MIT）
-- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前最新正式版 `v2.7.0`）
+- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前版本 `v2.7.1`）
 - **兼容目标**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时，免 Python 环境、免官方驱动）
 - **开发与构建环境**：Python `3.12+`（验证版本 `3.12.10`）、`hidapi 0.15.0`、`pywebview 6.2.1`（WinForms + EdgeChromium）、`pystray 0.19.5`、`Pillow 13.0.0`、`pythonnet` / `clr-loader`、`PyInstaller 6.22.3`、`Inno Setup 6.7.3`（用户级安装于 `%LOCALAPPDATA%\Programs\Inno Setup 6`）
 - **当前本机硬件环境**：Windows 11 x64，物理连接 `VGN Dragonfly F2 Pro Max (VID 0x3554, PID 0xFB3E)`；本机**无蓝牙适配器**（蓝牙适配器缺失时 `BluetoothBatteryProvider` 必须静默返回 `[]` 且零报错）。
@@ -34,9 +34,9 @@ ui/
   ├── index.html              主窗口（动态多设备卡片、低电量暖色卡片、分体耳塞三列卡、空状态、底栏更新提示）
   └── settings.html           设置窗口（左 6 分类导航 + 右自适应居中内容区、设备管理可折叠拖拽卡片、支持设备子页、关于与更新卡片）
 providers/
-  ├── base.py                 DeviceBattery / SubBattery / BatteryProvider + 只读 HidP_GetCaps 报表长度检测
+  ├── base.py                 DeviceBattery / SubBattery / BatteryProvider + 只读 HidP_GetCaps / output_report_id / HidD_GetInputReport 与标准四舍五入工具
   ├── device_naming.py        官方标准设备名称规范化、中文连接副标题、悬浮窗品牌标签、低电量弹窗智能完整名
-  ├── manager.py              DeviceManager（单次 hid.enumerate 共享、异常隔离、去重、禁伪造 0%、脱敏诊断导出）
+  ├── manager.py              DeviceManager（单次 hid.enumerate 共享、异常隔离、去重、禁伪造 0%、专用认领表防 standard_hid 重复卡片、脱敏诊断导出）
   ├── vgn_provider.py         VGN（封装 vgn_battery）/ VXE / ATK / CompX / MCHOSE / Rapoo
   ├── logitech_hidpp.py       Logitech HID++ 2.0 (0x1004/0x1000/0x1001/0x1F20 + 0x0005) & G 耳机
   ├── razer_hid.py            Razer 91 字节 Feature Report (0x07/0x80, 0x07/0x84, XOR CRC)
@@ -44,14 +44,14 @@ providers/
   ├── corsair_hid.py          Corsair SLIPSTREAM Bragi (FF42:0001) & Void/HS70 耳机
   ├── hyperx_hid.py           HyperX Cloud 耳机 & Pulsefire 鼠标
   ├── extra_brands.py         ASUS ROG/TUF 鼠键/Omni/SpeedNova/耳机 & Sony INZONE H5/H9 II/Buds
-  ├── wireless_headsets.py    Razer Audio / Logitech Centurion / ASTRO / JBL Quantum / EPOS / Airoha RACE / Alienware AW920H / Poly BT600 / Jabra GN / Fractal Scape / MOONDROP GM01 Pro / Sony PULSE 3D / MCHOSE / VGN OMNISOUND / FIFINE / Lenovo 无线耳机
+  ├── wireless_headsets.py    Razer Audio / Logitech Centurion / ASTRO / JBL Quantum / EPOS / Airoha RACE (含 Audeze Maxwell 有线 0x4B1A) / Alienware AW920H / Poly BT600 / Jabra GN / Fractal Scape / MOONDROP GM01 Pro / Sony PULSE 3D (常驻只读句柄) / MCHOSE (多集合自适应与受控通用探测) / VGN OMNISOUND / FIFINE / Lenovo 无线耳机
   ├── wireless_keyboards.py   CompX BY / SONiX(隔离QMK) / Evision / Semico / 荣元 Rongyuan 2.4G / URX Core75 / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard 无线键盘（180s 低打扰节流）
-  ├── standard_hid.py         标准 USB HID Battery Strength (0x06:0x20) 零写操作通用电池兜底适配器（120s 节流）
+  ├── standard_hid.py         标准 USB HID Battery Strength (0x06:0x20) 零写操作通用电池兜底适配器（按精确 (vid, pid) 跳过专用适配器在线及休眠占位设备）
   └── bluetooth_provider.py   Windows SetupAPI DEVPKEY_Device_BatteryLevel（按 MAC 聚合根节点名/在线态与 HFP/BLE 子节点电量）+ Apple AirPods Continuity BLE 解析
 installer/
   ├── BattDock.iss            Inno Setup 6 标准安装脚本（管理员安装 + 目录 users-modify 权限 + 防重复安装 + 卸载）
   └── ChineseSimplified.isl   UTF-8 BOM 简体中文安装向导语言包（Microsoft YaHei UI）
-tests/test_providers.py       38 项自动化单元测试（全协议解析 + 去重 + 提醒状态机 + 命名/图标/摘要/UI 不变量 + 国内镜像更新/故障切源 + 生命周期/HID 缓存 + 无线耳机/键盘/标准 HID/蓝牙 MAC 聚合）
+tests/test_providers.py       39 项自动化单元测试（全协议解析 + 取整精度 + 迈从安全护栏 + PULSE 3D 长句柄释放 + standard_hid 精准去重 + 提醒状态机 + 命名/图标/摘要/UI/托盘同步 + 国内优先更新与静默回退）
 build_release.ps1             一键测试 → PyInstaller 构建 → Inno Setup 编译 Setup.exe → ZIP 打包 → SHA256SUMS.txt
 version_info.txt              Windows EXE 文件版本属性元数据（ProductName=BattDock）
 ```

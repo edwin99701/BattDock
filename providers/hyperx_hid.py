@@ -23,7 +23,9 @@ from .base import (
     STATUS_PROTOCOL,
     get_hid_report_lengths,
     hid_drain,
+    interpolate_voltage,
     pad_report,
+    round_half_up,
 )
 
 HP_VID = 0x03F0
@@ -111,35 +113,28 @@ def parse_hyperx_cloud_flight_voltage(reply: list[int] | bytes) -> Optional[tupl
     if mv < 3000:
         return (False, None, False)
     if mv <= 3648:
-        pct = int(round(0.00125 * mv))
+        pct = round_half_up(0.00125 * mv)
     elif mv > 3975:
         pct = 100
     else:
         v = float(mv)
-        pct = int(round(2.547505e-8 * v**4 - 3.900299e-4 * v**3 + 2.238321 * v**2 - 5706.256 * v + 5452299.0))
+        pct = round_half_up(2.547505e-8 * v**4 - 3.900299e-4 * v**3 + 2.238321 * v**2 - 5706.256 * v + 5452299.0)
     return (True, max(0, min(100, pct)), False)
 
 
 _STINGER_MV = (3517, 3651, 3700, 3738, 3763, 3785, 3838, 3905, 3954, 4042, 4121)
+_STINGER_CURVE: list[tuple[int, int]] = [(mv, idx * 10) for idx, mv in reversed(list(enumerate(_STINGER_MV)))]
 
 
 def parse_hyperx_stinger_core_battery(reply: list[int] | bytes) -> Optional[tuple[Optional[int], bool, bool]]:
-    """解析 Cloud Stinger Core Wireless Feature 0xFF 电池回包 -> (percent, charging, full)。"""
+    """解析 Cloud Stinger Core Wireless Feature 0xFF 电池回包 -> (percent, charging, full)（标准四舍五入插值）。"""
     r = list(reply)
     if len(r) < 13 or r[0] != 0xFF or r[1] != 0x12 or r[2] != 0x05:
         return None
     code = r[9]
     mv = r[11] | (r[12] << 8)
     if code == 0x03 and 3000 <= mv <= 4400:
-        if mv >= _STINGER_MV[-1]:
-            return (100, False, False)
-        if mv <= _STINGER_MV[0]:
-            return (0, False, False)
-        for i in range(1, len(_STINGER_MV)):
-            if mv < _STINGER_MV[i]:
-                lo, hi = _STINGER_MV[i - 1], _STINGER_MV[i]
-                pct = (i - 1) * 10 + (mv - lo) * 10 // (hi - lo)
-                return (max(0, min(100, pct)), False, False)
+        return (interpolate_voltage(mv, _STINGER_CURVE), False, False)
     if code == 0x05:
         return (None, True, False)
     if code == 0x06:
@@ -151,13 +146,18 @@ class HyperXHidProvider(BatteryProvider):
     name = "hyperx_hid"
     brand = "HyperX"
 
+    def __init__(self) -> None:
+        self._cache: dict[str, DeviceBattery] = {}
+
     def _ask(self, dev: hid.device, pkt: list[int], match_fn, read_len: int = 64) -> Optional[list[int]]:
         try:
             dev.write(pkt)
-            for _ in range(4):
-                raw = dev.read(read_len, 220)
+            for _ in range(8):
+                raw = dev.read(read_len, 180)
                 if not raw:
                     break
+                if not any(raw):
+                    continue
                 if match_fn(raw):
                     return list(raw)
         except OSError:
@@ -274,18 +274,17 @@ class HyperXHidProvider(BatteryProvider):
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        seen: set[tuple[int, int]] = set()
+        grouped: dict[tuple[int, int], list[dict]] = {}
         for d in hid_snapshot:
-            vid = d.get("vendor_id", 0)
-            pid = d.get("product_id", 0)
-            if (vid, pid) not in HYPERX_DEVICES or (vid, pid) in seen:
+            vid = int(d.get("vendor_id", 0))
+            pid = int(d.get("product_id", 0))
+            if (vid, pid) not in HYPERX_DEVICES:
                 continue
             key, name, kind, proto, up, u = HYPERX_DEVICES[(vid, pid)]
             path = d.get("path")
             if not path:
                 continue
             if proto == "cloud3s":
-                # Cloud III S 接收器 6 个集合中仅 64B 输入/输出的集合（01C0:0001）承载 Report 0x0C
                 in_len, out_len, _ = get_hid_report_lengths(path)
                 if in_len != 64 or out_len != 64:
                     continue
@@ -302,27 +301,39 @@ class HyperXHidProvider(BatteryProvider):
                     continue
                 if not up and d.get("usage_page", 0) < 0xFF00:
                     continue
-            seen.add((vid, pid))
-            res = self._query_device(path, proto)
+            grouped.setdefault((vid, pid), []).append(d)
+
+        for (vid, pid), colls in grouped.items():
+            key, name, kind, proto, _up, _u = HYPERX_DEVICES[(vid, pid)]
+            res = None
+            for c in colls:
+                cand = self._query_device(c["path"], proto)
+                if cand is not None:
+                    res = cand
+                    if cand[0]:
+                        break
             online, pct, charging, full = res if res else (False, None, False, False)
-            out.append(
-                DeviceBattery(
-                    device_id=f"hyperx:{key}",
-                    name=name,
-                    brand="HyperX",
-                    kind=kind,
-                    connection_mode="2.4G",
-                    vid=vid,
-                    pid=pid,
-                    connected=True,
-                    online=online,
-                    asleep=not online,
-                    percent=pct,
-                    charging=charging and not full,
-                    full=full,
-                    support_status=STATUS_PROTOCOL,
-                    status_detail="" if online else "离线或休眠",
-                    provider_name=self.name,
-                )
+            dev_id = f"hyperx:{key}"
+            prev = self._cache.get(dev_id)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand="HyperX",
+                kind=kind,
+                connection_mode="2.4G",
+                vid=vid,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=charging and not full,
+                full=full,
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if online else "离线或休眠",
+                provider_name=self.name,
             )
+            if online:
+                self._cache[dev_id] = item
+            out.append(item)
         return out

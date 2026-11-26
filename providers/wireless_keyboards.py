@@ -21,6 +21,7 @@ from .base import (
     DeviceBattery,
     KIND_KEYBOARD,
     STATUS_PROTOCOL,
+    get_hid_input_report,
     get_hid_report_lengths,
     hid_drain,
     pad_report,
@@ -369,27 +370,8 @@ def parse_apple_magic_keyboard_report(raw: list[int] | bytes) -> Optional[tuple[
 
 
 def _get_win32_input_report(path: bytes, report_id: int, report_len: int) -> Optional[list[int]]:
-    """Windows 只读控制通道 HidD_GetInputReport（无读写权限占用，不干扰键盘正常输入）。"""
-    if sys.platform != "win32" or not path or report_len < 3:
-        return None
-    try:
-        p = path.decode("utf-8", "ignore") if isinstance(path, (bytes, bytearray)) else str(path)
-        k32 = ctypes.windll.kernel32
-        hidd = ctypes.windll.hid
-        k32.CreateFileW.restype = ctypes.c_void_p
-        handle = k32.CreateFileW(p, 0, 3, None, 3, 0, None)
-        if handle in (None, ctypes.c_void_p(-1).value):
-            return None
-        try:
-            buf = (ctypes.c_ubyte * report_len)()
-            buf[0] = report_id & 0xFF
-            if hidd.HidD_GetInputReport(ctypes.c_void_p(handle), buf, report_len):
-                return list(buf)
-        finally:
-            k32.CloseHandle(ctypes.c_void_p(handle))
-    except Exception:
-        pass
-    return None
+    """兼容别名：调用 providers.base.get_hid_input_report 只读控制通道。"""
+    return get_hid_input_report(path, report_id, report_len)
 
 
 def _infer_kb_brand(name: str, fallback: str) -> str:
@@ -446,25 +428,28 @@ class WirelessKeyboardsProvider(BatteryProvider):
 
     def _poll_compx_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        seen: set[tuple[int, int]] = set()
+        grouped: dict[tuple[int, int], list[dict]] = {}
         for d in hid_snapshot:
             vid = int(d.get("vendor_id", 0))
             pid = int(d.get("product_id", 0))
-            if (vid, pid) not in COMPX_KB_RECEIVERS or (vid, pid) in seen:
+            if (vid, pid) not in COMPX_KB_RECEIVERS:
                 continue
             if int(d.get("usage_page", 0)) != 0xFF02 or int(d.get("usage", 0)) != 0x0002:
                 continue
             path = d.get("path")
             if not path:
                 continue
-            default_name, default_brand, ask_model, shared = COMPX_KB_RECEIVERS[(vid, pid)]
+            _dn, _db, _am, shared = COMPX_KB_RECEIVERS[(vid, pid)]
             in_len, out_len, _ = get_hid_report_lengths(path)
             if shared:
                 if in_len != 20 or out_len != 20:
                     continue
             elif in_len < 20 or out_len < 20:
                 continue
-            seen.add((vid, pid))
+            grouped.setdefault((vid, pid), []).append(d)
+
+        for (vid, pid), colls in grouped.items():
+            default_name, default_brand, ask_model, shared = COMPX_KB_RECEIVERS[(vid, pid)]
             dev_id = f"kb-compx:{vid:04x}:{pid:04x}"
             cached = self._get_throttled(dev_id, now_mono, force)
             if cached is not None:
@@ -472,44 +457,55 @@ class WirelessKeyboardsProvider(BatteryProvider):
                 continue
 
             parsed = None
-            dev = hid.device()
-            try:
-                dev.open_path(path)
-                hid_drain(dev, 20, 4, 5)
-                if ask_model and path not in self._compx_models:
-                    dev.write(build_compx_kb_request(0x05))
-                    for _ in range(4):
-                        raw_m = dev.read(20, 260)
-                        if not raw_m:
+            hit_entry = colls[0]
+            for d in colls:
+                path = d["path"]
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, 20, 4, 5)
+                    if ask_model and path not in self._compx_models:
+                        dev.write(build_compx_kb_request(0x05))
+                        for _ in range(6):
+                            raw_m = dev.read(20, 220)
+                            if not raw_m:
+                                break
+                            if not any(raw_m):
+                                continue
+                            m_info = parse_compx_kb_model(raw_m)
+                            if m_info:
+                                self._compx_models[path] = m_info
+                                break
+                    dev.write(build_compx_kb_request(0x4A))
+                    for _ in range(8):
+                        raw = dev.read(20, 260)
+                        if not raw:
                             break
-                        m_info = parse_compx_kb_model(raw_m)
-                        if m_info:
-                            self._compx_models[path] = m_info
+                        if not any(raw):
+                            continue
+                        parsed = parse_compx_kb_battery(raw)
+                        if parsed is not None:
+                            hit_entry = d
                             break
-                dev.write(build_compx_kb_request(0x4A))
-                for _ in range(5):
-                    raw = dev.read(20, 350)
-                    if not raw:
-                        break
-                    parsed = parse_compx_kb_battery(raw)
                     if parsed is not None:
                         break
-            except OSError:
-                parsed = None
-            finally:
-                try:
-                    dev.close()
-                except Exception:
-                    pass
+                except OSError:
+                    continue
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
 
             if parsed is not None:
                 self._proven_shared.add(dev_id)
             elif shared and dev_id not in self._proven_shared:
                 continue
 
-            prod_str = str(d.get("product_string") or "").strip()
-            if path in self._compx_models:
-                name, brand = self._compx_models[path]
+            hit_path = hit_entry["path"]
+            prod_str = str(hit_entry.get("product_string") or "").strip()
+            if hit_path in self._compx_models:
+                name, brand = self._compx_models[hit_path]
             elif prod_str and prod_str.lower() not in ("2.4g wireless receiver", "2.4g dongle", "usb receiver"):
                 name = prod_str
                 brand = _infer_kb_brand(prod_str, default_brand)
@@ -558,11 +554,11 @@ class WirelessKeyboardsProvider(BatteryProvider):
 
     def _poll_sonix_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        seen: set[tuple[int, int]] = set()
+        grouped: dict[tuple[int, int], list[dict]] = {}
         for d in hid_snapshot:
             vid = int(d.get("vendor_id", 0))
             pid = int(d.get("product_id", 0))
-            if (vid, pid) not in SONIX_DONGLES or (vid, pid) in seen:
+            if (vid, pid) not in SONIX_DONGLES:
                 continue
             req_up, req_u, shared = SONIX_DONGLES[(vid, pid)]
             if int(d.get("usage_page", 0)) != req_up or int(d.get("usage", 0)) != req_u:
@@ -575,7 +571,10 @@ class WirelessKeyboardsProvider(BatteryProvider):
             in_len, out_len, _ = get_hid_report_lengths(path)
             if in_len != 33 or out_len != 33:
                 continue
-            seen.add((vid, pid))
+            grouped.setdefault((vid, pid), []).append(d)
+
+        for (vid, pid), colls in grouped.items():
+            _req_up, _req_u, shared = SONIX_DONGLES[(vid, pid)]
             dev_id = f"kb-sonix:{vid:04x}:{pid:04x}"
             cached = self._get_throttled(dev_id, now_mono, force)
             if cached is not None:
@@ -583,39 +582,47 @@ class WirelessKeyboardsProvider(BatteryProvider):
                 continue
 
             pct: Optional[int] = None
-            forms = [self._sonix_form[path]] if path in self._sonix_form else [0, 1]
-            dev = hid.device()
-            try:
-                dev.open_path(path)
-                for form in forms:
-                    hid_drain(dev, 33, 4, 5)
-                    req = build_sonix_battery_request() if form == 0 else build_sonix_info_request()
-                    dev.write(req)
-                    for _ in range(4):
-                        raw = dev.read(33, 250)
-                        if not raw:
-                            break
-                        val = parse_sonix_battery_reply(raw) if form == 0 else parse_sonix_info_reply(raw)
-                        if val is not None:
-                            pct = val
-                            self._sonix_form[path] = form
+            hit_entry = colls[0]
+            for d in colls:
+                path = d["path"]
+                forms = [self._sonix_form[path]] if path in self._sonix_form else [0, 1]
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    for form in forms:
+                        hid_drain(dev, 33, 4, 5)
+                        req = build_sonix_battery_request() if form == 0 else build_sonix_info_request()
+                        dev.write(req)
+                        for _ in range(6):
+                            raw = dev.read(33, 220)
+                            if not raw:
+                                break
+                            if not any(raw):
+                                continue
+                            val = parse_sonix_battery_reply(raw) if form == 0 else parse_sonix_info_reply(raw)
+                            if val is not None:
+                                pct = val
+                                self._sonix_form[path] = form
+                                hit_entry = d
+                                break
+                        if pct is not None:
                             break
                     if pct is not None:
                         break
-            except OSError:
-                pct = None
-            finally:
-                try:
-                    dev.close()
-                except Exception:
-                    pass
+                except OSError:
+                    continue
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
 
             if pct is not None:
                 self._proven_shared.add(dev_id)
             elif shared and dev_id not in self._proven_shared:
                 continue
 
-            prod = str(d.get("product_string") or "").strip()
+            prod = str(hit_entry.get("product_string") or "").strip()
             name = prod if (prod and prod.lower() not in ("2.4g dongle", "2.4g wireless receiver")) else "SONiX 2.4G 无线键盘"
             brand = _infer_kb_brand(name, "SONiX")
             prev = self._cache.get(dev_id)
@@ -640,12 +647,10 @@ class WirelessKeyboardsProvider(BatteryProvider):
 
     def _poll_evision_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        seen: set[tuple[int, int]] = set()
+        grouped: dict[tuple[int, int], tuple[str, str, str, bool, bool, list[dict]]] = {}
         for d in hid_snapshot:
             vid = int(d.get("vendor_id", 0))
             pid = int(d.get("product_id", 0))
-            if (vid, pid) in seen:
-                continue
             if int(d.get("usage_page", 0)) != 0xFF1C or int(d.get("usage", 0)) != 0x0092:
                 continue
             path = d.get("path")
@@ -673,35 +678,45 @@ class WirelessKeyboardsProvider(BatteryProvider):
             else:
                 continue
 
-            seen.add((vid, pid))
+            entry = grouped.setdefault((vid, pid), (name, brand, profile, is_wired, shared, []))
+            entry[5].append(d)
+
+        for (vid, pid), (name, brand, profile, is_wired, shared, colls) in grouped.items():
             dev_id = f"kb-evision:{vid:04x}:{pid:04x}"
             cached = self._get_throttled(dev_id, now_mono, force)
             if cached is not None:
                 out.append(cached)
                 continue
 
-            self._evision_counter = (self._evision_counter % 0xFFFE) + 1
-            req, tag = build_evision_request(profile, self._evision_counter, out_len)
             parsed = None
-            dev = hid.device()
-            try:
-                dev.open_path(path)
-                hid_drain(dev, in_len, 4, 5)
-                dev.write(req)
-                for _ in range(6):
-                    raw = dev.read(in_len, 300)
-                    if not raw:
-                        break
-                    parsed = parse_evision_reply(raw, profile, tag)
-                    if parsed is not None:
-                        break
-            except OSError:
-                parsed = None
-            finally:
+            for d in colls:
+                path = d["path"]
+                in_len, out_len, _ = get_hid_report_lengths(path)
+                self._evision_counter = (self._evision_counter % 0xFFFE) + 1
+                req, tag = build_evision_request(profile, self._evision_counter, out_len)
+                dev = hid.device()
                 try:
-                    dev.close()
-                except Exception:
-                    pass
+                    dev.open_path(path)
+                    hid_drain(dev, in_len, 4, 5)
+                    dev.write(req)
+                    for _ in range(8):
+                        raw = dev.read(in_len, 240)
+                        if not raw:
+                            break
+                        if not any(raw):
+                            continue
+                        parsed = parse_evision_reply(raw, profile, tag)
+                        if parsed is not None:
+                            break
+                    if parsed is not None and parsed[0]:
+                        break
+                except OSError:
+                    continue
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
 
             online, pct, chg = parsed if parsed else (False, None, False)
             if online:
@@ -733,178 +748,224 @@ class WirelessKeyboardsProvider(BatteryProvider):
 
     def _poll_other_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        seen: set[str] = set()
+        semico_groups: dict[int, list[dict]] = {}
+        k87v3_colls: list[dict] = []
+        aw_kb_colls: list[dict] = []
+        apple_groups: dict[int, list[dict]] = {}
+        urx_colls: list[dict] = []
+        rongyuan_groups: dict[tuple[int, int], list[dict]] = {}
+
         for d in hid_snapshot:
             vid = int(d.get("vendor_id", 0))
             pid = int(d.get("product_id", 0))
             path = d.get("path")
             if not path:
                 continue
-
-            # 1. Semico 三模键盘 (1A2C:8FFF / A034 / A036)
             if vid == 0x1A2C and pid in (0x8FFF, 0xA034, 0xA036):
-                if int(d.get("usage_page", 0)) != 0xFF02 or int(d.get("usage", 0)) != 0x0002:
-                    continue
-                in_len, out_len, _ = get_hid_report_lengths(path)
-                if in_len != 65 or out_len != 65:
-                    continue
-                dev_id = f"kb-semico:{pid:04x}"
-                if dev_id in seen:
-                    continue
-                seen.add(dev_id)
-                cached = self._get_throttled(dev_id, now_mono, force)
-                if cached is not None:
-                    out.append(cached)
-                    continue
-                parsed = None
+                if int(d.get("usage_page", 0)) == 0xFF02 and int(d.get("usage", 0)) == 0x0002:
+                    in_len, out_len, _ = get_hid_report_lengths(path)
+                    if in_len == 65 and out_len == 65:
+                        semico_groups.setdefault(pid, []).append(d)
+            elif vid == 0x3837 and pid == 0x1015:
+                if int(d.get("usage_page", 0)) == 0xFF80 and int(d.get("usage", 0)) == 0x0001:
+                    in_len, out_len, _ = get_hid_report_lengths(path)
+                    if in_len == 64 and out_len == 64:
+                        k87v3_colls.append(d)
+            elif vid == 0x413C and pid == 0x211D:
+                if int(d.get("usage_page", 0)) == 0xFF00 and int(d.get("usage", 0)) == 0x0001:
+                    aw_kb_colls.append(d)
+            elif vid in (0x004C, 0x05AC) and pid in APPLE_MAGIC_KB_PIDS:
+                if b"{00001124-" in bytes(path).lower():
+                    in_len, _, _ = get_hid_report_lengths(path)
+                    if in_len >= 3:
+                        apple_groups.setdefault(pid, []).append(d)
+            elif vid == 0x36B0 and pid == 0x3002:
+                prod_str = str(d.get("product_string") or "").strip()
+                if (
+                    int(d.get("interface_number", -1)) == 1
+                    and int(d.get("usage_page", 0)) == 0xFF60
+                    and int(d.get("usage", 0)) == 0x0061
+                    and prod_str.lower().startswith("urx core75")
+                ):
+                    in_len, out_len, _ = get_hid_report_lengths(path)
+                    if in_len == 33 and out_len == 33:
+                        urx_colls.append(d)
+            elif (vid, pid) in RONGYUAN_RECEIVERS:
+                if (
+                    int(d.get("interface_number", -1)) == 2
+                    and int(d.get("usage_page", 0)) == 0xFFFF
+                    and int(d.get("usage", 0)) == 0x0002
+                ):
+                    _, _, feat_len = get_hid_report_lengths(path)
+                    if feat_len >= 7:
+                        rongyuan_groups.setdefault((vid, pid), []).append(d)
+
+        # 1. Semico 三模键盘 (1A2C:8FFF / A034 / A036)
+        for pid, colls in semico_groups.items():
+            dev_id = f"kb-semico:{pid:04x}"
+            cached = self._get_throttled(dev_id, now_mono, force)
+            if cached is not None:
+                out.append(cached)
+                continue
+            parsed = None
+            hit_entry = colls[0]
+            for d in colls:
                 dev = hid.device()
                 try:
-                    dev.open_path(path)
+                    dev.open_path(d["path"])
                     hid_drain(dev, 65, 4, 5)
                     dev.write(pad_report(65, [0x00, 0xAA, 0x55, 0xCC, 0x33, 0x0E]))
-                    for _ in range(4):
-                        raw = dev.read(65, 250)
+                    for _ in range(6):
+                        raw = dev.read(65, 220)
                         if not raw:
                             break
+                        if not any(raw):
+                            continue
                         parsed = parse_semico_reply(raw)
                         if parsed is not None:
+                            hit_entry = d
                             break
+                    if parsed is not None and parsed[0]:
+                        break
                 except OSError:
-                    parsed = None
+                    continue
                 finally:
                     try:
                         dev.close()
                     except Exception:
                         pass
-                online, pct = parsed if parsed else (False, None)
-                if online:
-                    self._proven_shared.add(dev_id)
-                elif dev_id not in self._proven_shared:
-                    continue
-                name = {0xA034: "Attack Shark X98", 0xA036: "AJAZZ AK820 Max Plus"}.get(
-                    pid, str(d.get("product_string") or "").strip() or "Semico 2.4G 无线键盘"
+            online, pct = parsed if parsed else (False, None)
+            if online:
+                self._proven_shared.add(dev_id)
+            elif dev_id not in self._proven_shared:
+                continue
+            prev = self._cache.get(dev_id)
+            name = {0xA034: "Attack Shark X98", 0xA036: "AJAZZ AK820 Max Plus"}.get(
+                pid, str(hit_entry.get("product_string") or "").strip() or "Semico 2.4G 无线键盘"
+            )
+            out.append(
+                self._remember(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand=_infer_kb_brand(name, "Attack Shark"),
+                        kind=KIND_KEYBOARD,
+                        connection_mode="有线" if pid in (0xA034, 0xA036) else ("2.4G" if online else "休眠"),
+                        vid=0x1A2C,
+                        pid=pid,
+                        connected=True,
+                        online=online,
+                        asleep=not online,
+                        percent=pct if online else (prev[1].percent if prev else None),
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if online else "休眠中",
+                        provider_name=self.name,
+                    ),
+                    now_mono,
                 )
-                out.append(
-                    self._remember(
-                        DeviceBattery(
-                            device_id=dev_id,
-                            name=name,
-                            brand=_infer_kb_brand(name, "Attack Shark"),
-                            kind=KIND_KEYBOARD,
-                            connection_mode="有线" if pid in (0xA034, 0xA036) else ("2.4G" if online else "休眠"),
-                            vid=vid,
-                            pid=pid,
-                            connected=True,
-                            online=online,
-                            asleep=not online,
-                            percent=pct,
-                            support_status=STATUS_PROTOCOL,
-                            status_detail="" if online else "休眠中",
-                            provider_name=self.name,
-                        ),
-                        now_mono,
-                    )
-                )
+            )
 
-            # 2. MCHOSE K87 V3 (3837:1015, FF80:0001, 64B, Report 0x4D)
-            elif vid == 0x3837 and pid == 0x1015:
-                if int(d.get("usage_page", 0)) != 0xFF80 or int(d.get("usage", 0)) != 0x0001:
-                    continue
-                in_len, out_len, _ = get_hid_report_lengths(path)
-                if in_len != 64 or out_len != 64:
-                    continue
-                dev_id = "kb-mchose:k87v3"
-                if dev_id in seen:
-                    continue
-                seen.add(dev_id)
-                cached = self._get_throttled(dev_id, now_mono, force)
-                if cached is not None:
-                    out.append(cached)
-                    continue
+        # 2. MCHOSE K87 V3 (3837:1015, FF80:0001, 64B, Report 0x4D)
+        if k87v3_colls:
+            dev_id = "kb-mchose:k87v3"
+            cached = self._get_throttled(dev_id, now_mono, force)
+            if cached is not None:
+                out.append(cached)
+            else:
                 parsed = None
-                dev = hid.device()
-                try:
-                    dev.open_path(path)
-                    hid_drain(dev, 64, 4, 5)
-                    dev.write(build_mchose_k87_v3_request())
-                    for _ in range(5):
-                        raw = dev.read(64, 250)
-                        if not raw:
-                            break
-                        parsed = parse_mchose_k87_v3_reply(raw)
-                        if parsed is not None:
-                            break
-                except OSError:
-                    parsed = None
-                finally:
+                for d in k87v3_colls:
+                    dev = hid.device()
                     try:
-                        dev.close()
-                    except Exception:
-                        pass
+                        dev.open_path(d["path"])
+                        hid_drain(dev, 64, 4, 5)
+                        dev.write(build_mchose_k87_v3_request())
+                        for _ in range(8):
+                            raw = dev.read(64, 220)
+                            if not raw:
+                                break
+                            if not any(raw):
+                                continue
+                            parsed = parse_mchose_k87_v3_reply(raw)
+                            if parsed is not None:
+                                break
+                        if parsed is not None and parsed[0]:
+                            break
+                    except OSError:
+                        continue
+                    finally:
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
                 online, pct, chg = parsed if parsed else (False, None, False)
                 if online:
                     self._proven_shared.add(dev_id)
-                elif dev_id not in self._proven_shared:
-                    continue
-                out.append(
-                    self._remember(
-                        DeviceBattery(
-                            device_id=dev_id,
-                            name="MCHOSE K87 V3",
-                            brand="MCHOSE",
-                            kind=KIND_KEYBOARD,
-                            connection_mode="有线" if chg else ("2.4G" if online else "休眠"),
-                            vid=vid,
-                            pid=pid,
-                            connected=True,
-                            online=online,
-                            asleep=not online,
-                            percent=pct,
-                            charging=chg and (pct is None or pct < 100),
-                            full=chg and pct == 100,
-                            support_status=STATUS_PROTOCOL,
-                            status_detail="" if online else "休眠中",
-                            provider_name=self.name,
-                        ),
-                        now_mono,
+                if dev_id in self._proven_shared:
+                    prev = self._cache.get(dev_id)
+                    out.append(
+                        self._remember(
+                            DeviceBattery(
+                                device_id=dev_id,
+                                name="MCHOSE K87 V3",
+                                brand="MCHOSE",
+                                kind=KIND_KEYBOARD,
+                                connection_mode="有线" if chg else ("2.4G" if online else "休眠"),
+                                vid=0x3837,
+                                pid=0x1015,
+                                connected=True,
+                                online=online,
+                                asleep=not online,
+                                percent=pct if online else (prev[1].percent if prev else None),
+                                charging=chg and (pct is None or pct < 100),
+                                full=chg and pct == 100,
+                                support_status=STATUS_PROTOCOL,
+                                status_detail="" if online else "休眠中",
+                                provider_name=self.name,
+                            ),
+                            now_mono,
+                        )
                     )
-                )
 
-            # 3. Alienware Pro Wireless Gaming Keyboard (413C:211D)
-            elif vid == 0x413C and pid == 0x211D:
-                if int(d.get("usage_page", 0)) != 0xFF00 or int(d.get("usage", 0)) != 0x0001:
-                    continue
-                dev_id = "kb-alienware:pro-wireless"
-                if dev_id in seen:
-                    continue
-                seen.add(dev_id)
-                cached = self._get_throttled(dev_id, now_mono, force)
-                if cached is not None:
-                    out.append(cached)
-                    continue
+        # 3. Alienware Pro Wireless Gaming Keyboard (413C:211D)
+        if aw_kb_colls:
+            dev_id = "kb-alienware:pro-wireless"
+            cached = self._get_throttled(dev_id, now_mono, force)
+            if cached is not None:
+                out.append(cached)
+            else:
                 parsed = None
-                dev = hid.device()
-                try:
-                    dev.open_path(path)
-                    hid_drain(dev, 65, 4, 5)
-                    req = [0x00] * 65
-                    req[1], req[2] = 0x0E, 0xA1
-                    if dev.send_feature_report(req) > 0:
-                        for _ in range(6):
-                            raw = dev.read(65, 250)
-                            if not raw:
-                                break
-                            parsed = parse_alienware_kb_reply(raw)
-                            if parsed is not None:
-                                break
-                except OSError:
-                    parsed = None
-                finally:
+                for d in aw_kb_colls:
+                    path = d["path"]
+                    in_len, _, feat_len = get_hid_report_lengths(path)
+                    flen = max(65, feat_len)
+                    rlen = max(65, in_len)
+                    dev = hid.device()
                     try:
-                        dev.close()
-                    except Exception:
-                        pass
+                        dev.open_path(path)
+                        hid_drain(dev, rlen, 4, 5)
+                        req = [0x00] * flen
+                        req[1], req[2] = 0x0E, 0xA1
+                        if dev.send_feature_report(req) > 0:
+                            for _ in range(8):
+                                raw = dev.read(rlen, 220)
+                                if not raw:
+                                    break
+                                if not any(raw):
+                                    continue
+                                parsed = parse_alienware_kb_reply(raw)
+                                if parsed is not None:
+                                    break
+                        if parsed is not None:
+                            break
+                    except OSError:
+                        continue
+                    finally:
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
                 pct, chg = parsed if parsed else (None, False)
+                prev = self._cache.get(dev_id)
                 out.append(
                     self._remember(
                         DeviceBattery(
@@ -913,12 +974,12 @@ class WirelessKeyboardsProvider(BatteryProvider):
                             brand="Alienware",
                             kind=KIND_KEYBOARD,
                             connection_mode="有线" if chg else ("2.4G" if parsed else "休眠"),
-                            vid=vid,
-                            pid=pid,
+                            vid=0x413C,
+                            pid=0x211D,
                             connected=True,
                             online=parsed is not None,
                             asleep=parsed is None,
-                            percent=pct,
+                            percent=pct if parsed is not None else (prev[1].percent if prev else None),
                             charging=chg and (pct is None or pct < 100),
                             full=chg and pct == 100,
                             support_status=STATUS_PROTOCOL,
@@ -929,134 +990,117 @@ class WirelessKeyboardsProvider(BatteryProvider):
                     )
                 )
 
-            # 4. Apple Magic Keyboard (Classic Bluetooth HID {00001124-...}, 只读 HidD_GetInputReport 0x90)
-            elif vid in (0x004C, 0x05AC) and pid in APPLE_MAGIC_KB_PIDS:
-                if b"{00001124-" not in bytes(path).lower():
-                    continue
-                in_len, _, _ = get_hid_report_lengths(path)
-                if in_len < 3:
-                    continue
-                dev_id = f"kb-apple:{pid:04x}"
-                if dev_id in seen:
-                    continue
-                seen.add(dev_id)
-                cached = self._get_throttled(dev_id, now_mono, force)
-                if cached is not None:
-                    out.append(cached)
-                    continue
-                raw = _get_win32_input_report(path, 0x90, max(8, in_len))
+        # 4. Apple Magic Keyboard (Classic Bluetooth HID {00001124-...}, 只读 HidD_GetInputReport 0x90)
+        for pid, colls in apple_groups.items():
+            dev_id = f"kb-apple:{pid:04x}"
+            cached = self._get_throttled(dev_id, now_mono, force)
+            if cached is not None:
+                out.append(cached)
+                continue
+            parsed = None
+            hit_vid = int(colls[0].get("vendor_id", 0x05AC))
+            for d in colls:
+                in_len, _, _ = get_hid_report_lengths(d["path"])
+                raw = _get_win32_input_report(d["path"], 0x90, max(8, in_len))
                 parsed = parse_apple_magic_keyboard_report(raw) if raw else None
                 if parsed is not None:
-                    pct, chg, full = parsed
-                    out.append(
-                        self._remember(
-                            DeviceBattery(
-                                device_id=dev_id,
-                                name=APPLE_MAGIC_KB_PIDS[pid],
-                                brand="Apple",
-                                kind=KIND_KEYBOARD,
-                                connection_mode="蓝牙",
-                                vid=vid,
-                                pid=pid,
-                                connected=True,
-                                online=True,
-                                asleep=False,
-                                percent=pct,
-                                charging=chg,
-                                full=full,
-                                support_status=STATUS_PROTOCOL,
-                                provider_name=self.name,
-                            ),
-                            now_mono,
-                        )
-                    )
-            # 5. URX Core75 VIA 2.4G 键盘 (36B0:3002, Interface 1, FF60:0061, 仅限产品名匹配 URX Core75)
-            elif vid == 0x36B0 and pid == 0x3002:
-                prod_str = str(d.get("product_string") or "").strip()
-                if (
-                    int(d.get("interface_number", -1)) != 1
-                    or int(d.get("usage_page", 0)) != 0xFF60
-                    or int(d.get("usage", 0)) != 0x0061
-                    or not prod_str.lower().startswith("urx core75")
-                ):
-                    continue
-                in_len, out_len, _ = get_hid_report_lengths(path)
-                if in_len != 33 or out_len != 33:
-                    continue
-                dev_id = "kb-urx:core75"
-                if dev_id in seen:
-                    continue
-                seen.add(dev_id)
-                cached = self._get_throttled(dev_id, now_mono, force)
-                if cached is not None:
-                    out.append(cached)
-                    continue
-                pct = None
-                dev = hid.device()
-                try:
-                    dev.open_path(path)
-                    hid_drain(dev, 33, 4, 5)
-                    dev.write(pad_report(33, [0x00, 0x08, 0x00, 0x07]))
-                    for _ in range(4):
-                        raw = dev.read(33, 250)
-                        if not raw:
-                            break
-                        pct = parse_urx_via_battery(raw)
-                        if pct is not None:
-                            break
-                except OSError:
-                    pct = None
-                finally:
-                    try:
-                        dev.close()
-                    except Exception:
-                        pass
-                if pct is not None:
-                    self._proven_shared.add(dev_id)
-                elif dev_id not in self._proven_shared:
-                    continue
+                    hit_vid = int(d.get("vendor_id", hit_vid))
+                    break
+            if parsed is not None:
+                pct, chg, full = parsed
                 out.append(
                     self._remember(
                         DeviceBattery(
                             device_id=dev_id,
-                            name="URX Core75",
-                            brand="URX",
+                            name=APPLE_MAGIC_KB_PIDS[pid],
+                            brand="Apple",
                             kind=KIND_KEYBOARD,
-                            connection_mode="2.4G" if pct is not None else "休眠",
-                            vid=vid,
+                            connection_mode="蓝牙",
+                            vid=hit_vid,
                             pid=pid,
                             connected=True,
-                            online=pct is not None,
-                            asleep=pct is None,
+                            online=True,
+                            asleep=False,
                             percent=pct,
+                            charging=chg,
+                            full=full,
                             support_status=STATUS_PROTOCOL,
-                            status_detail="" if pct is not None else "休眠中",
                             provider_name=self.name,
                         ),
                         now_mono,
                     )
                 )
 
-            # 6. Rongyuan (荣元) 2.4G 无线键盘/双槽接收器平台 (Interface 2, FFFF:0002, Feature 0xF7)
-            elif (vid, pid) in RONGYUAN_RECEIVERS:
-                if (
-                    int(d.get("interface_number", -1)) != 2
-                    or int(d.get("usage_page", 0)) != 0xFFFF
-                    or int(d.get("usage", 0)) != 0x0002
-                ):
-                    continue
+        # 5. URX Core75 VIA 2.4G 键盘 (36B0:3002)
+        if urx_colls:
+            dev_id = "kb-urx:core75"
+            cached = self._get_throttled(dev_id, now_mono, force)
+            if cached is not None:
+                out.append(cached)
+            else:
+                pct = None
+                for d in urx_colls:
+                    dev = hid.device()
+                    try:
+                        dev.open_path(d["path"])
+                        hid_drain(dev, 33, 4, 5)
+                        dev.write(pad_report(33, [0x00, 0x08, 0x00, 0x07]))
+                        for _ in range(6):
+                            raw = dev.read(33, 220)
+                            if not raw:
+                                break
+                            if not any(raw):
+                                continue
+                            pct = parse_urx_via_battery(raw)
+                            if pct is not None:
+                                break
+                        if pct is not None:
+                            break
+                    except OSError:
+                        continue
+                    finally:
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
+                if pct is not None:
+                    self._proven_shared.add(dev_id)
+                if dev_id in self._proven_shared:
+                    prev = self._cache.get(dev_id)
+                    out.append(
+                        self._remember(
+                            DeviceBattery(
+                                device_id=dev_id,
+                                name="URX Core75",
+                                brand="URX",
+                                kind=KIND_KEYBOARD,
+                                connection_mode="2.4G" if pct is not None else "休眠",
+                                vid=0x36B0,
+                                pid=0x3002,
+                                connected=True,
+                                online=pct is not None,
+                                asleep=pct is None,
+                                percent=pct if pct is not None else (prev[1].percent if prev else None),
+                                support_status=STATUS_PROTOCOL,
+                                status_detail="" if pct is not None else "休眠中",
+                                provider_name=self.name,
+                            ),
+                            now_mono,
+                        )
+                    )
+
+        # 6. Rongyuan (荣元) 2.4G 无线键盘/双槽接收器平台 (Interface 2, FFFF:0002, Feature 0xF7)
+        for (vid, pid), colls in rongyuan_groups.items():
+            kb_id = f"kb-rongyuan:{vid:04x}:{pid:04x}"
+            cached = self._get_throttled(kb_id, now_mono, force)
+            if cached is not None:
+                out.append(cached)
+                continue
+            status = None
+            hit_entry = colls[0]
+            for d in colls:
+                path = d["path"]
                 _, _, feat_len = get_hid_report_lengths(path)
-                if feat_len < 7:
-                    continue
-                kb_id = f"kb-rongyuan:{vid:04x}:{pid:04x}"
-                if kb_id in seen:
-                    continue
-                seen.add(kb_id)
-                cached = self._get_throttled(kb_id, now_mono, force)
-                if cached is not None:
-                    out.append(cached)
-                    continue
-                status = None
                 dev = hid.device()
                 try:
                     dev.open_path(path)
@@ -1068,42 +1112,46 @@ class WirelessKeyboardsProvider(BatteryProvider):
                             rep = dev.get_feature_report(0, feat_len)
                             status = parse_rongyuan_status(rep) if rep else None
                             if status is not None:
+                                hit_entry = d
                                 break
+                    if status is not None and status["kb_online"]:
+                        break
                 except OSError:
-                    status = None
+                    continue
                 finally:
                     try:
                         dev.close()
                     except Exception:
                         pass
-                if status and status["kb_online"]:
-                    self._proven_shared.add(kb_id)
-                if kb_id in self._proven_shared:
-                    kb_on = bool(status and status["kb_online"])
-                    kb_pct = status["kb_percent"] if (status and kb_on) else None
-                    prod = str(d.get("product_string") or "").strip()
-                    name = prod if (prod and prod.lower() not in ("2.4g wireless receiver", "2.4g dongle", "usb receiver")) else "Rongyuan 2.4G 无线键盘"
-                    out.append(
-                        self._remember(
-                            DeviceBattery(
-                                device_id=kb_id,
-                                name=name,
-                                brand=_infer_kb_brand(name, "Akko" if vid == 0x38EE else "Attack Shark"),
-                                kind=KIND_KEYBOARD,
-                                connection_mode="2.4G" if kb_on else "休眠",
-                                vid=vid,
-                                pid=pid,
-                                connected=True,
-                                online=kb_on,
-                                asleep=not kb_on,
-                                percent=kb_pct if isinstance(kb_pct, int) else None,
-                                support_status=STATUS_PROTOCOL,
-                                status_detail="" if kb_on else "休眠中",
-                                provider_name=self.name,
-                            ),
-                            now_mono,
-                        )
+            if status and status["kb_online"]:
+                self._proven_shared.add(kb_id)
+            if kb_id in self._proven_shared:
+                kb_on = bool(status and status["kb_online"])
+                kb_pct = status["kb_percent"] if (status and kb_on) else None
+                prev = self._cache.get(kb_id)
+                prod = str(hit_entry.get("product_string") or "").strip()
+                name = prod if (prod and prod.lower() not in ("2.4g wireless receiver", "2.4g dongle", "usb receiver")) else "Rongyuan 2.4G 无线键盘"
+                out.append(
+                    self._remember(
+                        DeviceBattery(
+                            device_id=kb_id,
+                            name=name,
+                            brand=_infer_kb_brand(name, "Akko" if vid == 0x38EE else "Attack Shark"),
+                            kind=KIND_KEYBOARD,
+                            connection_mode="2.4G" if kb_on else "休眠",
+                            vid=vid,
+                            pid=pid,
+                            connected=True,
+                            online=kb_on,
+                            asleep=not kb_on,
+                            percent=kb_pct if isinstance(kb_pct, int) else (prev[1].percent if prev else None),
+                            support_status=STATUS_PROTOCOL,
+                            status_detail="" if kb_on else "休眠中",
+                            provider_name=self.name,
+                        ),
+                        now_mono,
                     )
+                )
         return out
 
     def poll(self, hid_snapshot: list[dict], force: bool = False) -> list[DeviceBattery]:

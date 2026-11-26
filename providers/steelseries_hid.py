@@ -194,6 +194,9 @@ class SteelSeriesHidProvider(BatteryProvider):
     name = "steelseries_hid"
     brand = "SteelSeries"
 
+    def __init__(self) -> None:
+        self._cache: dict[str, DeviceBattery] = {}
+
     def _poll_mice(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         by_pid: dict[int, list[dict]] = {}
         for d in hid_snapshot:
@@ -235,39 +238,41 @@ class SteelSeriesHidProvider(BatteryProvider):
                     except Exception:
                         pass
 
-            pct, charging, full = parsed if parsed else (None, False, False)
-            out.append(
-                DeviceBattery(
-                    device_id=f"steelseries:{model.key}",
-                    name=model.name,
-                    brand="SteelSeries",
-                    kind=KIND_MOUSE,
-                    connection_mode="有线" if (not model.wireless or charging) else "2.4G",
-                    vid=STEELSERIES_VID,
-                    pid=pid,
-                    connected=True,
-                    online=parsed is not None,
-                    asleep=parsed is None,
-                    percent=pct,
-                    charging=charging and not full,
-                    full=full,
-                    support_status=STATUS_PROTOCOL,
-                    status_detail="" if parsed is not None else "休眠中",
-                    provider_name=self.name,
-                )
+            dev_id = f"steelseries:{model.key}"
+            prev = self._cache.get(dev_id)
+            pct, charging, full = parsed if parsed else (prev.percent if prev else None, False, False)
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=model.name,
+                brand="SteelSeries",
+                kind=KIND_MOUSE,
+                connection_mode="有线" if (not model.wireless or charging) else "2.4G",
+                vid=STEELSERIES_VID,
+                pid=pid,
+                connected=True,
+                online=parsed is not None,
+                asleep=parsed is None,
+                percent=pct,
+                charging=charging and not full,
+                full=full,
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if parsed is not None else "休眠中",
+                provider_name=self.name,
             )
+            if parsed is not None:
+                self._cache[dev_id] = item
+            out.append(item)
         return out
 
     def _poll_headsets(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
-        seen: set[int] = set()
-        out: list[DeviceBattery] = []
+        grouped: dict[int, list[dict]] = {}
         for d in hid_snapshot:
             if d.get("vendor_id") != STEELSERIES_VID:
                 continue
-            pid = d.get("product_id", 0)
-            if pid not in HEADSET_MODELS or pid in seen:
+            pid = int(d.get("product_id", 0))
+            if pid not in HEADSET_MODELS or not d.get("path"):
                 continue
-            key, name, proto, iface, up, kind = HEADSET_MODELS[pid]
+            _key, _name, proto, iface, up, _kind = HEADSET_MODELS[pid]
             if iface >= 0 and d.get("interface_number") != iface:
                 continue
             if up and d.get("usage_page") != up:
@@ -275,79 +280,94 @@ class SteelSeriesHidProvider(BatteryProvider):
             if proto in ("nova_elite", "nova_omni"):
                 if int(d.get("usage_page", 0)) < 0xFF00:
                     continue
-                _, out_len, _ = get_hid_report_lengths(d.get("path"))
+                _, out_len, _ = get_hid_report_lengths(d["path"])
                 if out_len == 0:
                     continue
-            path = d.get("path")
-            if not path:
-                continue
-            seen.add(pid)
+            grouped.setdefault(pid, []).append(d)
 
-            req_map = {
-                "arctis1": [0x06, 0x12],
-                "arctis7": [0x06, 0x18],
-                "arctis9": [0x00, 0x20],
-                "nova_pro": pad_report(31, [0x06, 0xB0]),
-                "nova_elite": pad_report(64, [0x01, 0xB0]),
-                "nova_omni": pad_report(64, [0x01, 0xB0]),
-                "arctis7p": pad_report(64, [0x00, 0xB0]),
-                "nova7_steps": pad_report(64, [0x00, 0xB0]),
-                "nova7_pct": pad_report(64, [0x00, 0xB0]),
-                "nova5": pad_report(64, [0x00, 0xB0]),
-                "gamebuds": pad_report(64, [0x00, 0xB0]),
-            }
-            dev = hid.device()
+        req_map = {
+            "arctis1": [0x06, 0x12],
+            "arctis7": [0x06, 0x18],
+            "arctis9": [0x00, 0x20],
+            "nova_pro": pad_report(31, [0x06, 0xB0]),
+            "nova_elite": pad_report(64, [0x01, 0xB0]),
+            "nova_omni": pad_report(64, [0x01, 0xB0]),
+            "arctis7p": pad_report(64, [0x00, 0xB0]),
+            "nova7_steps": pad_report(64, [0x00, 0xB0]),
+            "nova7_pct": pad_report(64, [0x00, 0xB0]),
+            "nova5": pad_report(64, [0x00, 0xB0]),
+            "gamebuds": pad_report(64, [0x00, 0xB0]),
+        }
+
+        out: list[DeviceBattery] = []
+        for pid, colls in grouped.items():
+            key, name, proto, _iface, _up, kind = HEADSET_MODELS[pid]
             parsed = None
-            try:
-                dev.open_path(path)
-                hid_drain(dev, 64, 4, 10)
-                if proto == "arctis_pro":
-                    dev.write(pad_report(31, [0x41, 0xAA]))
-                    link = dev.read(64, 250)
-                    if link and link[0] != 0x02:
-                        dev.write(pad_report(31, [0x40, 0xAA]))
-                        bat = dev.read(64, 250)
-                        if bat:
-                            parsed = (True, map_range(bat[0], 0, 4), False)
-                    else:
-                        parsed = (False, None, False)
-                else:
-                    dev.write(req_map[proto])
-                    for _ in range(8 if proto in ("nova_elite", "nova_omni") else 4):
-                        raw = dev.read(64, 250)
-                        if not raw:
-                            break
-                        parsed = parse_steelseries_headset(proto, raw)
-                        if parsed is not None:
-                            break
-            except OSError:
-                parsed = None
-            finally:
+            for d in colls:
+                path = d["path"]
+                in_len, out_len, _ = get_hid_report_lengths(path)
+                rlen = max(64, in_len)
+                dev = hid.device()
                 try:
-                    dev.close()
-                except Exception:
-                    pass
+                    dev.open_path(path)
+                    hid_drain(dev, rlen, 4, 10)
+                    if proto == "arctis_pro":
+                        dev.write(pad_report(max(31, out_len), [0x41, 0xAA]))
+                        link = dev.read(rlen, 250)
+                        if link and link[0] != 0x02:
+                            dev.write(pad_report(max(31, out_len), [0x40, 0xAA]))
+                            bat = dev.read(rlen, 250)
+                            if bat:
+                                parsed = (True, map_range(bat[0], 0, 4), False)
+                        else:
+                            parsed = (False, None, False)
+                    else:
+                        req = req_map[proto]
+                        if out_len > len(req) and proto not in ("arctis1", "arctis7", "arctis9"):
+                            req = pad_report(out_len, req)
+                        dev.write(req)
+                        for _ in range(10 if proto in ("nova_elite", "nova_omni") else 6):
+                            raw = dev.read(rlen, 220)
+                            if not raw:
+                                break
+                            if not any(raw):
+                                continue
+                            parsed = parse_steelseries_headset(proto, raw)
+                            if parsed is not None:
+                                break
+                    if parsed is not None and parsed[0]:
+                        break
+                except OSError:
+                    continue
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
 
+            dev_id = f"steelseries:{key}"
+            prev = self._cache.get(dev_id)
             online, pct, charging = parsed if parsed else (False, None, False)
-            out.append(
-                DeviceBattery(
-                    device_id=f"steelseries:{key}",
-                    name=name,
-                    brand="SteelSeries",
-                    kind=kind,
-                    connection_mode="2.4G",
-                    vid=STEELSERIES_VID,
-                    pid=pid,
-                    connected=True,
-                    online=online,
-                    asleep=not online,
-                    percent=pct,
-                    charging=charging,
-                    support_status=STATUS_PROTOCOL,
-                    status_detail="" if online else "耳机离线或休眠",
-                    provider_name=self.name,
-                )
+            item = DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand="SteelSeries",
+                kind=kind,
+                connection_mode="2.4G",
+                vid=STEELSERIES_VID,
+                pid=pid,
+                connected=True,
+                online=online,
+                asleep=not online,
+                percent=pct if online else (prev.percent if prev else None),
+                charging=charging,
+                support_status=STATUS_PROTOCOL,
+                status_detail="" if online else "耳机离线或休眠",
+                provider_name=self.name,
             )
+            if online:
+                self._cache[dev_id] = item
+            out.append(item)
         return out
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
