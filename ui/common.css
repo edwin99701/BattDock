@@ -1,9 +1,13 @@
-/* 外设电量监控工具 — 统一设计令牌与跨窗口基础样式（Windows 10 / 11 通用，不依赖系统专属特效） */
+/* 外设电量监控工具 — 统一设计令牌、轻量交互动效与跨窗口基础样式（Windows 10 / 11 通用） */
 
 :root {
   --font-sans: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, sans-serif;
 
-  /* 浅色主题（默认，融合 Win11 与 macOS 轻量化浅灰白风格） */
+  /* 统一自然缓动曲线（禁止夸张弹簧回弹） */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* 浅色主题 */
   --bg-app: #F5F6FA;
   --bg-titlebar: #F7F8FB;
   --bg-sidebar: #F1F3F8;
@@ -11,7 +15,7 @@
   --bg-subpanel: #F6F7FA;
   --bg-icon-box: #F3F5F8;
   --bg-hover: rgba(15, 23, 42, 0.05);
-  --bg-active: rgba(15, 23, 42, 0.08);
+  --bg-active: rgba(15, 23, 42, 0.085);
   --bg-input: #FFFFFF;
 
   --border-window: #DDE1EA;
@@ -30,6 +34,7 @@
 
   --track-bg: #E9ECF2;
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.035);
+  --shadow-popover: 0 8px 24px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.06);
 
   /* 标准电量状态色 */
   --bat-normal: #22C55E;
@@ -86,6 +91,7 @@
 
   --track-bg: #2E3444;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.24);
+  --shadow-popover: 0 10px 28px rgba(0, 0, 0, 0.42), 0 1px 4px rgba(0, 0, 0, 0.28);
 
   --warn-card-bg: rgba(245, 158, 11, 0.10);
   --warn-card-border: rgba(245, 158, 11, 0.34);
@@ -120,6 +126,21 @@
   --bat-tier3: #F87171;
 }
 
+/* 遵循“界面动画”开关及 Windows 系统减少动画偏好 */
+:root[data-anim="off"] *,
+:root[data-anim="off"] *::before,
+:root[data-anim="off"] *::after {
+  transition-duration: 0.001ms !important;
+  animation-duration: 0.001ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -146,7 +167,7 @@ input, select, textarea {
   -webkit-user-select: text;
 }
 
-/* 窗口外框（确保 Win10/11 无边框窗口边界清晰不发黑） */
+/* 窗口外框 */
 .app-shell {
   width: 100%;
   height: 100%;
@@ -208,6 +229,7 @@ input, select, textarea {
   flex-shrink: 0;
 }
 
+/* 标题栏按钮：120ms 悬停过渡 + 100ms 轻缩放 */
 .win-btn {
   width: 34px;
   height: 30px;
@@ -219,7 +241,7 @@ input, select, textarea {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.14s ease, color 0.14s ease;
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out), transform 100ms var(--ease-out);
 }
 
 .win-btn:hover {
@@ -229,6 +251,7 @@ input, select, textarea {
 
 .win-btn:active {
   background: var(--bg-active);
+  transform: scale(0.96);
 }
 
 .win-btn.close:hover {
@@ -239,12 +262,13 @@ input, select, textarea {
 .win-btn:focus-visible,
 .btn:focus-visible,
 .toggle:focus-visible,
-.nav-item:focus-visible {
+.nav-item:focus-visible,
+.cselect-btn:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 1px;
 }
 
-/* 通用按钮 */
+/* 通用按钮：120ms 悬停过渡 + 100ms 轻微缩放反馈 */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -260,7 +284,7 @@ input, select, textarea {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
+  transition: background-color 120ms var(--ease-out), border-color 120ms var(--ease-out), color 120ms var(--ease-out), transform 100ms var(--ease-out);
 }
 
 .btn:hover {
@@ -268,7 +292,12 @@ input, select, textarea {
 }
 
 .btn:active {
-  transform: scale(0.98);
+  transform: scale(0.975);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .btn-primary {
@@ -295,7 +324,7 @@ input, select, textarea {
   padding: 0;
 }
 
-/* 蓝色胶囊开关（精准还原设计图） */
+/* 蓝色胶囊开关：150ms 平滑移动与颜色过渡（纯 Ease-Out，无弹簧过冲） */
 .toggle {
   position: relative;
   width: 42px;
@@ -305,7 +334,7 @@ input, select, textarea {
   background: var(--toggle-off);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.2s ease;
+  transition: background-color 150ms var(--ease-inout);
 }
 
 .toggle.on {
@@ -320,8 +349,8 @@ input, select, textarea {
   height: 20px;
   border-radius: 50%;
   background: #FFFFFF;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
-  transition: transform 0.2s cubic-bezier(0.22, 1.15, 0.36, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.20);
+  transition: transform 150ms var(--ease-out);
   pointer-events: none;
 }
 
@@ -329,8 +358,8 @@ input, select, textarea {
   transform: translateX(18px);
 }
 
-/* 输入框与下拉框 */
-.input, .select {
+/* 输入框 */
+.input {
   height: 30px;
   padding: 0 10px;
   border-radius: 7px;
@@ -339,11 +368,110 @@ input, select, textarea {
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
-  transition: border-color 0.15s ease;
+  transition: border-color 120ms var(--ease-out), background-color 120ms var(--ease-out);
 }
 
-.input:focus, .select:focus {
+.input:focus {
   border-color: var(--brand);
+}
+
+/* 轻量自定义下拉菜单：150ms 淡入 + 4px 轻位移，深浅主题一致 */
+.cselect {
+  position: relative;
+  display: inline-block;
+  min-width: 118px;
+}
+
+.cselect-btn {
+  width: 100%;
+  height: 30px;
+  padding: 0 28px 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-input);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 120ms var(--ease-out), background-color 120ms var(--ease-out), transform 100ms var(--ease-out);
+}
+
+.cselect-btn:hover {
+  border-color: var(--text-muted);
+}
+
+.cselect-btn:active {
+  transform: scale(0.985);
+}
+
+.cselect-arrow {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  margin-top: -6px;
+  color: var(--text-secondary);
+  pointer-events: none;
+  transition: transform 150ms var(--ease-out);
+}
+
+.cselect.open .cselect-arrow {
+  transform: rotate(180deg);
+}
+
+.cselect-menu {
+  position: fixed;
+  z-index: 260;
+  min-width: 128px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 9px;
+  border: 1px solid var(--border-card);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-popover);
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out);
+}
+
+.cselect-menu.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.cselect-opt {
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.cselect-opt:hover {
+  background: var(--bg-hover);
+}
+
+.cselect-opt.selected {
+  background: var(--brand-soft);
+  color: var(--brand-text);
+  font-weight: 600;
 }
 
 /* 细滚动条 */
@@ -357,21 +485,21 @@ input, select, textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.38);
+  background: rgba(148, 163, 184, 0.36);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.62);
+  background: rgba(148, 163, 184, 0.58);
 }
 
-/* 轻量顶部提示条 */
+/* 轻量顶部提示条：180ms 淡入 / 140ms 淡出 */
 .toast-bar {
   position: fixed;
-  top: 56px;
+  top: 54px;
   left: 50%;
-  transform: translate(-50%, -16px);
-  z-index: 200;
+  transform: translate(-50%, -8px);
+  z-index: 300;
   padding: 7px 14px;
   border-radius: 8px;
   background: #1E293B;
@@ -380,7 +508,7 @@ input, select, textarea {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
 }
 
 .toast-bar.show {

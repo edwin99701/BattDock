@@ -40,13 +40,14 @@
   .density-comfortable .device-list { gap: 10px; }
   .density-comfortable .device-card { padding: 13px 16px; }
 
+  /* 设备卡片：状态颜色 200ms 平滑过渡 */
   .device-card {
     flex-shrink: 0;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
     border-radius: 11px;
     box-shadow: var(--shadow-card);
-    transition: border-color 0.16s ease, background 0.16s ease;
+    transition: background-color 200ms var(--ease-out), border-color 200ms var(--ease-out), opacity 200ms var(--ease-out);
   }
 
   .device-card:hover {
@@ -83,6 +84,7 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    transition: background-color 200ms var(--ease-out);
   }
 
   .level-tier2 .dev-icon-box { background: var(--warn-icon-bg); }
@@ -130,6 +132,7 @@
     font-weight: 500;
   }
 
+  /* 电量进度条：350ms 宽度平滑过渡 + 200ms 状态色平滑过渡 */
   .progress-wrap {
     margin-top: 6px;
     width: 100%;
@@ -144,7 +147,7 @@
   .progress-fill {
     height: 100%;
     border-radius: 999px;
-    transition: width 0.35s ease, background-color 0.25s ease;
+    transition: width 350ms var(--ease-out), background-color 200ms var(--ease-out);
   }
 
   .fill-normal, .fill-charging { background: var(--bat-normal); }
@@ -169,6 +172,7 @@
     border-radius: 6px;
     font-size: 11.5px;
     font-weight: 500;
+    transition: background-color 200ms var(--ease-out), color 200ms var(--ease-out);
   }
 
   .status-pill.warn {
@@ -193,6 +197,7 @@
     align-items: center;
     justify-content: flex-end;
     gap: 4px;
+    transition: color 200ms var(--ease-out);
   }
 
   .dev-pct.warn { color: var(--warn-pct-text); }
@@ -203,7 +208,7 @@
     font-weight: 600;
   }
 
-  /* 多电池耳塞组合卡片（AirPods / Sony INZONE Buds / ROG Cetra） */
+  /* 多电池耳塞组合卡片 */
   .sub-grid {
     margin-top: 12px;
     padding-left: 56px;
@@ -333,6 +338,7 @@
     height: 8px;
     border-radius: 50%;
     background: #22C55E;
+    transition: background-color 200ms var(--ease-out);
   }
 
   .status-dot.paused {
@@ -340,7 +346,7 @@
   }
 
   .refresh-btn.spinning svg {
-    animation: spin 0.72s linear infinite;
+    animation: spin 600ms linear 1;
   }
 
   @keyframes spin {
@@ -418,6 +424,9 @@
 
 <script>
   let appState = null;
+  let refreshTimer = null;
+  // 按 device_id 复用卡片 DOM，确保进度条仅在真实电量变动时触发 350ms 过渡，零闪烁
+  const cardRegistry = new Map();
 
   const ICONS = {
     mouse: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg>`,
@@ -436,7 +445,6 @@
     return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  // 标题栏拖拽 & 双击最大化
   (function attachWindowDrag() {
     const bar = document.getElementById("titlebar");
     let dragging = false, moved = false, sx = 0, sy = 0;
@@ -445,10 +453,7 @@
       dragging = true; moved = false; sx = e.screenX; sy = e.screenY;
       window.pywebview?.api?.begin_drag(sx, sy);
     });
-    bar.addEventListener("dblclick", (e) => {
-      if (e.target.closest("button")) return;
-      toggleMax();
-    });
+    bar.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) toggleMax(); });
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
       if (Math.abs(e.screenX - sx) > 3 || Math.abs(e.screenY - sy) > 3) moved = true;
@@ -469,99 +474,122 @@
     return "fill-tier3";
   }
 
-  function renderSubItem(iconSvg, label, pct, chg) {
-    const known = pct !== null && pct !== undefined;
-    const width = known ? Math.max(0, Math.min(100, pct)) : 0;
-    const pctHtml = known
-      ? `<span class="sub-pct">${pct}%${chg ? " ⚡" : ""}</span>`
-      : `<span class="sub-pct unknown">未知</span>`;
-    return `
-      <div class="sub-item">
-        <div class="sub-head">
-          <span class="sub-ico">${iconSvg}</span>
-          <div class="sub-meta">
-            <span class="sub-title">${label}</span>
-            ${pctHtml}
+  function createCardElement(dev) {
+    const el = document.createElement("article");
+    el.dataset.did = dev.device_id;
+    el.dataset.multi = dev.sub_batteries ? "1" : "0";
+    if (dev.sub_batteries) {
+      el.innerHTML = `
+        <div class="card-row">
+          <div class="dev-icon-box">${ICONS.earbuds}</div>
+          <div class="dev-main">
+            <div class="dev-name-line"><span class="dev-name"></span></div>
+            <div class="dev-sub"></div>
           </div>
         </div>
-        <div class="progress-wrap"><div class="progress-fill ${subBarClass(pct, chg)}" style="width:${width}%"></div></div>
-      </div>`;
+        <div class="sub-grid">
+          <div class="sub-item" data-part="left">
+            <div class="sub-head"><span class="sub-ico">${ICONS.budLeft}</span><div class="sub-meta"><span class="sub-title">左耳电量</span><span class="sub-pct"></span></div></div>
+            <div class="progress-wrap"><div class="progress-fill"></div></div>
+          </div>
+          <div class="sub-item" data-part="right">
+            <div class="sub-head"><span class="sub-ico">${ICONS.budRight}</span><div class="sub-meta"><span class="sub-title">右耳电量</span><span class="sub-pct"></span></div></div>
+            <div class="progress-wrap"><div class="progress-fill"></div></div>
+          </div>
+          <div class="sub-item" data-part="case">
+            <div class="sub-head"><span class="sub-ico">${ICONS.budCase}</span><div class="sub-meta"><span class="sub-title">充电盒电量</span><span class="sub-pct"></span></div></div>
+            <div class="progress-wrap"><div class="progress-fill"></div></div>
+          </div>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="card-row">
+          <div class="dev-icon-box"></div>
+          <div class="dev-main">
+            <div class="dev-name-line"><span class="dev-name"></span></div>
+            <div class="dev-sub"></div>
+            <div class="progress-wrap"><div class="progress-fill"></div></div>
+          </div>
+          <div class="dev-right"></div>
+        </div>`;
+    }
+    return el;
   }
 
-  function renderDeviceCard(dev) {
+  function patchCardElement(el, dev) {
     const lvl = dev.alert_level || "normal";
-    const iconSvg = ICONS[dev.kind] || ICONS.other;
-    const name = escHtml(dev.display_name || dev.name);
+    el.className = `device-card level-${lvl}`;
+    el.querySelector(".dev-name").textContent = dev.display_name || dev.name;
+
     const conn = escHtml(dev.connection_label || dev.connection_mode || "无线连接");
     const hasPct = dev.percent !== null && dev.percent !== undefined;
 
-    // 多电池组合耳机卡片（AirPods / Sony INZONE Buds / ROG Cetra）
     if (dev.sub_batteries) {
+      el.querySelector(".dev-sub").innerHTML = `<span>${conn}</span>${dev.charging ? `<span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>` : ""}`;
       const sb = dev.sub_batteries;
-      return `
-        <article class="device-card level-${lvl}">
-          <div class="card-row">
-            <div class="dev-icon-box">${ICONS.earbuds}</div>
-            <div class="dev-main">
-              <div class="dev-name-line"><span class="dev-name">${name}</span></div>
-              <div class="dev-sub"><span>${conn}</span>${dev.charging ? `<span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>` : ""}</div>
-            </div>
-          </div>
-          <div class="sub-grid">
-            ${renderSubItem(ICONS.budLeft, "左耳电量", sb.left_percent, sb.left_charging)}
-            ${renderSubItem(ICONS.budRight, "右耳电量", sb.right_percent, sb.right_charging)}
-            ${renderSubItem(ICONS.budCase, "充电盒电量", sb.case_percent, sb.case_charging)}
-          </div>
-        </article>`;
+      const parts = [
+        ["left", sb.left_percent, sb.left_charging],
+        ["right", sb.right_percent, sb.right_charging],
+        ["case", sb.case_percent, sb.case_charging],
+      ];
+      parts.forEach(([key, pct, chg]) => {
+        const item = el.querySelector(`.sub-item[data-part="${key}"]`);
+        const known = pct !== null && pct !== undefined;
+        const pctEl = item.querySelector(".sub-pct");
+        pctEl.className = known ? "sub-pct" : "sub-pct unknown";
+        pctEl.textContent = known ? `${pct}%${chg ? " ⚡" : ""}` : "未知";
+        const fill = item.querySelector(".progress-fill");
+        fill.className = `progress-fill ${subBarClass(pct, chg)}`;
+        const nextW = `${known ? Math.max(0, Math.min(100, pct)) : 0}%`;
+        if (fill.style.width !== nextW) fill.style.width = nextW;
+      });
+      return;
     }
 
-    // 标准设备卡片
-    let subExtra = "";
-    if (dev.full) {
-      subExtra = `<span>·</span><span class="chg-inline">${ICONS.bolt}已充满</span>`;
-    } else if (dev.charging) {
-      subExtra = `<span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>`;
-    } else if (dev.asleep) {
-      subExtra = `<span>·</span><span>休眠中</span>`;
-    } else if (!dev.online) {
-      subExtra = `<span>·</span><span>离线 / 未响应</span>`;
-    } else if (dev.voltage_mv) {
-      subExtra = `<span>·</span><span>${(dev.voltage_mv / 1000).toFixed(2)} V</span>`;
+    const iconBox = el.querySelector(".dev-icon-box");
+    const iconHtml = ICONS[dev.kind] || ICONS.other;
+    if (iconBox.dataset.kind !== dev.kind) {
+      iconBox.innerHTML = iconHtml;
+      iconBox.dataset.kind = dev.kind || "other";
     }
+
+    let subExtra = "";
+    if (dev.full) subExtra = `<span>·</span><span class="chg-inline">${ICONS.bolt}已充满</span>`;
+    else if (dev.charging) subExtra = `<span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>`;
+    else if (dev.asleep) subExtra = `<span>·</span><span>休眠中</span>`;
+    else if (!dev.online) subExtra = `<span>·</span><span>离线 / 未响应</span>`;
+    else if (dev.voltage_mv) subExtra = `<span>·</span><span>${(dev.voltage_mv / 1000).toFixed(2)} V</span>`;
+
+    const subHtml = `<span>${conn}</span>${subExtra}`;
+    const subEl = el.querySelector(".dev-sub");
+    if (subEl.dataset.sig !== subHtml) {
+      subEl.innerHTML = subHtml;
+      subEl.dataset.sig = subHtml;
+    }
+
+    const fill = el.querySelector(".progress-fill");
+    const nextCls = `progress-fill fill-${lvl}`;
+    if (fill.className !== nextCls) fill.className = nextCls;
+    const nextW = `${hasPct ? Math.max(0, Math.min(100, dev.percent)) : 0}%`;
+    if (fill.style.width !== nextW) fill.style.width = nextW;
 
     let rightHtml = "";
     if (!hasPct) {
-      const label = dev.asleep ? "休眠中" : "未知";
-      rightHtml = `<span class="dev-pct muted">${label}</span>`;
+      rightHtml = `<span class="dev-pct muted">${dev.asleep ? "休眠中" : "未知"}</span>`;
     } else if (lvl === "tier3") {
-      rightHtml = `
-        <span style="color:var(--crit-pct-text);display:inline-flex">${ICONS.lowBat}</span>
-        <span class="status-pill crit">电量紧急</span>
-        <span class="dev-pct crit">${dev.percent}%</span>`;
+      rightHtml = `<span style="color:var(--crit-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill crit">电量紧急</span><span class="dev-pct crit">${dev.percent}%</span>`;
     } else if (lvl === "tier2") {
-      rightHtml = `
-        <span style="color:var(--warn-pct-text);display:inline-flex">${ICONS.lowBat}</span>
-        <span class="status-pill warn">低电量</span>
-        <span class="dev-pct warn">${dev.percent}%</span>`;
+      rightHtml = `<span style="color:var(--warn-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill warn">低电量</span><span class="dev-pct warn">${dev.percent}%</span>`;
     } else if (dev.charging) {
       rightHtml = `<span class="dev-pct"><span style="color:var(--bat-charging);display:inline-flex">${ICONS.bolt}</span>${dev.percent}%</span>`;
     } else {
       rightHtml = `<span class="dev-pct">${dev.percent}%</span>`;
     }
-
-    const barW = hasPct ? Math.max(0, Math.min(100, dev.percent)) : 0;
-    return `
-      <article class="device-card level-${lvl}">
-        <div class="card-row">
-          <div class="dev-icon-box">${iconSvg}</div>
-          <div class="dev-main">
-            <div class="dev-name-line"><span class="dev-name">${name}</span></div>
-            <div class="dev-sub"><span>${conn}</span>${subExtra}</div>
-            <div class="progress-wrap"><div class="progress-fill fill-${lvl}" style="width:${barW}%"></div></div>
-          </div>
-          <div class="dev-right">${rightHtml}</div>
-        </div>
-      </article>`;
+    const rightEl = el.querySelector(".dev-right");
+    if (rightEl.dataset.sig !== rightHtml) {
+      rightEl.innerHTML = rightHtml;
+      rightEl.dataset.sig = rightHtml;
+    }
   }
 
   function applyState(state) {
@@ -569,6 +597,7 @@
     const cfg = state.config || {};
     document.documentElement.dataset.theme = state.effective_theme || "light";
     document.documentElement.dataset.colors = cfg.color_scheme || "standard";
+    document.documentElement.dataset.anim = state.effective_animations === false ? "off" : "on";
     document.body.style.zoom = `${(cfg.ui_scale || 100) / 100}`;
 
     const shell = document.getElementById("appShell");
@@ -582,15 +611,39 @@
 
     const listEl = document.getElementById("deviceList");
     if (devs.length === 0) {
-      listEl.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-ico">${ICONS.mouse}</div>
-          <div class="empty-title">暂未检测到已连接的无线外设</div>
-          <div class="empty-desc">请确认 2.4GHz 接收器已插入或蓝牙外设已连接，也可以点击下方按钮手动重新扫描。</div>
-          <button class="btn btn-primary" onclick="refreshNow()">立即扫描设备</button>
-        </div>`;
+      cardRegistry.clear();
+      if (!listEl.querySelector(".empty-state")) {
+        listEl.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-ico">${ICONS.mouse}</div>
+            <div class="empty-title">暂未检测到已连接的无线外设</div>
+            <div class="empty-desc">请确认 2.4GHz 接收器已插入或蓝牙外设已连接，也可以点击下方按钮手动重新扫描。</div>
+            <button class="btn btn-primary" onclick="refreshNow()">立即扫描设备</button>
+          </div>`;
+      }
     } else {
-      listEl.innerHTML = devs.map(renderDeviceCard).join("");
+      const empty = listEl.querySelector(".empty-state");
+      if (empty) empty.remove();
+      const aliveIds = new Set(devs.map((d) => d.device_id));
+      for (const [id, node] of cardRegistry.entries()) {
+        if (!aliveIds.has(id)) {
+          node.remove();
+          cardRegistry.delete(id);
+        }
+      }
+      devs.forEach((dev, idx) => {
+        let node = cardRegistry.get(dev.device_id);
+        const wantMulti = dev.sub_batteries ? "1" : "0";
+        if (!node || node.dataset.multi !== wantMulti) {
+          if (node) node.remove();
+          node = createCardElement(dev);
+          cardRegistry.set(dev.device_id, node);
+        }
+        patchCardElement(node, dev);
+        if (listEl.children[idx] !== node) {
+          listEl.insertBefore(node, listEl.children[idx] || null);
+        }
+      });
     }
 
     document.getElementById("updatedText").textContent = state.updated_str
@@ -599,26 +652,34 @@
 
     const dot = document.getElementById("monitorDot");
     const mText = document.getElementById("monitorText");
-    if (state.auto_monitor) {
-      dot.classList.remove("paused");
-      mText.textContent = "自动监控已开启";
-    } else {
-      dot.classList.add("paused");
-      mText.textContent = "自动监控已暂停";
-    }
+    dot.classList.toggle("paused", !state.auto_monitor);
+    mText.textContent = state.auto_monitor ? "自动监控已开启" : "自动监控已暂停";
   }
 
   function refreshNow() {
     const btn = document.getElementById("refreshBtn");
     const lbl = document.getElementById("refreshLabel");
+    btn.classList.remove("spinning");
+    void btn.offsetWidth;
     btn.classList.add("spinning");
     lbl.textContent = "刷新中...";
     window.pywebview?.api?.refresh_now();
-    setTimeout(() => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
       btn.classList.remove("spinning");
       lbl.textContent = "刷新";
-    }, 850);
+    }, 620);
   }
+
+  // 窗口最小化或隐藏至托盘后停止任何进行中的前端动画
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearTimeout(refreshTimer);
+      const btn = document.getElementById("refreshBtn");
+      btn.classList.remove("spinning");
+      document.getElementById("refreshLabel").textContent = "刷新";
+    }
+  });
 
   function openSettings() { window.pywebview?.api?.open_settings("general"); }
   function minimizeWin() { window.pywebview?.api?.minimize_window(); }

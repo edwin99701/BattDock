@@ -112,6 +112,7 @@ class AppConfig:
     list_density: str = "comfortable"  # compact | standard | comfortable
     show_progress_bar: bool = True
     show_device_icon: bool = True
+    animations_enabled: bool = True  # 界面动画开关（默认开启，并遵循系统动画偏好）
 
     # 桌面悬浮窗
     floating: dict[str, Any] = field(default_factory=lambda: asdict(FloatingWidgetConfig()))
@@ -223,6 +224,26 @@ def resolve_effective_theme(theme_pref: str) -> str:
     if theme_pref == "light":
         return "light"
     return "dark" if detect_windows_dark_mode() else "light"
+
+
+def detect_windows_animations_enabled() -> bool:
+    """读取 Windows 系统动画偏好（SPI_GETCLIENTAREAANIMATION = 0x1042），Win10/11 通用。"""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+
+        enabled = ctypes.c_int(1)
+        if ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(enabled), 0):
+            return bool(enabled.value)
+    except Exception:
+        pass
+    return True
+
+
+def resolve_effective_animations(user_enabled: bool) -> bool:
+    """结合用户开关与 Windows 系统动画偏好决定最终是否启用界面动画。"""
+    return bool(user_enabled) and detect_windows_animations_enabled()
 
 
 def load_config() -> AppConfig:

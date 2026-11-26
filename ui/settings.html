@@ -13,7 +13,7 @@
     overflow: hidden;
   }
 
-  /* 左侧导航栏（精准还原参考图） */
+  /* 左侧导航栏（稳定不动，选中态 150ms 平滑过渡） */
   .sidebar {
     width: 196px;
     flex-shrink: 0;
@@ -41,17 +41,17 @@
     gap: 10px;
     cursor: pointer;
     text-align: left;
-    transition: background 0.14s ease, color 0.14s ease;
+    transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 100ms var(--ease-out);
   }
 
   .nav-item svg {
     color: var(--text-secondary);
     flex-shrink: 0;
+    transition: color 150ms var(--ease-out);
   }
 
-  .nav-item:hover {
-    background: var(--bg-hover);
-  }
+  .nav-item:hover { background: var(--bg-hover); }
+  .nav-item:active { transform: scale(0.985); }
 
   .nav-item.active {
     background: linear-gradient(90deg, rgba(37, 99, 235, 0.15) 0%, rgba(37, 99, 235, 0.05) 100%);
@@ -59,22 +59,28 @@
     font-weight: 600;
   }
 
-  .nav-item.active svg {
-    color: var(--brand);
-  }
+  .nav-item.active svg { color: var(--brand); }
 
-  .nav-item.active::before {
+  .nav-item::before {
     content: "";
     position: absolute;
     left: 0;
-    top: 8px;
-    bottom: 8px;
+    top: 9px;
+    bottom: 9px;
     width: 3px;
     border-radius: 999px;
     background: var(--brand);
+    opacity: 0;
+    transform: scaleY(0.4);
+    transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out);
   }
 
-  /* 右侧内容区 */
+  .nav-item.active::before {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+
+  /* 右侧内容区（仅此处播放过渡动画） */
   .content-pane {
     flex: 1;
     min-width: 0;
@@ -94,11 +100,36 @@
     display: flex;
   }
 
+  /* 各类轻量过渡动画（可随时打断重播，零弹簧回弹） */
+  .page.anim-win-enter { animation: winEnter 220ms var(--ease-out) both; }
+  .page.anim-tab { animation: tabSwitch 180ms var(--ease-out) both; }
+  .page.anim-slide-in { animation: subSlideIn 220ms var(--ease-out) both; }
+  .page.anim-slide-back { animation: subSlideBack 220ms var(--ease-out) both; }
+
+  @keyframes winEnter {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes tabSwitch {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes subSlideIn {
+    from { opacity: 0; transform: translateX(14px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes subSlideBack {
+    from { opacity: 0; transform: translateX(-14px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
   .page-header {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 0;
   }
 
   .page-icon {
@@ -147,17 +178,8 @@
     margin-bottom: 6px;
   }
 
-  .card-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .card-sub {
-    font-size: 11.5px;
-    color: var(--text-secondary);
-    margin-top: 1px;
-  }
+  .card-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .card-sub { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
 
   .row {
     min-height: 40px;
@@ -169,67 +191,23 @@
     border-top: 1px solid var(--border-hairline);
   }
 
-  .row:first-of-type {
-    border-top: none;
-  }
+  .row:first-of-type { border-top: none; }
+  .row.disabled { opacity: 0.45; pointer-events: none; }
 
-  .row.disabled {
-    opacity: 0.45;
-    pointer-events: none;
-  }
-
-  .row-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .row-ico {
-    color: var(--text-secondary);
-    display: inline-flex;
-    flex-shrink: 0;
-  }
-
-  .row-text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  .row-label {
-    font-size: 13.5px;
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-
-  .row-hint {
-    font-size: 11.5px;
-    color: var(--text-secondary);
-    margin-top: 1px;
-  }
-
-  .row-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
-  }
+  .row-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+  .row-ico { color: var(--text-secondary); display: inline-flex; flex-shrink: 0; }
+  .row-text { display: flex; flex-direction: column; min-width: 0; }
+  .row-label { font-size: 13.5px; font-weight: 500; color: var(--text-primary); }
+  .row-hint { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
+  .row-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
   /* 三级色点 */
-  .tier-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
+  .tier-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .tier-dot.yellow { background: #A3E635; }
   .tier-dot.orange { background: #FBBF24; }
   .tier-dot.red { background: #EF4444; }
 
-  /* 步进百分比输入（紧凑 30% + 常驻精致上下微调箭头） */
+  /* 步进百分比输入 */
   .pct-input-wrap {
     display: inline-flex;
     align-items: center;
@@ -239,7 +217,7 @@
     border-radius: 7px;
     border: 1px solid var(--border-input);
     background: var(--bg-input);
-    transition: border-color 0.15s ease;
+    transition: border-color 120ms var(--ease-out);
   }
 
   .pct-input-wrap:focus-within { border-color: var(--brand); }
@@ -258,26 +236,10 @@
   }
 
   .pct-input::-webkit-inner-spin-button,
-  .pct-input::-webkit-outer-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-  }
+  .pct-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
-  .pct-unit {
-    font-size: 12.5px;
-    color: var(--text-primary);
-    margin-left: 1px;
-    margin-right: auto;
-    pointer-events: none;
-  }
-
-  .pct-spins {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 1px;
-    margin-left: 4px;
-  }
+  .pct-unit { font-size: 12.5px; color: var(--text-primary); margin-left: 1px; margin-right: auto; pointer-events: none; }
+  .pct-spins { display: flex; flex-direction: column; justify-content: center; gap: 1px; margin-left: 4px; }
 
   .pct-spin-btn {
     border: none;
@@ -291,12 +253,10 @@
     justify-content: center;
     cursor: pointer;
     border-radius: 3px;
+    transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
   }
 
-  .pct-spin-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-  }
+  .pct-spin-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
 
   /* 自定义阈值灰底条 */
   .custom-bar {
@@ -308,19 +268,12 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    transition: opacity 150ms var(--ease-out);
   }
 
-  .custom-bar.disabled {
-    opacity: 0.45;
-    pointer-events: none;
-  }
+  .custom-bar.disabled { opacity: 0.45; pointer-events: none; }
 
-  .tag-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-  }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
   .tag-chip {
     display: inline-flex;
@@ -334,14 +287,7 @@
     font-weight: 500;
   }
 
-  .tag-chip button {
-    border: none;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-    font-size: 13px;
-    line-height: 1;
-  }
+  .tag-chip button { border: none; background: transparent; color: inherit; cursor: pointer; font-size: 13px; line-height: 1; }
 
   /* 设备管理行卡片 */
   .dev-mgr-card {
@@ -355,46 +301,10 @@
   }
 
   .dev-mgr-card + .dev-mgr-card { margin-top: 10px; }
-
-  .dev-mgr-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-  }
-
-  .dev-mgr-badges {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    font-size: 11.5px;
-    color: var(--text-secondary);
-  }
-
-  .mini-badge {
-    padding: 1px 7px;
-    border-radius: 999px;
-    border: 1px solid var(--border-input);
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    font-size: 11px;
-  }
-
-  .mini-badge.verified {
-    border-color: rgba(34, 197, 94, 0.4);
-    background: rgba(34, 197, 94, 0.12);
-    color: #15803D;
-  }
-
-  :root[data-theme="dark"] .mini-badge.verified { color: #86EFAC; }
-
-  .dev-mgr-controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
+  .dev-mgr-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .dev-mgr-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-secondary); }
+  .mini-badge { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-input); background: var(--bg-card); color: var(--text-secondary); font-size: 11px; }
+  .dev-mgr-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
   /* 分段选项组 */
   .seg-group {
@@ -416,36 +326,18 @@
     font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.14s ease, color 0.14s ease;
+    transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 100ms var(--ease-out);
   }
 
-  .seg-btn.active {
-    background: var(--bg-card);
-    color: var(--text-primary);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  }
+  .seg-btn:active { transform: scale(0.975); }
+  .seg-btn.active { background: var(--bg-card); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
 
   /* 透明度滑块 */
-  .range-wrap {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  input[type="range"] {
-    width: 140px;
-    accent-color: var(--brand);
-    cursor: pointer;
-  }
+  .range-wrap { display: flex; align-items: center; gap: 10px; }
+  input[type="range"] { width: 140px; accent-color: var(--brand); cursor: pointer; }
 
   /* 关于页面 */
-  .about-hero {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 4px 0 12px;
-  }
-
+  .about-hero { display: flex; align-items: center; gap: 14px; padding: 4px 0 12px; }
   .about-logo {
     width: 46px;
     height: 46px;
@@ -457,217 +349,283 @@
     justify-content: center;
     flex-shrink: 0;
   }
+  .about-meta { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+  .about-name { font-size: 16px; font-weight: 700; line-height: 1.25; color: var(--text-primary); }
+  .about-ver { font-size: 13px; line-height: 1.25; color: var(--text-secondary); }
 
-  .about-meta {
+  /* ================= 支持设备清单：设置窗内独立子页面（中性色、可折叠品牌手风琴） ================= */
+  .subpage-bar {
     display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 3px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
 
-  .about-name {
-    font-size: 16px;
-    font-weight: 700;
-    line-height: 1.25;
+  .subpage-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .back-btn {
+    height: 30px;
+    padding: 0 10px 0 8px;
+    border-radius: 7px;
+    border: 1px solid var(--border-input);
+    background: var(--bg-card);
     color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: background-color 120ms var(--ease-out), transform 100ms var(--ease-out);
   }
 
-  .about-ver {
-    font-size: 13px;
-    line-height: 1.25;
-    color: var(--text-secondary);
+  .back-btn:hover { background: var(--bg-hover); }
+  .back-btn:active { transform: scale(0.975); }
+
+  .sup-tools {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
-  /* 内嵌可视化弹窗（支持设备清单 / 开源许可） */
-  .modal-mask {
-    position: fixed;
-    inset: 0;
-    z-index: 150;
-    background: rgba(15, 23, 42, 0.42);
+  .search-box {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    width: 210px;
+  }
+
+  .search-ico {
+    position: absolute;
+    left: 9px;
+    color: var(--text-muted);
+    pointer-events: none;
+    display: inline-flex;
+  }
+
+  .search-input {
+    width: 100%;
+    height: 30px;
+    padding: 0 26px 0 29px;
+    border-radius: 7px;
+    border: 1px solid var(--border-input);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    outline: none;
+    transition: border-color 120ms var(--ease-out);
+  }
+
+  .search-input:focus { border-color: var(--brand); }
+
+  .search-clear {
+    position: absolute;
+    right: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    cursor: pointer;
     display: none;
     align-items: center;
     justify-content: center;
-    padding: 22px;
+    font-size: 13px;
   }
 
-  .modal-mask.open { display: flex; }
+  .search-clear.visible { display: inline-flex; }
+  .search-clear:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+  /* 简洁中性色可折叠品牌列表 */
+  .brand-accordion {
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: 10px;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+
+  .brand-group + .brand-group {
+    border-top: 1px solid var(--border-hairline);
+  }
+
+  .brand-trigger {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 16px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: background-color 120ms var(--ease-out);
+  }
+
+  .brand-trigger:hover {
+    background: var(--bg-hover);
+  }
+
+  .brand-head-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .brand-name {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .brand-count {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .brand-chevron {
+    color: var(--text-muted);
+    display: inline-flex;
+    flex-shrink: 0;
+    transition: transform 200ms var(--ease-out), color 150ms var(--ease-out);
+  }
+
+  .brand-group.open .brand-chevron {
+    transform: rotate(180deg);
+    color: var(--text-primary);
+  }
+
+  /* 200ms 平滑高度折叠过渡（CSS grid 0fr -> 1fr，支持任意高度且无抖动） */
+  .brand-collapse {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 200ms var(--ease-out);
+  }
+
+  .brand-group.open .brand-collapse {
+    grid-template-rows: 1fr;
+  }
+
+  .brand-collapse-inner {
+    overflow: hidden;
+    background: var(--bg-subpanel);
+  }
+
+  .model-row {
+    padding: 9px 16px 9px 28px;
+    border-top: 1px solid var(--border-hairline);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .model-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .model-kind-ico {
+    color: var(--text-muted);
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .model-name {
+    font-size: 13px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .model-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .neutral-pill {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-hairline);
+    color: var(--text-secondary);
+  }
+
+  .sup-footnote {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 6px 4px 2px;
+  }
+
+  /* 轻量开源许可弹窗：180ms 淡入 / 140ms 淡出 */
+  .modal-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(15, 23, 42, 0.36);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    opacity: 0;
+    transition: opacity 160ms var(--ease-out);
+  }
+
+  .modal-mask.mounted { display: flex; }
+  .modal-mask.open { opacity: 1; }
 
   .modal-box {
     width: 100%;
-    max-width: 680px;
-    max-height: 84vh;
+    max-width: 560px;
+    max-height: 78vh;
     background: var(--bg-card);
     border: 1px solid var(--border-card);
     border-radius: 12px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.24);
+    box-shadow: var(--shadow-popover);
+    transform: translateY(6px) scale(0.985);
+    transition: transform 180ms var(--ease-out), opacity 140ms var(--ease-out);
+  }
+
+  .modal-mask.open .modal-box {
+    transform: translateY(0) scale(1);
   }
 
   .modal-head {
-    padding: 13px 18px;
+    padding: 13px 16px;
     border-bottom: 1px solid var(--border-hairline);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-  }
-
-  .modal-title-wrap {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .modal-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--text-primary);
-  }
-
-  .modal-sub {
-    font-size: 11.5px;
-    color: var(--text-secondary);
-  }
-
-  .modal-toolbar {
-    padding: 10px 18px;
-    border-bottom: 1px solid var(--border-hairline);
-    background: var(--bg-subpanel);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .filter-pills {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .filter-pill {
-    border: 1px solid var(--border-input);
-    background: var(--bg-card);
-    color: var(--text-secondary);
-    font-family: inherit;
-    font-size: 12px;
-    padding: 4px 10px;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: all 0.14s ease;
-  }
-
-  .filter-pill:hover {
-    color: var(--text-primary);
-    border-color: var(--brand);
-  }
-
-  .filter-pill.active {
-    background: var(--brand);
-    border-color: var(--brand);
-    color: #FFFFFF;
   }
 
   .modal-body {
     flex: 1;
     overflow-y: auto;
-    padding: 14px 18px 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .sup-card {
-    border: 1px solid var(--border-card);
-    border-radius: 10px;
-    padding: 12px 14px;
-    background: var(--bg-subpanel);
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .sup-card.verified {
-    border-color: rgba(34, 197, 94, 0.35);
-    background: rgba(34, 197, 94, 0.06);
-  }
-
-  .sup-card-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-  }
-
-  .sup-brand {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .sup-status {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 999px;
-    flex-shrink: 0;
-  }
-
-  .sup-status.verified {
-    background: rgba(34, 197, 94, 0.16);
-    color: #15803D;
-  }
-
-  .sup-status.ready {
-    background: rgba(37, 99, 235, 0.12);
-    color: var(--brand-text);
-  }
-
-  .sup-status.unsupported {
-    background: rgba(148, 163, 184, 0.18);
-    color: var(--text-secondary);
-  }
-
-  :root[data-theme="dark"] .sup-status.verified { color: #86EFAC; }
-
-  .sup-models {
-    font-size: 12.5px;
-    color: var(--text-secondary);
-    line-height: 1.5;
-  }
-
-  .sup-tags {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-top: 2px;
-  }
-
-  .sup-tag {
-    font-size: 11px;
-    padding: 1px 8px;
-    border-radius: 6px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-hairline);
-    color: var(--text-secondary);
-  }
-
-  .lic-note {
-    font-size: 12px;
-    color: var(--text-secondary);
-    background: var(--bg-subpanel);
-    border: 1px solid var(--border-hairline);
-    border-radius: 8px;
-    padding: 10px 12px;
-    line-height: 1.55;
-  }
-
-  .lic-grid {
+    padding: 14px 16px 16px;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -678,8 +636,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 10px 12px;
-    border-radius: 9px;
+    padding: 9px 12px;
+    border-radius: 8px;
     border: 1px solid var(--border-hairline);
     background: var(--bg-subpanel);
   }
@@ -687,54 +645,40 @@
 </head>
 <body>
   <div id="toast" class="toast-bar"></div>
-  <div id="docModal" class="modal-mask" onclick="if(event.target===this)closeModal()">
+  <div id="cselectMenu" class="cselect-menu" role="listbox"></div>
+
+  <!-- 仅用于开源许可声明的轻量弹窗（140ms 淡出关闭） -->
+  <div id="licModal" class="modal-mask" onclick="if(event.target===this)closeLicModal()">
     <div class="modal-box">
       <div class="modal-head">
-        <div class="modal-title-wrap">
-          <div id="modalTitle" class="modal-title">支持设备清单</div>
-          <div id="modalSub" class="modal-sub"></div>
+        <div>
+          <div style="font-size:14.5px;font-weight:700">开源组件与许可声明</div>
+          <div style="font-size:11.5px;color:var(--text-secondary);margin-top:1px">第三方运行库与公开协议参考说明</div>
         </div>
-        <button class="btn btn-sm" onclick="closeModal()">关闭</button>
+        <button class="btn btn-sm" onclick="closeLicModal()">关闭</button>
       </div>
-      <div id="modalToolbar" class="modal-toolbar" style="display:none">
-        <div class="filter-pills" id="supFilterPills">
-          <button class="filter-pill active" data-f="all" onclick="setSupFilter('all')">全部</button>
-          <button class="filter-pill" data-f="verified" onclick="setSupFilter('verified')">已实机验证</button>
-          <button class="filter-pill" data-f="ready" onclick="setSupFilter('ready')">协议已内置 · 待实测</button>
-          <button class="filter-pill" data-f="unsupported" onclick="setSupFilter('unsupported')">暂不支持</button>
-        </div>
-        <input id="supSearch" class="input" style="width:170px;height:28px;font-size:12px" placeholder="搜索品牌或型号..." oninput="renderSupportedModal()" />
-      </div>
-      <div id="modalContent" class="modal-body"></div>
+      <div id="licBody" class="modal-body"></div>
     </div>
   </div>
 
   <div class="app-shell">
-    <!-- 顶部标题栏（返回 + 齿轮 + 设置 + 窗口按钮） -->
+    <!-- 顶部标题栏 -->
     <div id="titlebar" class="titlebar">
       <div class="titlebar-left">
         <button class="win-btn" title="返回主窗口" onclick="closeWin()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="19" y1="12" x2="5" y2="12"/>
-            <polyline points="12 19 5 12 12 5"/>
+            <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
           </svg>
         </button>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary)">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
         <span class="app-title">设置</span>
       </div>
       <div class="titlebar-controls">
-        <button class="win-btn" title="最小化" onclick="minimizeWin()">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-        <button class="win-btn" title="最大化" onclick="toggleMax()">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-        </button>
-        <button class="win-btn close" title="关闭设置" onclick="closeWin()">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
-        </button>
+        <button class="win-btn" title="最小化" onclick="minimizeWin()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+        <button class="win-btn" title="最大化" onclick="toggleMax()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+        <button class="win-btn close" title="关闭设置" onclick="closeWin()"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
       </div>
     </div>
 
@@ -767,17 +711,12 @@
         </button>
       </aside>
 
-      <main class="content-pane">
+      <main id="contentPane" class="content-pane">
         <!-- 1. 常规设置（默认页） -->
         <section id="page-general" class="page active">
           <div class="page-header">
-            <div class="page-icon blue">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            </div>
-            <div>
-              <div class="page-title">常规设置</div>
-              <div class="page-desc">管理软件启动行为、托盘驻留和后台电量轮询周期</div>
-            </div>
+            <div class="page-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+            <div><div class="page-title">常规设置</div><div class="page-desc">管理软件启动行为、托盘驻留和后台电量轮询周期</div></div>
           </div>
 
           <div class="card">
@@ -803,15 +742,8 @@
               <button id="sw-autoMon" class="toggle" onclick="toggleBool('auto_monitor')"><span class="toggle-knob"></span></button>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">电量检测间隔</span><span class="row-hint">较长间隔可进一步降低极轻微的后台唤醒频率</span></div>
-              <select id="sel-poll" class="select" onchange="patchSettings({ poll_interval_sec: Number(this.value) })">
-                <option value="10">10 秒</option>
-                <option value="15">15 秒</option>
-                <option value="25">25 秒（推荐）</option>
-                <option value="30">30 秒</option>
-                <option value="60">60 秒</option>
-                <option value="120">120 秒</option>
-              </select>
+              <div class="row-text"><span class="row-label">电量检测间隔</span><span class="row-hint">较长间隔可进一步降低后台唤醒频率</span></div>
+              <div id="cs-poll" class="cselect"></div>
             </div>
           </div>
         </section>
@@ -819,21 +751,13 @@
         <!-- 2. 设备管理 -->
         <section id="page-devices" class="page">
           <div class="page-header">
-            <div class="page-icon blue">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg>
-            </div>
-            <div>
-              <div class="page-title">设备管理</div>
-              <div class="page-desc">重命名设备、隐藏或暂停监控、调整排序以及为单台设备配置独立提醒阈值</div>
-            </div>
+            <div class="page-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg></div>
+            <div><div class="page-title">设备管理</div><div class="page-desc">重命名设备、隐藏或暂停监控、调整排序以及为单台设备配置独立提醒阈值</div></div>
           </div>
 
           <div class="card">
             <div class="card-header">
-              <div>
-                <div class="card-title">已识别设备</div>
-                <div class="card-sub">单台设备的独立提醒阈值优先于全局设置</div>
-              </div>
+              <div><div class="card-title">已识别设备</div><div class="card-sub">单台设备的独立提醒阈值优先于全局设置</div></div>
               <button class="btn btn-sm" onclick="window.pywebview?.api?.refresh_now();showToast('正在重新扫描设备...')">重新扫描</button>
             </div>
             <div id="deviceMgrList"></div>
@@ -843,21 +767,13 @@
         <!-- 3. 电量提醒 -->
         <section id="page-alerts" class="page">
           <div class="page-header">
-            <div class="page-icon green">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            </div>
-            <div>
-              <div class="page-title">电量提醒</div>
-              <div class="page-desc">设置外设电量的提醒阈值、通知方式和提醒行为</div>
-            </div>
+            <div class="page-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
+            <div><div class="page-title">电量提醒</div><div class="page-desc">设置外设电量的提醒阈值、通知方式和提醒行为</div></div>
           </div>
 
           <div class="card">
             <div class="card-header">
-              <div>
-                <div class="card-title">提醒阈值设置</div>
-                <div class="card-sub">当设备电量低于以下阈值时，自动发送提醒通知</div>
-              </div>
+              <div><div class="card-title">提醒阈值设置</div><div class="card-sub">当设备电量低于以下阈值时，自动发送提醒通知</div></div>
               <button id="sw-alertMaster" class="toggle" title="低电量提醒总开关" onclick="toggleBool('alerts_master_enabled')"><span class="toggle-knob"></span></button>
             </div>
             <div id="tierRowsWrap">
@@ -905,10 +821,7 @@
 
           <div class="card">
             <div class="card-header">
-              <div>
-                <div class="card-title">自定义提醒</div>
-                <div class="card-sub">添加更多电量提醒阈值，满足个性化需求</div>
-              </div>
+              <div><div class="card-title">自定义提醒</div><div class="card-sub">添加更多电量提醒阈值，满足个性化需求</div></div>
               <button id="sw-customAlert" class="toggle" onclick="toggleBool('custom_alerts_enabled')"><span class="toggle-knob"></span></button>
             </div>
             <div id="customBar" class="custom-bar">
@@ -950,12 +863,8 @@
                 <div class="row-text"><span class="row-label">提醒声音</span><span class="row-hint">弹窗时播放系统提示音</span></div>
               </div>
               <div class="row-right">
-                <select id="sel-sound" class="select" onchange="patchSettings({ sound_name: this.value })">
-                  <option value="default">默认提示音</option>
-                  <option value="asterisk">柔和提示音</option>
-                  <option value="exclamation">警示提示音</option>
-                </select>
-                <button class="btn btn-icon" title="试听提示音" onclick="window.pywebview?.api?.preview_sound(document.getElementById('sel-sound').value)">
+                <div id="cs-sound" class="cselect" style="min-width:112px"></div>
+                <button class="btn btn-icon" title="试听提示音" onclick="window.pywebview?.api?.preview_sound(appState?.config?.sound_name || 'default')">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
                 </button>
                 <button id="sw-sound" class="toggle" onclick="toggleBool('sound_enabled')"><span class="toggle-knob"></span></button>
@@ -967,12 +876,7 @@
                 <div class="row-text"><span class="row-label">重复提醒</span><span class="row-hint">关闭时同一放电周期绝不重复；开启后按间隔再次提醒</span></div>
               </div>
               <div class="row-right">
-                <select id="sel-repeat" class="select" onchange="patchSettings({ repeat_interval_min: Number(this.value) })">
-                  <option value="5">5 分钟</option>
-                  <option value="10">10 分钟</option>
-                  <option value="15">15 分钟</option>
-                  <option value="30">30 分钟</option>
-                </select>
+                <div id="cs-repeat" class="cselect" style="min-width:100px"></div>
                 <button id="sw-repeat" class="toggle" onclick="toggleBool('repeat_alert_enabled')"><span class="toggle-knob"></span></button>
               </div>
             </div>
@@ -982,13 +886,8 @@
         <!-- 4. 外观设置 -->
         <section id="page-appearance" class="page">
           <div class="page-header">
-            <div class="page-icon purple">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20V2z" fill="currentColor" opacity="0.2"/></svg>
-            </div>
-            <div>
-              <div class="page-title">外观设置</div>
-              <div class="page-desc">自定义浅色/深色主题、缩放比例、配色方案与设备列表显示方式</div>
-            </div>
+            <div class="page-icon purple"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20V2z" fill="currentColor" opacity="0.2"/></svg></div>
+            <div><div class="page-title">外观设置</div><div class="page-desc">自定义浅色/深色主题、缩放比例、界面动画与设备列表显示方式</div></div>
           </div>
 
           <div class="card">
@@ -1001,21 +900,16 @@
               </div>
             </div>
             <div class="row">
+              <div class="row-text"><span class="row-label">界面动画</span><span class="row-hint">开启轻量过渡与交互动效，并遵循 Windows 系统动画偏好</span></div>
+              <button id="sw-anim" class="toggle" onclick="toggleBool('animations_enabled')"><span class="toggle-knob"></span></button>
+            </div>
+            <div class="row">
               <div class="row-text"><span class="row-label">界面缩放</span><span class="row-hint">适配不同分辨率与 DPI 缩放偏好</span></div>
-              <select id="sel-scale" class="select" onchange="patchSettings({ ui_scale: Number(this.value) })">
-                <option value="90">90%</option>
-                <option value="100">100%（默认）</option>
-                <option value="110">110%</option>
-                <option value="125">125%</option>
-              </select>
+              <div id="cs-scale" class="cselect"></div>
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">电量状态颜色</span><span class="row-hint">调整正常与低电量进度条色彩风格</span></div>
-              <select id="sel-colors" class="select" onchange="patchSettings({ color_scheme: this.value })">
-                <option value="standard">标准清新</option>
-                <option value="high_contrast">高对比度</option>
-                <option value="soft">柔和护眼</option>
-              </select>
+              <div id="cs-colors" class="cselect"></div>
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">设备列表显示密度</span><span class="row-hint">控制主窗口设备卡片的紧凑程度</span></div>
@@ -1039,13 +933,8 @@
         <!-- 5. 桌面悬浮窗 -->
         <section id="page-floating" class="page">
           <div class="page-header">
-            <div class="page-icon amber">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="14" rx="2"/><rect x="12" y="10" width="7" height="5" rx="1"/></svg>
-            </div>
-            <div>
-              <div class="page-title">桌面悬浮窗</div>
-              <div class="page-desc">启用轻量原生桌面迷你电量条（Win10/11 通用，双击悬浮窗可唤起主窗口）</div>
-            </div>
+            <div class="page-icon amber"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="14" rx="2"/><rect x="12" y="10" width="7" height="5" rx="1"/></svg></div>
+            <div><div class="page-title">桌面悬浮窗</div><div class="page-desc">启用轻量原生桌面迷你电量条（Win10/11 通用，双击悬浮窗可唤起主窗口）</div></div>
           </div>
 
           <div class="card">
@@ -1074,17 +963,11 @@
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">显示位置</span><span class="row-hint">解除锁定后可直接拖拽悬浮窗到任意位置</span></div>
-              <select id="sel-fltPos" class="select" onchange="patchFloating({ position_preset: this.value })">
-                <option value="bottom_right">右下角（推荐）</option>
-                <option value="bottom_left">左下角</option>
-                <option value="top_right">右上角</option>
-                <option value="top_left">左上角</option>
-                <option value="custom">自定义拖动位置</option>
-              </select>
+              <div id="cs-fltPos" class="cselect" style="min-width:136px"></div>
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">显示设备</span></div>
-              <select id="sel-fltDev" class="select" onchange="patchFloating({ device_id: this.value })"></select>
+              <div id="cs-fltDev" class="cselect" style="min-width:168px"></div>
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">锁定悬浮窗位置</span><span class="row-hint">防止使用鼠标时误拖动悬浮窗</span></div>
@@ -1096,13 +979,8 @@
         <!-- 6. 关于软件 -->
         <section id="page-about" class="page">
           <div class="page-header">
-            <div class="page-icon slate">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-            </div>
-            <div>
-              <div class="page-title">关于软件</div>
-              <div class="page-desc">版本信息、兼容设备清单、开源许可证与诊断日志工具</div>
-            </div>
+            <div class="page-icon slate"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div>
+            <div><div class="page-title">关于软件</div><div class="page-desc">版本信息、支持设备清单、开源许可与诊断工具</div></div>
           </div>
 
           <div class="card">
@@ -1121,21 +999,51 @@
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">检查更新</span><span class="row-hint">公开 GitHub Releases 发布后启用在线检查</span></div>
-              <button class="btn btn-sm" onclick="showToast('当前为本地私有筹备版 v2.1.0，尚未配置公开更新源')">查看说明</button>
+              <button class="btn btn-sm" onclick="showToast('当前为本地私有筹备版，尚未配置公开更新源')">查看说明</button>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">支持设备清单</span><span class="row-hint">查看已支持的外设品牌、型号与实机验证状态</span></div>
-              <button class="btn btn-sm" onclick="openSupportedDevices()">查看清单</button>
+              <div class="row-text"><span class="row-label">支持设备清单</span><span class="row-hint">按品牌与设备类型浏览已适配的无线外设</span></div>
+              <button class="btn btn-sm" onclick="openSupportedSubpage()">查看清单</button>
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">开源组件与许可声明</span><span class="row-hint">第三方运行库与参考协议的合规说明</span></div>
-              <button class="btn btn-sm" onclick="openLicensesModal()">查看许可</button>
+              <button class="btn btn-sm" onclick="openLicModal()">查看许可</button>
             </div>
             <div class="row">
               <div class="row-text"><span class="row-label">诊断日志导出</span><span class="row-hint">导出脱敏 JSON 报告（不含隐私路径与序列号），便于排查兼容问题</span></div>
               <button class="btn btn-primary btn-sm" onclick="doExportDiag()">导出诊断</button>
             </div>
           </div>
+        </section>
+
+        <!-- 7. 支持设备清单独立子页面（无遮罩弹窗、可折叠独立品牌、中性色细边框） -->
+        <section id="page-supported" class="page">
+          <div class="subpage-bar">
+            <div class="subpage-left">
+              <button class="back-btn" onclick="backFromSupported()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                <span>返回</span>
+              </button>
+              <span class="page-title" style="font-size:16px">支持设备清单</span>
+            </div>
+          </div>
+
+          <div class="sup-tools">
+            <div class="seg-group" id="seg-supKind">
+              <button class="seg-btn active" data-v="all" onclick="setSupKind('all')">全部</button>
+              <button class="seg-btn" data-v="mouse" onclick="setSupKind('mouse')">鼠标</button>
+              <button class="seg-btn" data-v="headset" onclick="setSupKind('headset')">耳机</button>
+              <button class="seg-btn" data-v="keyboard" onclick="setSupKind('keyboard')">键盘</button>
+            </div>
+            <div class="search-box">
+              <span class="search-ico"><svg width="13.5" height="13.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.65" y2="16.65"/></svg></span>
+              <input id="supSearch" class="search-input" placeholder="搜索品牌或设备型号..." oninput="onSupSearchInput()" />
+              <button id="supClearBtn" class="search-clear" title="清空搜索" onclick="clearSupSearch()">×</button>
+            </div>
+          </div>
+
+          <div id="brandAccordion" class="brand-accordion"></div>
+          <div class="sup-footnote">实际兼容性可能因设备固件及连接方式而异。</div>
         </section>
       </main>
     </div>
@@ -1144,7 +1052,145 @@
 <script>
   let appState = null;
   let toastTimer = null;
+  let currentPageId = "page-general";
 
+  // 独立品牌支持目录（仅包含已实际实现协议适配的型号；面向用户隐藏测试状态，底层数据库与文档保留真实状态）
+  const BRAND_CATALOG = [
+    {
+      brand: "VGN",
+      items: [
+        { name: "VGN Dragonfly F2 Pro Max", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "VGN Dragonfly F2 Master+", kind: "mouse", conn: "2.4GHz" },
+        { name: "VGN Dragonfly F1 Pro / MOBA", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "VGN Dragonfly 4K", kind: "mouse", conn: "2.4GHz" },
+      ],
+    },
+    {
+      brand: "VXE",
+      items: [
+        { name: "VXE R1 Pro Max", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "VXE R1 SE+", kind: "mouse", conn: "2.4GHz / 有线" },
+      ],
+    },
+    {
+      brand: "ATK",
+      items: [
+        { name: "ATK F1 / X1 系列（CompX 协议）", kind: "mouse", conn: "2.4GHz / 有线" },
+      ],
+    },
+    {
+      brand: "MCHOSE 迈从",
+      items: [
+        { name: "MCHOSE A5 / G3 / A7 / L7 / K7 系列", kind: "mouse", conn: "2.4GHz / 有线" },
+      ],
+    },
+    {
+      brand: "LAMZU",
+      items: [
+        { name: "LAMZU 系列无线鼠标（CompX 协议）", kind: "mouse", conn: "2.4GHz / 有线" },
+      ],
+    },
+    {
+      brand: "Logitech 罗技",
+      items: [
+        { name: "G PRO X SUPERLIGHT / SUPERLIGHT 2", kind: "mouse", conn: "LIGHTSPEED / 有线" },
+        { name: "G502 / G304 / G903 无线系列", kind: "mouse", conn: "LIGHTSPEED / 有线" },
+        { name: "MX Master / MX Anywhere 系列", kind: "mouse", conn: "Bolt / Unifying / 蓝牙" },
+        { name: "MX Keys / 无线 HID++ 键盘系列", kind: "keyboard", conn: "Bolt / Unifying / 蓝牙" },
+        { name: "G533 / G535 / G633 / G733 / G935 / G PRO X", kind: "headset", conn: "2.4GHz" },
+      ],
+    },
+    {
+      brand: "Razer 雷蛇",
+      items: [
+        { name: "Viper V3 Pro / V2 Pro / Ultimate", kind: "mouse", conn: "HyperSpeed / 有线" },
+        { name: "DeathAdder V3 Pro / V2 Pro", kind: "mouse", conn: "HyperSpeed / 有线" },
+        { name: "Basilisk V3 Pro / Ultimate", kind: "mouse", conn: "HyperSpeed / 有线" },
+        { name: "Orochi V2 / Naga Pro", kind: "mouse", conn: "HyperSpeed / 蓝牙" },
+        { name: "BlackWidow V3 Pro / DeathStalker V2 Pro", kind: "keyboard", conn: "HyperSpeed / 有线" },
+      ],
+    },
+    {
+      brand: "SteelSeries 赛睿",
+      items: [
+        { name: "Aerox 3 / 5 / 9 Wireless（含 Gen 2）", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "Prime Wireless / Rival 3 / 650 Wireless", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "Arctis Nova Pro / Nova 7 / Nova 5 Wireless", kind: "headset", conn: "2.4GHz / 基站" },
+        { name: "Arctis 7 / 7+ / 9 Wireless", kind: "headset", conn: "2.4GHz" },
+        { name: "Arctis GameBuds", kind: "headset", conn: "2.4GHz" },
+      ],
+    },
+    {
+      brand: "Corsair 海盗船",
+      items: [
+        { name: "SLIPSTREAM 系列无线鼠标（Dark Core / M75 / Sabre 等）", kind: "mouse", conn: "SLIPSTREAM / 有线" },
+        { name: "SLIPSTREAM 系列无线键盘（K57 / K65 / K70 等）", kind: "keyboard", conn: "SLIPSTREAM / 有线" },
+        { name: "Void / HS70 / HS80 / Virtuoso 无线耳机", kind: "headset", conn: "2.4GHz / 有线" },
+      ],
+    },
+    {
+      brand: "HyperX",
+      items: [
+        { name: "Cloud Alpha / Cloud II / Cloud III / II Core Wireless", kind: "headset", conn: "2.4GHz" },
+        { name: "Cloud Stinger 2 Wireless", kind: "headset", conn: "2.4GHz" },
+        { name: "Pulsefire Haste 2 / Haste / Dart Wireless", kind: "mouse", conn: "2.4GHz / 有线" },
+      ],
+    },
+    {
+      brand: "ASUS ROG",
+      items: [
+        { name: "ROG Harpe Ace / Harpe II Ace / Mini / Extreme", kind: "mouse", conn: "2.4GHz / Omni / 有线" },
+        { name: "ROG Keris Wireless / AimPoint / II Ace / II Origin", kind: "mouse", conn: "2.4GHz / Omni / 有线" },
+        { name: "ROG Gladius III / AimPoint / Chakram X / Spatha X / TUF M4", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "ROG Azoth / Falchion / Strix Scope II 96 Wireless", kind: "keyboard", conn: "2.4GHz / Omni / 有线" },
+        { name: "ROG Pelta / Delta II / Cetra SpeedNova / Strix Go 2.4", kind: "headset", conn: "2.4GHz" },
+      ],
+    },
+    {
+      brand: "Sony 索尼",
+      items: [
+        { name: "INZONE H5 / INZONE H9 II", kind: "headset", conn: "2.4GHz" },
+        { name: "INZONE Buds（支持左耳/右耳/充电盒独立电量）", kind: "headset", conn: "2.4GHz" },
+      ],
+    },
+    {
+      brand: "Apple / Beats",
+      items: [
+        { name: "AirPods 1 / 2 / 3 / 4（含主动降噪版）", kind: "headset", conn: "蓝牙" },
+        { name: "AirPods Pro 1 / 2 / 3（支持左耳/右耳/充电盒独立电量）", kind: "headset", conn: "蓝牙" },
+        { name: "AirPods Max / Beats 无线耳机系列", kind: "headset", conn: "蓝牙" },
+      ],
+    },
+    {
+      brand: "通用蓝牙外设",
+      items: [
+        { name: "支持 Windows 标准蓝牙电量服务的无线鼠标", kind: "mouse", conn: "蓝牙" },
+        { name: "支持 Windows 标准蓝牙电量服务的无线耳机", kind: "headset", conn: "蓝牙" },
+        { name: "支持 Windows 标准蓝牙电量服务的无线键盘", kind: "keyboard", conn: "蓝牙" },
+      ],
+    },
+  ];
+
+  const LICENSE_ITEMS = [
+    { name: "BatteryTray / BatteryMonitor", role: "公开硬件只读报文规范参考（本项目为独立 Python 实现）", lic: "MIT" },
+    { name: "hidapi", role: "免驱 USB HID 外设只读通信库", lic: "BSD-3-Clause" },
+    { name: "pywebview", role: "基于 Edge WebView2 的轻量桌面窗口", lic: "BSD-3-Clause" },
+    { name: "pystray", role: "Windows 系统托盘图标、右键菜单与系统通知", lic: "LGPL-3.0" },
+    { name: "Pillow", role: "矢量电池图标渲染", lic: "MIT-CMU" },
+    { name: "pythonnet / clr-loader", role: "原生 WinForms 悬浮窗与低电量提醒弹窗", lic: "MIT" },
+  ];
+
+  const KIND_ICONS = {
+    mouse: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg>`,
+    headset: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="6" rx="1.5"/><rect x="17" y="13" width="4" height="6" rx="1.5"/></svg>`,
+    keyboard: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>`,
+  };
+  const KIND_LABELS = { mouse: "鼠标", headset: "耳机", keyboard: "键盘" };
+
+  let supKind = "all";
+  const expandedBrands = new Set();
+
+  // ================= 标题栏拖拽 =================
   (function attachWindowDrag() {
     const bar = document.getElementById("titlebar");
     let dragging = false, moved = false, sx = 0, sy = 0;
@@ -1166,19 +1212,254 @@
     });
   })();
 
+  function esc(str) {
+    return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
   function showToast(msg) {
     const el = document.getElementById("toast");
     el.textContent = msg;
     el.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
   }
 
-  function switchSection(sec) {
-    document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.sec === sec));
-    document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === `page-${sec}`));
+  // ================= 轻量自绘下拉菜单（150ms 淡入微位移，无堆栈溢出） =================
+  const cselectInstances = {};
+  let activeCSelectId = null;
+
+  function initCustomSelect(id, options, onChange) {
+    const host = document.getElementById(id);
+    if (!host) return;
+    host.innerHTML = `<button type="button" class="cselect-btn"><span class="cselect-val"></span></button><svg class="cselect-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    const btn = host.querySelector(".cselect-btn");
+    cselectInstances[id] = { host, btn, options, value: options[0]?.value ?? "", onChange };
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (activeCSelectId === id) closeCustomSelect();
+      else openCustomSelect(id);
+    });
   }
 
+  function setCustomSelectOptions(id, options, value) {
+    const inst = cselectInstances[id];
+    if (!inst) return;
+    inst.options = options;
+    setCustomSelectValue(id, value);
+  }
+
+  function setCustomSelectValue(id, value) {
+    const inst = cselectInstances[id];
+    if (!inst) return;
+    const strVal = String(value);
+    let found = inst.options.find((o) => String(o.value) === strVal);
+    if (!found && strVal) {
+      found = { value: strVal, label: strVal };
+      inst.options = [...inst.options, found];
+    }
+    inst.value = found ? String(found.value) : "";
+    inst.host.querySelector(".cselect-val").textContent = found ? found.label : "";
+  }
+
+  function openCustomSelect(id) {
+    closeCustomSelect(true);
+    const inst = cselectInstances[id];
+    if (!inst) return;
+    activeCSelectId = id;
+    inst.host.classList.add("open");
+    const menu = document.getElementById("cselectMenu");
+    menu.innerHTML = inst.options.map((o) => {
+      const sel = String(o.value) === inst.value ? "selected" : "";
+      return `<button type="button" class="cselect-opt ${sel}" data-v="${esc(o.value)}"><span>${esc(o.label)}</span></button>`;
+    }).join("");
+    menu.querySelectorAll(".cselect-opt").forEach((optBtn) => {
+      optBtn.onclick = (e) => {
+        e.stopPropagation();
+        const v = optBtn.dataset.v;
+        setCustomSelectValue(id, v);
+        closeCustomSelect();
+        inst.onChange && inst.onChange(v);
+      };
+    });
+    const rect = inst.btn.getBoundingClientRect();
+    menu.style.minWidth = `${Math.max(rect.width, 118)}px`;
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - rect.width - 12)}px`;
+    const estH = Math.min(220, inst.options.length * 32 + 10);
+    const openUp = rect.bottom + estH + 8 > window.innerHeight && rect.top > estH + 12;
+    menu.style.top = `${openUp ? rect.top - estH - 4 : rect.bottom + 4}px`;
+    requestAnimationFrame(() => menu.classList.add("open"));
+  }
+
+  function closeCustomSelect(immediate = false) {
+    if (activeCSelectId && cselectInstances[activeCSelectId]) {
+      cselectInstances[activeCSelectId].host.classList.remove("open");
+    }
+    activeCSelectId = null;
+    const menu = document.getElementById("cselectMenu");
+    if (immediate) {
+      menu.classList.remove("open");
+    } else {
+      menu.classList.remove("open");
+    }
+  }
+
+  document.addEventListener("click", () => closeCustomSelect());
+  document.getElementById("contentPane").addEventListener("scroll", () => closeCustomSelect(), { passive: true });
+
+  // ================= 页面切换动画（取消旧动画平滑衔接，不闪烁） =================
+  function activatePage(pageId, animClass) {
+    closeCustomSelect(true);
+    document.querySelectorAll(".page").forEach((p) => {
+      p.classList.remove("active", "anim-win-enter", "anim-tab", "anim-slide-in", "anim-slide-back");
+    });
+    const target = document.getElementById(pageId);
+    if (!target) return;
+    target.classList.add("active");
+    if (animClass) {
+      void target.offsetWidth;
+      target.classList.add(animClass);
+    }
+    currentPageId = pageId;
+    document.getElementById("contentPane").scrollTop = 0;
+  }
+
+  function switchSection(sec, suppressAnim = false) {
+    const safeSec = ["general", "devices", "alerts", "appearance", "floating", "about"].includes(sec) ? sec : "general";
+    document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.sec === safeSec));
+    const pageId = `page-${safeSec}`;
+    if (pageId === currentPageId && suppressAnim) return;
+    activatePage(pageId, suppressAnim ? "" : "anim-tab");
+  }
+
+  function playWindowEnter() {
+    const cur = document.getElementById(currentPageId);
+    if (!cur) return;
+    cur.classList.remove("anim-win-enter", "anim-tab", "anim-slide-in", "anim-slide-back");
+    void cur.offsetWidth;
+    cur.classList.add("anim-win-enter");
+  }
+
+  // 进入/返回支持设备清单子页面（220ms 横向短距离滑动 + 淡入）
+  function openSupportedSubpage() {
+    document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.sec === "about"));
+    supKind = "all";
+    expandedBrands.clear();
+    document.getElementById("supSearch").value = "";
+    document.getElementById("supClearBtn").classList.remove("visible");
+    setSeg("seg-supKind", "all");
+    renderBrandAccordion();
+    activatePage("page-supported", "anim-slide-in");
+  }
+
+  function backFromSupported() {
+    document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.sec === "about"));
+    activatePage("page-about", "anim-slide-back");
+  }
+
+  // ================= 支持设备清单可折叠手风琴 =================
+  function setSupKind(kind) {
+    supKind = kind;
+    setSeg("seg-supKind", kind);
+    renderBrandAccordion();
+  }
+
+  function onSupSearchInput() {
+    const q = document.getElementById("supSearch").value;
+    document.getElementById("supClearBtn").classList.toggle("visible", q.length > 0);
+    renderBrandAccordion();
+  }
+
+  function clearSupSearch() {
+    document.getElementById("supSearch").value = "";
+    document.getElementById("supClearBtn").classList.remove("visible");
+    expandedBrands.clear();
+    renderBrandAccordion();
+  }
+
+  function toggleBrand(brandName, groupEl) {
+    const isOpen = groupEl.classList.toggle("open");
+    if (isOpen) expandedBrands.add(brandName);
+    else expandedBrands.delete(brandName);
+  }
+
+  function renderBrandAccordion() {
+    const q = (document.getElementById("supSearch").value || "").trim().toLowerCase();
+    const wrap = document.getElementById("brandAccordion");
+    const groupsHtml = [];
+
+    for (const grp of BRAND_CATALOG) {
+      const brandMatch = q && grp.brand.toLowerCase().includes(q);
+      const matchedItems = grp.items.filter((it) => {
+        if (supKind !== "all" && it.kind !== supKind) return false;
+        if (!q || brandMatch) return true;
+        return (it.name + " " + it.conn + " " + (KIND_LABELS[it.kind] || "")).toLowerCase().includes(q);
+      });
+      if (matchedItems.length === 0) continue;
+
+      // 默认折叠；搜索时自动展开符合条件的品牌
+      const shouldOpen = Boolean(q) || expandedBrands.has(grp.brand);
+      groupsHtml.push(`
+        <div class="brand-group ${shouldOpen ? "open" : ""}" data-brand="${esc(grp.brand)}">
+          <button type="button" class="brand-trigger" onclick="toggleBrand('${esc(grp.brand)}', this.parentElement)">
+            <div class="brand-head-left">
+              <span class="brand-name">${esc(grp.brand)}</span>
+              <span class="brand-count">${matchedItems.length} 项</span>
+            </div>
+            <span class="brand-chevron">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </button>
+          <div class="brand-collapse">
+            <div class="brand-collapse-inner">
+              ${matchedItems.map((it) => `
+                <div class="model-row">
+                  <div class="model-left">
+                    <span class="model-kind-ico">${KIND_ICONS[it.kind] || KIND_ICONS.mouse}</span>
+                    <span class="model-name">${esc(it.name)}</span>
+                  </div>
+                  <div class="model-meta">
+                    <span class="neutral-pill">${KIND_LABELS[it.kind] || "外设"}</span>
+                    <span class="neutral-pill">${esc(it.conn)}</span>
+                  </div>
+                </div>`).join("")}
+            </div>
+          </div>
+        </div>`);
+    }
+
+    if (groupsHtml.length === 0) {
+      wrap.innerHTML = `<div style="padding:28px 16px;text-align:center;color:var(--text-secondary);font-size:13px">未找到匹配「${esc(q)}」的品牌或设备型号。</div>`;
+    } else {
+      wrap.innerHTML = groupsHtml.join("");
+    }
+  }
+
+  // ================= 轻量开源许可弹窗（180ms 淡入 / 140ms 淡出） =================
+  let licCloseTimer = null;
+  function openLicModal() {
+    clearTimeout(licCloseTimer);
+    document.getElementById("licBody").innerHTML = LICENSE_ITEMS.map((it) => `
+      <div class="lic-item">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:13px;color:var(--text-primary)">${esc(it.name)}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${esc(it.role)}</div>
+        </div>
+        <span class="neutral-pill" style="flex-shrink:0;font-weight:600">${esc(it.lic)}</span>
+      </div>`).join("");
+    const m = document.getElementById("licModal");
+    m.classList.add("mounted");
+    requestAnimationFrame(() => m.classList.add("open"));
+  }
+
+  function closeLicModal() {
+    const m = document.getElementById("licModal");
+    m.classList.remove("open");
+    clearTimeout(licCloseTimer);
+    const delay = document.documentElement.dataset.anim === "off" ? 0 : 150;
+    licCloseTimer = setTimeout(() => m.classList.remove("mounted"), delay);
+  }
+
+  // ================= 控件状态同步 =================
   function setSw(id, on) {
     const el = document.getElementById(id);
     if (el) el.classList.toggle("on", Boolean(on));
@@ -1186,10 +1467,6 @@
 
   function setSeg(groupId, val) {
     document.querySelectorAll(`#${groupId} .seg-btn`).forEach((b) => b.classList.toggle("active", b.dataset.v === val));
-  }
-
-  function esc(str) {
-    return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
   function renderDeviceManager(allDevices) {
@@ -1202,7 +1479,6 @@
       const pref = d.pref || {};
       const customOn = Boolean(pref.custom_tiers_enabled);
       const customStr = (pref.custom_tiers || [30, 20, 10]).join(", ");
-      const verifiedCls = d.support_status === "verified_hardware" ? "verified" : "";
       const did = esc(d.device_id);
       return `
         <div class="dev-mgr-card">
@@ -1210,7 +1486,6 @@
             <div>
               <div style="font-weight:600;font-size:13.5px">${esc(d.display_name)} <span style="font-weight:400;font-size:12px;color:var(--text-muted)">(${esc(d.original_name)})</span></div>
               <div class="dev-mgr-badges" style="margin-top:4px">
-                <span class="mini-badge ${verifiedCls}">${esc(d.support_label)}</span>
                 <span class="mini-badge">${esc(d.connection_label)}</span>
                 <span class="mini-badge">协议：${esc(d.provider_name || "HID")}</span>
               </div>
@@ -1238,6 +1513,7 @@
 
     document.documentElement.dataset.theme = state.effective_theme || "light";
     document.documentElement.dataset.colors = cfg.color_scheme || "standard";
+    document.documentElement.dataset.anim = state.effective_animations === false ? "off" : "on";
     document.body.style.zoom = `${(cfg.ui_scale || 100) / 100}`;
 
     // 常规
@@ -1245,15 +1521,19 @@
     setSw("sw-startMin", cfg.start_minimized_to_tray);
     setSw("sw-closeTray", cfg.close_to_tray);
     setSw("sw-autoMon", cfg.auto_monitor);
-    const pollSel = document.getElementById("sel-poll");
-    const pollVal = String(cfg.poll_interval_sec || 25);
-    if (!Array.from(pollSel.options).some((o) => o.value === pollVal)) {
-      const opt = document.createElement("option");
-      opt.value = pollVal;
-      opt.textContent = `${pollVal} 秒`;
-      pollSel.appendChild(opt);
+    const pollSec = cfg.poll_interval_sec || 25;
+    const basePolls = [
+      { value: "10", label: "10 秒" },
+      { value: "15", label: "15 秒" },
+      { value: "25", label: "25 秒（推荐）" },
+      { value: "30", label: "30 秒" },
+      { value: "60", label: "60 秒" },
+      { value: "120", label: "120 秒" },
+    ];
+    if (!basePolls.some((o) => o.value === String(pollSec))) {
+      basePolls.push({ value: String(pollSec), label: `${pollSec} 秒` });
     }
-    pollSel.value = pollVal;
+    setCustomSelectOptions("cs-poll", basePolls, String(pollSec));
 
     // 电量提醒
     setSw("sw-alertMaster", cfg.alerts_master_enabled);
@@ -1268,22 +1548,22 @@
 
     setSw("sw-customAlert", cfg.custom_alerts_enabled);
     document.getElementById("customBar").classList.toggle("disabled", !cfg.custom_alerts_enabled);
-    const cList = cfg.custom_thresholds || [];
-    document.getElementById("customTags").innerHTML = cList.map((v) =>
+    document.getElementById("customTags").innerHTML = (cfg.custom_thresholds || []).map((v) =>
       `<span class="tag-chip">${v}% <button title="移除" onclick="removeCustomThreshold(${v})">×</button></span>`
     ).join("");
 
     setSw("sw-popup", cfg.popup_alert_enabled);
     setSw("sw-winNotify", cfg.windows_notify_enabled);
     setSw("sw-sound", cfg.sound_enabled);
-    document.getElementById("sel-sound").value = cfg.sound_name || "default";
+    setCustomSelectValue("cs-sound", cfg.sound_name || "default");
     setSw("sw-repeat", cfg.repeat_alert_enabled);
-    document.getElementById("sel-repeat").value = String(cfg.repeat_interval_min || 10);
+    setCustomSelectValue("cs-repeat", String(cfg.repeat_interval_min || 10));
 
     // 外观
     setSeg("seg-theme", cfg.theme || "system");
-    document.getElementById("sel-scale").value = String(cfg.ui_scale || 100);
-    document.getElementById("sel-colors").value = cfg.color_scheme || "standard";
+    setSw("sw-anim", cfg.animations_enabled !== false);
+    setCustomSelectValue("cs-scale", String(cfg.ui_scale || 100));
+    setCustomSelectValue("cs-colors", cfg.color_scheme || "standard");
     setSeg("seg-density", cfg.list_density || "comfortable");
     setSw("sw-showBar", cfg.show_progress_bar !== false);
     setSw("sw-showIcon", cfg.show_device_icon !== false);
@@ -1294,26 +1574,52 @@
     document.getElementById("rng-fltOpacity").value = String(flt.opacity || 92);
     document.getElementById("fltOpVal").textContent = `${flt.opacity || 92}%`;
     setSeg("seg-fltSize", flt.size || "medium");
-    document.getElementById("sel-fltPos").value = flt.position_preset || "bottom_right";
+    setCustomSelectValue("cs-fltPos", flt.position_preset || "bottom_right");
     setSw("sw-fltLock", flt.locked !== false);
 
-    const devSel = document.getElementById("sel-fltDev");
-    const opts = [`<option value="auto">自动（优先最低电量设备）</option>`].concat(
-      (state.all_devices || []).map((d) => `<option value="${esc(d.device_id)}">${esc(d.display_name)}</option>`)
+    const devOpts = [{ value: "auto", label: "自动（优先最低电量设备）" }].concat(
+      (state.all_devices || []).map((d) => ({ value: d.device_id, label: d.display_name }))
     );
-    devSel.innerHTML = opts.join("");
-    devSel.value = flt.device_id || "auto";
+    setCustomSelectOptions("cs-fltDev", devOpts, flt.device_id || "auto");
 
-    // 设备管理
     renderDeviceManager(state.all_devices || []);
-
-    // 关于（版本号动态读取，不硬编码）
     document.getElementById("aboutVer").textContent = state.app_version ? `v${state.app_version}` : "";
   }
 
-  function patchSettings(patch) {
-    window.pywebview?.api?.update_settings(patch).then(applyState);
-  }
+  // 初始化全部自绘下拉控件
+  initCustomSelect("cs-poll", [{ value: "25", label: "25 秒（推荐）" }], (v) => patchSettings({ poll_interval_sec: Number(v) }));
+  initCustomSelect("cs-sound", [
+    { value: "default", label: "默认提示音" },
+    { value: "asterisk", label: "柔和提示音" },
+    { value: "exclamation", label: "警示提示音" },
+  ], (v) => patchSettings({ sound_name: v }));
+  initCustomSelect("cs-repeat", [
+    { value: "5", label: "5 分钟" },
+    { value: "10", label: "10 分钟" },
+    { value: "15", label: "15 分钟" },
+    { value: "30", label: "30 分钟" },
+  ], (v) => patchSettings({ repeat_interval_min: Number(v) }));
+  initCustomSelect("cs-scale", [
+    { value: "90", label: "90%" },
+    { value: "100", label: "100%（默认）" },
+    { value: "110", label: "110%" },
+    { value: "125", label: "125%" },
+  ], (v) => patchSettings({ ui_scale: Number(v) }));
+  initCustomSelect("cs-colors", [
+    { value: "standard", label: "标准清新" },
+    { value: "high_contrast", label: "高对比度" },
+    { value: "soft", label: "柔和护眼" },
+  ], (v) => patchSettings({ color_scheme: v }));
+  initCustomSelect("cs-fltPos", [
+    { value: "bottom_right", label: "右下角（推荐）" },
+    { value: "bottom_left", label: "左下角" },
+    { value: "top_right", label: "右上角" },
+    { value: "top_left", label: "左上角" },
+    { value: "custom", label: "自定义拖动位置" },
+  ], (v) => patchFloating({ position_preset: v }));
+  initCustomSelect("cs-fltDev", [{ value: "auto", label: "自动（优先最低电量设备）" }], (v) => patchFloating({ device_id: v }));
+
+  function patchSettings(patch) { window.pywebview?.api?.update_settings(patch).then(applyState); }
 
   function toggleBool(key) {
     if (!appState) return;
@@ -1324,8 +1630,7 @@
   function updateTier(idx) {
     if (!appState) return;
     const rules = JSON.parse(JSON.stringify(appState.config.tier_rules || []));
-    const val = Math.max(1, Math.min(95, Number(document.getElementById(`tier-val-${idx}`).value) || 10));
-    rules[idx].threshold = val;
+    rules[idx].threshold = Math.max(1, Math.min(95, Number(document.getElementById(`tier-val-${idx}`).value) || 10));
     patchSettings({ tier_rules: rules });
   }
 
@@ -1342,13 +1647,6 @@
     el.value = String(Math.max(1, Math.min(95, (Number(el.value) || 15) + delta)));
   }
 
-  function toggleTierRule(idx) {
-    if (!appState) return;
-    const rules = JSON.parse(JSON.stringify(appState.config.tier_rules || []));
-    rules[idx].enabled = !rules[idx].enabled;
-    patchSettings({ tier_rules: rules });
-  }
-
   function addCustomThreshold() {
     if (!appState) return;
     const v = Math.max(1, Math.min(95, Number(document.getElementById("customValInput").value) || 15));
@@ -1359,201 +1657,28 @@
 
   function removeCustomThreshold(v) {
     if (!appState) return;
-    const list = (appState.config.custom_thresholds || []).filter((x) => x !== v);
-    patchSettings({ custom_thresholds: list });
+    patchSettings({ custom_thresholds: (appState.config.custom_thresholds || []).filter((x) => x !== v) });
   }
 
-  function patchFloating(patch) {
-    patchSettings({ floating: patch });
-  }
-
-  function toggleFloating(key) {
-    if (!appState) return;
-    const cur = Boolean((appState.config.floating || {})[key]);
-    patchFloating({ [key]: !cur });
-  }
-
-  function updateDevPref(did, updates) {
-    window.pywebview?.api?.update_device_pref(did, updates).then(applyState);
-  }
-
+  function patchFloating(patch) { patchSettings({ floating: patch }); }
+  function toggleFloating(key) { if (appState) patchFloating({ [key]: !Boolean((appState.config.floating || {})[key]) }); }
+  function updateDevPref(did, updates) { window.pywebview?.api?.update_device_pref(did, updates).then(applyState); }
   function saveDevCustomTiers(did, rawText) {
     const arr = rawText.split(/[,，\s]+/).map((s) => Number(s)).filter((n) => Number.isFinite(n) && n >= 1 && n <= 95);
     updateDevPref(did, { custom_tiers: arr });
     showToast("设备独立提醒阈值已保存");
   }
-
-  function moveDev(did, dir) {
-    window.pywebview?.api?.move_device_order(did, dir).then(applyState);
-  }
-
-  const SUPPORTED_CATALOG = [
-    {
-      brand: "VGN 蜻蜓（已实机验证）",
-      status: "verified",
-      statusText: "已实机验证",
-      models: "VGN Dragonfly F2 Pro Max",
-      tags: ["无线鼠标", "2.4GHz 无线", "USB 有线", "支持电压读取"],
-    },
-    {
-      brand: "VGN / VXE / ATK / 迈从 / LAMZU",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "VGN F2 Master+、F1 Pro / MOBA、Dragonfly 4K、VXE R1 Pro Max / SE+、ATK F1 / X1、迈从 A5 / G3 / A7 / L7 / K7 等",
-      tags: ["无线鼠标", "2.4GHz 无线", "USB 有线"],
-    },
-    {
-      brand: "Logitech 罗技",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "G Pro X Superlight / Superlight 2、G502 / G304 / G903、MX Master / Anywhere / Keys，以及 G533 / G535 / G633 / G733 / G935 / G PRO X 无线耳机",
-      tags: ["鼠标 / 键盘 / 耳机", "LIGHTSPEED / Unifying / Bolt", "USB 有线"],
-    },
-    {
-      brand: "Razer 雷蛇",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "毒蝰 Viper V2 Pro / V3 Pro / Ultimate、炼狱蝰蛇 DeathAdder V2 / V3 Pro、巴塞利斯蛇 Basilisk V3 Pro、八岐大蛇 Orochi V2、黑寡妇 V3 Pro 等",
-      tags: ["鼠标 / 键盘", "HyperSpeed 2.4GHz", "USB 有线"],
-    },
-    {
-      brand: "SteelSeries 赛睿",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "Aerox 3 / 5 / 9、Prime、Rival 3 / 650 鼠标；寒冰 Arctis 7 / 7+ / 9、Arctis Nova 5 / 7 / Pro、GameBuds 耳机",
-      tags: ["鼠标 / 耳机 / 耳塞", "2.4GHz 接收器", "基站"],
-    },
-    {
-      brand: "Corsair 海盗船",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "SLIPSTREAM 系列无线鼠标与键盘（Dark Core / Harpoon / Katar / M75 / Sabre / K65 等）；Void / HS70 / HS80 / Virtuoso 无线耳机",
-      tags: ["鼠标 / 键盘 / 耳机", "SLIPSTREAM 2.4GHz", "USB 有线"],
-    },
-    {
-      brand: "HyperX 极度未知",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "飓风 Cloud Alpha / Cloud II / Cloud III / Cloud II Core / Stinger 2 无线耳机；旋火 Pulsefire Haste / Haste 2 / Dart 无线鼠标",
-      tags: ["无线耳机 / 鼠标", "2.4GHz 无线"],
-    },
-    {
-      brand: "ASUS ROG / TUF 华硕",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "龙鳞 Harpe Ace / II Ace、月刃 Keris / AimPoint、战刃 Gladius II / III、战刃 Chakram X、TUF M4、夜魔 Azoth / 魔导士 Falchion、Omni 接收器；ROG Pelta / Delta II / Cetra / Strix Go 耳机",
-      tags: ["鼠标 / 键盘 / 耳机", "2.4GHz / Omni 接收器", "Cetra 支持左/右/盒电量"],
-    },
-    {
-      brand: "Sony 索尼 INZONE",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "Sony INZONE H5、INZONE H9 II 无线耳机；INZONE Buds 真无线耳塞",
-      tags: ["耳机 / 耳塞", "2.4GHz 接收器", "Buds 支持左/右/盒电量"],
-    },
-    {
-      brand: "Apple AirPods / Beats 与标准蓝牙外设",
-      status: "ready",
-      statusText: "协议已内置 · 待实测",
-      models: "AirPods 1/2/3/4、AirPods Pro 1/2/3、AirPods Max、Beats 全系；以及所有支持 Windows 标准蓝牙电量服务的蓝牙鼠标、耳机与键盘",
-      tags: ["蓝牙外设", "左/右/盒独立电量", "需电脑具备蓝牙模块"],
-    },
-    {
-      brand: "暂不支持的设备类型",
-      status: "unsupported",
-      statusText: "暂不支持",
-      models: "使用非公开加密私有协议的部分旧款雷柏 2.4G 鼠标；以及仅通过闭源内核驱动通信、不向系统开放标准 HID 或蓝牙接口的极少数外设。",
-      tags: ["安全策略：不盲写未知设备", "不安装第三方驱动"],
-    },
-  ];
-
-  const LICENSE_ITEMS = [
-    { name: "BatteryTray / BatteryMonitor", role: "参考其整理的公开硬件只读报文格式（本项目为独立 Python 实现）", lic: "MIT" },
-    { name: "hidapi", role: "免驱 USB HID 外设只读通信库", lic: "BSD-3-Clause" },
-    { name: "pywebview", role: "基于 Windows Edge WebView2 的轻量桌面窗口", lic: "BSD-3-Clause" },
-    { name: "pystray", role: "Windows 系统托盘图标、右键菜单与系统通知", lic: "LGPL-3.0" },
-    { name: "Pillow", role: "高清透明矢量电池图标渲染", lic: "MIT-CMU" },
-    { name: "pythonnet / clr-loader", role: "原生 WinForms 悬浮窗与极速无焦点低电量提醒弹窗", lic: "MIT" },
-  ];
-
-  let supFilter = "all";
-
-  function setSupFilter(f) {
-    supFilter = f;
-    document.querySelectorAll("#supFilterPills .filter-pill").forEach((b) => b.classList.toggle("active", b.dataset.f === f));
-    renderSupportedModal();
-  }
-
-  function renderSupportedModal() {
-    const q = (document.getElementById("supSearch").value || "").trim().toLowerCase();
-    const list = SUPPORTED_CATALOG.filter((item) => {
-      if (supFilter !== "all" && item.status !== supFilter) return false;
-      if (!q) return true;
-      return (item.brand + " " + item.models + " " + item.tags.join(" ")).toLowerCase().includes(q);
-    });
-    const body = document.getElementById("modalContent");
-    if (list.length === 0) {
-      body.innerHTML = `<div style="padding:28px 0;text-align:center;color:var(--text-secondary);font-size:13px">没有找到匹配「${esc(q)}」的品牌或型号。您可以通过“导出诊断”反馈新设备信息。</div>`;
-      return;
-    }
-    body.innerHTML = list.map((item) => `
-      <div class="sup-card ${item.status === "verified" ? "verified" : ""}">
-        <div class="sup-card-top">
-          <span class="sup-brand">${esc(item.brand)}</span>
-          <span class="sup-status ${item.status}">${esc(item.statusText)}</span>
-        </div>
-        <div class="sup-models">${esc(item.models)}</div>
-        <div class="sup-tags">${item.tags.map((t) => `<span class="sup-tag">${esc(t)}</span>`).join("")}</div>
-      </div>`).join("");
-  }
-
-  function openSupportedDevices() {
-    document.getElementById("modalTitle").textContent = "支持设备清单";
-    document.getElementById("modalSub").textContent = "绿色表示已在真实硬件验证通过，蓝色表示已内置只读协议待对应真机实测";
-    document.getElementById("modalToolbar").style.display = "flex";
-    document.getElementById("supSearch").value = "";
-    setSupFilter("all");
-    document.getElementById("docModal").classList.add("open");
-  }
-
-  function openLicensesModal() {
-    document.getElementById("modalTitle").textContent = "开源组件与许可声明";
-    document.getElementById("modalSub").textContent = "遵循开源协议要求保留的组件与协议声明（未复制 GPL 或无许可源码）";
-    document.getElementById("modalToolbar").style.display = "none";
-    document.getElementById("modalContent").innerHTML = `
-      <div class="lic-note">
-        本软件所有品牌协议适配器均为独立 Python 实现，遵循开源合规要求，未复制 GPL-3.0 或无明确许可证仓库的源代码。以下为软件依赖的开源运行库及协议参考声明：
-      </div>
-      <div class="lic-grid">
-        ${LICENSE_ITEMS.map((it) => `
-          <div class="lic-item">
-            <div style="min-width:0">
-              <div style="font-weight:600;font-size:13px;color:var(--text-primary)">${esc(it.name)}</div>
-              <div style="font-size:12px;color:var(--text-secondary);margin-top:2px">${esc(it.role)}</div>
-            </div>
-            <span class="sup-tag" style="flex-shrink:0;font-weight:600">${esc(it.lic)}</span>
-          </div>`).join("")}
-      </div>`;
-    document.getElementById("docModal").classList.add("open");
-  }
-
-  function closeModal() {
-    document.getElementById("docModal").classList.remove("open");
-  }
-
-  function doExportDiag() {
-    window.pywebview?.api?.export_diagnostics().then((res) => {
-      if (res && res.ok) showToast(`诊断报告已导出：${res.filename}`);
-    });
-  }
-
+  function moveDev(did, dir) { window.pywebview?.api?.move_device_order(did, dir).then(applyState); }
+  function doExportDiag() { window.pywebview?.api?.export_diagnostics().then((res) => { if (res && res.ok) showToast(`诊断报告已导出：${res.filename}`); }); }
   function minimizeWin() { window.pywebview?.api?.minimize_window(); }
   function toggleMax() { window.pywebview?.api?.toggle_maximize(); }
   function closeWin() { window.pywebview?.api?.close_window(); }
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      if (document.getElementById("docModal").classList.contains("open")) closeModal();
+      if (activeCSelectId) closeCustomSelect();
+      else if (document.getElementById("licModal").classList.contains("open")) closeLicModal();
+      else if (currentPageId === "page-supported") backFromSupported();
       else closeWin();
     }
   });
@@ -1571,7 +1696,7 @@
 
   window.addEventListener("pywebviewready", () => {
     const hash = (location.hash || "").replace("#", "") || "general";
-    switchSection(hash);
+    switchSection(hash, true);
     window.pywebview.api.get_initial_state().then((st) => {
       applyState(st);
       notifyReadyOnce();

@@ -32,6 +32,7 @@ from app_config import (
     is_autostart_enabled,
     load_config,
     normalize_tiers,
+    resolve_effective_animations,
     resolve_effective_theme,
     save_config,
     set_autostart,
@@ -300,8 +301,109 @@ def _install_flicker_free_patch() -> None:
         pass
 
 
-def _set_form_visibility(win: Optional[webview.Window], visible: bool, opacity: float = 1.0, activate: bool = False) -> None:
-    """在 WinForms UI 线程原子控制窗体透明度与显隐，避免多次重绘闪烁。"""
+_FORM_ANIM_TIMERS: dict[int, object] = {}
+
+
+def _cancel_form_animation(native_form) -> None:
+    """取消某 WinForms 窗体上正在运行的过渡定时器，防止快速操作动画堆积。"""
+    if native_form is None:
+        return
+    key = id(native_form)
+    timer = _FORM_ANIM_TIMERS.pop(key, None)
+    if timer is not None:
+        try:
+            timer.Stop()
+            timer.Dispose()
+        except Exception:
+            pass
+
+
+def _animate_form_transition(
+    native_form,
+    start_opacity: float,
+    end_opacity: float,
+    duration_ms: int,
+    start_pos: Optional[tuple[int, int]] = None,
+    end_pos: Optional[tuple[int, int]] = None,
+    on_complete=None,
+) -> None:
+    """在 WinForms UI 线程运行轻量非阻塞 Ease-Out 过渡动画（16ms 步进，随时可打断）。"""
+    if native_form is None:
+        return
+    _cancel_form_animation(native_form)
+    try:
+        if native_form.IsDisposed:
+            return
+    except Exception:
+        return
+
+    if duration_ms <= 0:
+        try:
+            if end_pos is not None:
+                from System.Drawing import Point
+                native_form.Location = Point(int(end_pos[0]), int(end_pos[1]))
+            native_form.Opacity = max(0.0, min(1.0, float(end_opacity)))
+            if on_complete:
+                on_complete()
+        except Exception:
+            pass
+        return
+
+    try:
+        import System.Windows.Forms as WinForms
+        from System.Drawing import Point
+
+        key = id(native_form)
+        t0 = time.perf_counter()
+        dur_sec = max(0.05, duration_ms / 1000.0)
+        if start_pos is not None:
+            native_form.Location = Point(int(start_pos[0]), int(start_pos[1]))
+        native_form.Opacity = max(0.0, min(1.0, float(start_opacity)))
+
+        timer = WinForms.Timer()
+        timer.Interval = 16
+
+        def _tick(_s, _e):
+            try:
+                if native_form.IsDisposed:
+                    _cancel_form_animation(native_form)
+                    return
+                p = min(1.0, (time.perf_counter() - t0) / dur_sec)
+                # Cubic Ease-Out: 自然顺滑、无弹簧回弹
+                eased = 1.0 - (1.0 - p) ** 3
+                cur_op = start_opacity + (end_opacity - start_opacity) * eased
+                native_form.Opacity = max(0.0, min(1.0, cur_op))
+                if start_pos is not None and end_pos is not None:
+                    cx = int(round(start_pos[0] + (end_pos[0] - start_pos[0]) * eased))
+                    cy = int(round(start_pos[1] + (end_pos[1] - start_pos[1]) * eased))
+                    native_form.Location = Point(cx, cy)
+                if p >= 1.0:
+                    _cancel_form_animation(native_form)
+                    if on_complete:
+                        on_complete()
+            except Exception:
+                _cancel_form_animation(native_form)
+
+        timer.Tick += _tick
+        _FORM_ANIM_TIMERS[key] = timer
+        timer.Start()
+    except Exception:
+        try:
+            native_form.Opacity = max(0.0, min(1.0, float(end_opacity)))
+            if on_complete:
+                on_complete()
+        except Exception:
+            pass
+
+
+def _set_form_visibility(
+    win: Optional[webview.Window],
+    visible: bool,
+    opacity: float = 1.0,
+    activate: bool = False,
+    fade_ms: int = 0,
+) -> None:
+    """在 WinForms UI 线程原子控制窗体显隐，并支持非阻塞淡入/淡出（随时可打断）。"""
     if win is None:
         return
     native = getattr(win, "native", None)
@@ -312,16 +414,35 @@ def _set_form_visibility(win: Optional[webview.Window], visible: bool, opacity: 
         try:
             if native.IsDisposed:
                 return
+            _cancel_form_animation(native)
             if visible:
-                if not native.Visible:
-                    native.Show()
-                native.Opacity = max(0.0, min(1.0, float(opacity)))
-                if activate:
-                    native.Activate()
+                if fade_ms > 0 and opacity > 0.05:
+                    native.Opacity = 0.0
+                    if not native.Visible:
+                        native.Show()
+                    if activate:
+                        native.Activate()
+                    _animate_form_transition(native, 0.0, opacity, fade_ms)
+                else:
+                    if not native.Visible:
+                        native.Show()
+                    native.Opacity = max(0.0, min(1.0, float(opacity)))
+                    if activate:
+                        native.Activate()
             else:
-                native.Opacity = 0.0
-                if native.Visible:
-                    native.Hide()
+                if fade_ms > 0 and native.Visible and float(native.Opacity) > 0.05:
+                    def _hide_after():
+                        try:
+                            if not native.IsDisposed:
+                                native.Opacity = 0.0
+                                native.Hide()
+                        except Exception:
+                            pass
+                    _animate_form_transition(native, float(native.Opacity), 0.0, fade_ms, on_complete=_hide_after)
+                else:
+                    native.Opacity = 0.0
+                    if native.Visible:
+                        native.Hide()
         except Exception:
             pass
 
@@ -501,6 +622,9 @@ class MouseBatteryApp:
     def _effective_theme(self) -> str:
         return resolve_effective_theme(self.cfg.theme)
 
+    def _effective_animations(self) -> bool:
+        return resolve_effective_animations(self.cfg.animations_enabled)
+
     def _sorted_devices(self, include_hidden: bool = False) -> list[dict[str, Any]]:
         """生成带独立偏好、排序、状态配色与提醒阈值的统一前端设备列表。"""
         items: list[tuple[int, int, str, dict[str, Any]]] = []
@@ -582,6 +706,7 @@ class MouseBatteryApp:
             "app_version": APP_VERSION,
             "app_author": APP_AUTHOR,
             "effective_theme": self._effective_theme(),
+            "effective_animations": self._effective_animations(),
             "autostart": is_autostart_enabled(),
             "config": asdict(self.cfg),
             "devices": visible_devices,
@@ -680,7 +805,7 @@ class MouseBatteryApp:
         return "#151820" if self._effective_theme() == "dark" else "#F5F6FA"
 
     def _reveal_main_if_needed(self) -> None:
-        """在主窗口完成尺寸校准、居中与首帧渲染后，一次性原子显现（Opacity 0 -> 1）。"""
+        """在主窗口完成精确居中与首帧渲染后，播放 180ms 轻量淡入（关闭动画时瞬显）。"""
         with self._reveal_lock:
             if self._main_revealed or not self._allow_show or self.window is None:
                 return
@@ -688,10 +813,11 @@ class MouseBatteryApp:
         if self.hwnd:
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             self._center_main_hwnd()
-        _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True)
+        fade = 180 if self._effective_animations() else 0
+        _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True, fade_ms=fade)
 
     def _reveal_settings_if_needed(self) -> None:
-        """在设置窗口完成定位、常规设置页渲染与 DWM 装饰后，一次性原子显现。"""
+        """在设置窗口完成定位与常规设置页渲染后，播放 220ms 淡入 + 8px 内容轻位移。"""
         with self._reveal_lock:
             if not self._settings_pending_reveal or self.settings_window is None:
                 return
@@ -701,7 +827,13 @@ class MouseBatteryApp:
             _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
             px, py, pw, ph, _ = self._compute_settings_target_phys_rect()
             _set_window_pos(self.settings_hwnd, px, py, pw, ph)
-        _set_form_visibility(self.settings_window, visible=True, opacity=1.0, activate=True)
+        anim = self._effective_animations()
+        if anim and self.settings_window is not None:
+            try:
+                self.settings_window.evaluate_js("window.playWindowEnter && playWindowEnter();")
+            except Exception:
+                pass
+        _set_form_visibility(self.settings_window, visible=True, opacity=1.0, activate=True, fade_ms=220 if anim else 0)
 
     def on_ui_ready(self, target: str) -> None:
         """前端首帧渲染完毕（双 requestAnimationFrame）后的就绪通知，触发无闪烁显现。"""
@@ -711,7 +843,7 @@ class MouseBatteryApp:
             self._reveal_main_if_needed()
 
     def show_main_window(self) -> None:
-        """从系统托盘重新打开主窗口：隐藏态先对齐精确居中坐标，再原子显现，彻底零闪烁。"""
+        """从系统托盘重新打开主窗口：隐藏态先对齐精确居中坐标，再 180ms 淡入显现。"""
         if self.window is None:
             return
         self._allow_show = True
@@ -721,7 +853,8 @@ class MouseBatteryApp:
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             self._center_main_hwnd()
         self._push_state_to_ui()
-        _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True)
+        fade = 180 if self._effective_animations() else 0
+        _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True, fade_ms=fade)
         if self.hwnd:
             ctypes.windll.user32.SetForegroundWindow(wintypes.HWND(self.hwnd))
 
@@ -746,7 +879,7 @@ class MouseBatteryApp:
                     with self._reveal_lock:
                         self._settings_pending_reveal = True
                     self.settings_window.evaluate_js(
-                        f"window.switchSection && switchSection({json.dumps(target_sec)});"
+                        f"window.switchSection && switchSection({json.dumps(target_sec)}, true);"
                         f"window.applyState && applyState({payload});"
                         f"requestAnimationFrame(()=>requestAnimationFrame(()=>window.pywebview?.api?.ui_ready()));"
                     )
@@ -808,9 +941,10 @@ class MouseBatteryApp:
         win.events.closed += _on_settings_closed
 
     def close_settings_window(self) -> None:
-        """隐藏并复用设置窗口实例（彻底避免下次打开重新冷启动 WebView2 导致的闪烁）。"""
+        """140ms 平滑淡出后隐藏并复用设置窗口实例（快速重开时自动取消淡出并无缝衔接）。"""
         if self.settings_window is not None:
-            _set_form_visibility(self.settings_window, visible=False, opacity=0.0)
+            fade = 140 if self._effective_animations() else 0
+            _set_form_visibility(self.settings_window, visible=False, opacity=0.0, fade_ms=fade)
             self._settings_maximized = False
 
     def minimize_window(self, target: str = "main") -> None:
@@ -901,6 +1035,7 @@ class MouseBatteryApp:
             "repeat_alert_enabled",
             "show_progress_bar",
             "show_device_icon",
+            "animations_enabled",
             "topmost",
         )
         for key in simple_bools:
@@ -1041,7 +1176,7 @@ class MouseBatteryApp:
 
     # ================= 原生 WinForms 极速最高置顶低电量迷你弹窗 & 系统通知 =================
 
-    def _close_alert_window(self) -> None:
+    def _close_alert_window(self, instant: bool = False) -> None:
         with self._alert_lock:
             if self._alert_timer is not None:
                 self._alert_timer.cancel()
@@ -1049,16 +1184,29 @@ class MouseBatteryApp:
             alert_form = self._alert_window
             self._alert_window = None
         if alert_form is not None:
+            fade_ms = 0 if (instant or not self._effective_animations()) else 140
             try:
                 from System import Action
 
-                def _do_close():
+                def _dispose_now():
                     try:
+                        _cancel_form_animation(alert_form)
                         if not alert_form.IsDisposed:
                             alert_form.Close()
                             alert_form.Dispose()
                     except Exception:
                         pass
+
+                def _do_close():
+                    try:
+                        if alert_form.IsDisposed:
+                            return
+                        if fade_ms > 0 and alert_form.Visible and float(alert_form.Opacity) > 0.05:
+                            _animate_form_transition(alert_form, float(alert_form.Opacity), 0.0, fade_ms, on_complete=_dispose_now)
+                        else:
+                            _dispose_now()
+                    except Exception:
+                        _dispose_now()
 
                 if getattr(alert_form, "InvokeRequired", False):
                     alert_form.BeginInvoke(Action(_do_close))
@@ -1074,10 +1222,11 @@ class MouseBatteryApp:
         kind: str = KIND_MOUSE,
         is_test: bool = False,
     ) -> None:
-        """原生 WinForms 极速纯色无边框置顶迷你弹窗（0ms 响应、不抢游戏焦点、最高置顶、停留 5 秒）。"""
-        self._close_alert_window()
+        """原生 WinForms 极速纯色无边框置顶迷你弹窗（220ms 滑入淡入、不抢游戏焦点、最高置顶、停留 5 秒）。"""
+        self._close_alert_window(instant=True)
         pct = max(0, min(100, int(percent)))
         kind_label = _kind_cn(kind)
+        anim_on = self._effective_animations()
 
         native_main = getattr(self.window, "native", None) if self.window is not None else None
         if native_main is None:
@@ -1168,8 +1317,21 @@ class MouseBatteryApp:
 
                 SWP_NOACTIVATE = 0x0010
                 SWP_SHOWWINDOW = 0x0040
+                slide_offset = int(round(10 * scale)) if anim_on else 0
+                start_y = ay + slide_offset
+                form.Opacity = 0.0 if anim_on else 1.0
                 user32.ShowWindow(wintypes.HWND(hwnd), 4)
-                user32.SetWindowPos(wintypes.HWND(hwnd), wintypes.HWND(-1), ax, ay, aw, ah, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                user32.SetWindowPos(
+                    wintypes.HWND(hwnd),
+                    wintypes.HWND(-1),
+                    ax,
+                    start_y,
+                    aw,
+                    ah,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                )
+                if anim_on:
+                    _animate_form_transition(form, 0.0, 1.0, 220, start_pos=(ax, start_y), end_pos=(ax, ay))
 
                 with self._alert_lock:
                     self._alert_window = form
