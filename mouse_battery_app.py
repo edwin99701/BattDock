@@ -71,6 +71,8 @@ from floating_widget import (
     _try_win11_round_corners,
     apply_window_rounded_corners,
     draw_battery_icon,
+    is_windows_11,
+    paint_winforms_rounded_border,
     play_alert_sound,
 )
 from providers import (
@@ -85,6 +87,7 @@ from providers import (
     STATUS_VERIFIED,
 )
 from providers.device_naming import (
+    format_alert_device_name,
     format_connection_mode_cn,
     format_device_subtitle,
     resolve_compact_device_label,
@@ -306,15 +309,43 @@ def _apply_window_chrome(hwnd: int, is_dark: bool, radius_dip: int = 10) -> None
     apply_window_rounded_corners(hwnd, radius_dip=radius_dip, scale=_get_dpi_scale(hwnd))
 
 
+def _sync_native_form_backcolor(win: Optional[webview.Window], is_dark: bool) -> None:
+    """同步 WinForms 容器背景色，防止 Windows 10 缩放或切换主题瞬间透出异色边缘。"""
+    if win is None or sys.platform != "win32":
+        return
+    native = getattr(win, "native", None)
+    if native is None:
+        return
+    try:
+        from System import Action
+        from System.Drawing import Color
+
+        col = Color.FromArgb(21, 24, 32) if is_dark else Color.FromArgb(245, 246, 250)
+
+        def _apply():
+            try:
+                if not native.IsDisposed:
+                    native.BackColor = col
+            except Exception:
+                pass
+
+        if getattr(native, "InvokeRequired", False):
+            native.BeginInvoke(Action(_apply))
+        else:
+            _apply()
+    except Exception:
+        pass
+
+
 def _attach_rounded_resize_hook(win: Optional[webview.Window], radius_dip: int = 10) -> None:
-    """在 WinForms 窗口尺寸变化或最大化/还原时自动重算圆角外轮廓（确保 Win10 缩放/最大化无异常）。"""
+    """在 WinForms 窗口尺寸、显隐、最大化/还原及 DPI 变化时自动重算圆角外轮廓（确保 Win10 全场景零残留）。"""
     if win is None or sys.platform != "win32":
         return
     native = getattr(win, "native", None)
     if native is None or getattr(native, "_battdock_rgn_hooked", False):
         return
     try:
-        def _on_size_changed(_s, _e):
+        def _on_rgn_refresh(_s, _e):
             try:
                 if native.IsDisposed:
                     return
@@ -324,7 +355,13 @@ def _attach_rounded_resize_hook(win: Optional[webview.Window], radius_dip: int =
             except Exception:
                 pass
 
-        native.SizeChanged += _on_size_changed
+        native.SizeChanged += _on_rgn_refresh
+        native.Resize += _on_rgn_refresh
+        native.VisibleChanged += _on_rgn_refresh
+        try:
+            native.DpiChanged += _on_rgn_refresh
+        except Exception:
+            pass
         setattr(native, "_battdock_rgn_hooked", True)
     except Exception:
         pass
@@ -778,11 +815,17 @@ class MouseBatteryApp:
                 if d.device_id == fcfg.device_id:
                     pref = get_device_pref(self.cfg, d.device_id)
                     return d, (pref.alias or d.name)
-        visible = [d for d in self.devices if not get_device_pref(self.cfg, d.device_id).hidden]
-        pool = visible or self.devices
+        ordered_objs = sorted(
+            enumerate(self.devices),
+            key=lambda pair: (get_device_pref(self.cfg, pair[1].device_id).order, pair[0], pair[1].device_id),
+        )
+        ordered_devices = [d for _, d in ordered_objs]
+        visible = [d for d in ordered_devices if not get_device_pref(self.cfg, d.device_id).hidden]
+        pool = visible or ordered_devices
         with_pct = [d for d in pool if d.connected and d.percent is not None]
         if with_pct:
-            best = min(with_pct, key=lambda d: int(d.percent or 100))
+            # 保持用户排序优先（同等电量或非极低电量时严格遵循用户设备顺序）
+            best = min(with_pct, key=lambda d: (int(d.percent or 100), pool.index(d)))
             return best, (get_device_pref(self.cfg, best.device_id).alias or best.name)
         if pool:
             return pool[0], (get_device_pref(self.cfg, pool[0].device_id).alias or pool[0].name)
@@ -803,6 +846,7 @@ class MouseBatteryApp:
             "app_name": APP_NAME,
             "app_version": APP_VERSION,
             "app_author": APP_AUTHOR,
+            "is_win11": is_windows_11(),
             "effective_theme": self._effective_theme(),
             "effective_animations": self._effective_animations(),
             "autostart": is_autostart_enabled(),
@@ -968,8 +1012,8 @@ class MouseBatteryApp:
                 return
             self._main_revealed = True
         if self.hwnd:
-            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             self._center_main_hwnd()
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
         fade = 180 if self._effective_animations() else 0
         _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True, fade_ms=fade)
 
@@ -981,9 +1025,9 @@ class MouseBatteryApp:
             self._settings_pending_reveal = False
             self._settings_ready = True
         if self.settings_hwnd:
-            _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
             px, py, pw, ph, _ = self._compute_settings_target_phys_rect()
             _set_window_pos(self.settings_hwnd, px, py, pw, ph)
+            _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
         anim = self._effective_animations()
         if anim and self.settings_window is not None:
             try:
@@ -1007,8 +1051,8 @@ class MouseBatteryApp:
         with self._reveal_lock:
             self._main_revealed = True
         if self.hwnd:
-            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             self._center_main_hwnd()
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
         self._push_state_to_ui()
         fade = 180 if self._effective_animations() else 0
         _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True, fade_ms=fade)
@@ -1027,11 +1071,11 @@ class MouseBatteryApp:
                 if native is not None and not native.IsDisposed:
                     _set_form_visibility(self.settings_window, visible=True, opacity=0.0, activate=False)
                     if self.settings_hwnd:
-                        _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
                         if ctypes.windll.user32.IsZoomed(wintypes.HWND(self.settings_hwnd)):
                             ctypes.windll.user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
                             self._settings_maximized = False
                         _set_window_pos(self.settings_hwnd, px, py, pw, ph)
+                        _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
                     payload = json.dumps(self._build_state_dict(), ensure_ascii=False)
                     with self._reveal_lock:
                         self._settings_pending_reveal = True
@@ -1251,11 +1295,13 @@ class MouseBatteryApp:
 
         # 应用窗口深浅色与置顶状态
         is_dark = self._effective_theme() == "dark"
+        _sync_native_form_backcolor(self.window, is_dark)
+        _sync_native_form_backcolor(self.settings_window, is_dark)
         if self.hwnd:
-            _apply_window_chrome(self.hwnd, is_dark)
             if "topmost" in patch:
                 wx, wy, ww, wh = _get_window_rect(self.hwnd)
                 _set_window_pos(self.hwnd, wx, wy, ww, wh, topmost=self.cfg.topmost)
+            _apply_window_chrome(self.hwnd, is_dark)
         if self.settings_hwnd:
             _apply_window_chrome(self.settings_hwnd, is_dark)
 
@@ -1267,12 +1313,41 @@ class MouseBatteryApp:
     def update_device_pref(self, device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         """更新单台设备独立配置（重命名、隐藏、暂停监控、排序、独立阈值）。"""
         if device_id and isinstance(updates, dict):
-            set_device_pref(self.cfg, str(device_id), updates)
+            clean_updates = dict(updates)
+            if "custom_tiers" in clean_updates and isinstance(clean_updates["custom_tiers"], list):
+                raw_t = [max(1, min(95, int(v))) for v in clean_updates["custom_tiers"] if isinstance(v, (int, float))]
+                # 保证严格递减顺序（t1 > t2 > t3），避免无效重复档位
+                clean_updates["custom_tiers"] = sorted(set(raw_t), reverse=True)
+            set_device_pref(self.cfg, str(device_id), clean_updates)
             self._alerted_tiers.pop(str(device_id), None)
             save_config(self.cfg)
             self._push_state_to_ui()
             self._update_tray_visual()
             self._sync_floating_widget()
+        return self._build_state_dict()
+
+    def reorder_devices(self, device_ids: list[str]) -> dict[str, Any]:
+        """按拖拽后的 device_id 列表保存设备显示顺序，并立即同步主窗口与悬浮窗。"""
+        if not isinstance(device_ids, list) or not device_ids:
+            return self._build_state_dict()
+        ordered_now = [d["device_id"] for d in self._sorted_devices(include_hidden=True)]
+        seen: set[str] = set()
+        merged: list[str] = []
+        for did in device_ids:
+            s = str(did)
+            if s in ordered_now and s not in seen:
+                seen.add(s)
+                merged.append(s)
+        for did in ordered_now:
+            if did not in seen:
+                seen.add(did)
+                merged.append(did)
+        for pos, did in enumerate(merged):
+            set_device_pref(self.cfg, did, {"order": pos * 10})
+        save_config(self.cfg)
+        self._push_state_to_ui()
+        self._update_tray_visual()
+        self._sync_floating_widget()
         return self._build_state_dict()
 
     def move_device_order(self, device_id: str, direction: int) -> dict[str, Any]:
@@ -1285,10 +1360,7 @@ class MouseBatteryApp:
         target_idx = idx + (-1 if direction < 0 else 1)
         if 0 <= target_idx < len(ids):
             ids[idx], ids[target_idx] = ids[target_idx], ids[idx]
-            for pos, did in enumerate(ids):
-                set_device_pref(self.cfg, did, {"order": pos * 10})
-            save_config(self.cfg)
-            self._push_state_to_ui()
+            return self.reorder_devices(ids)
         return self._build_state_dict()
 
     def preview_sound(self, sound_name: str = "default") -> None:
@@ -1581,13 +1653,15 @@ class MouseBatteryApp:
         kind: str = KIND_MOUSE,
         is_test: bool = False,
         device_id: Optional[str] = None,
+        full_device_name: str = "",
     ) -> None:
-        """原生 WinForms 极速无边框置顶迷你弹窗（统一黑白实心设备图标、三级动态着色、Win10/11 圆角、停留 5 秒）。"""
+        """原生 WinForms 紧凑自适应低电量迷你弹窗（统一黑白实心设备图标、完整标准设备名、三级动态着色、Win10/11 圆角）。"""
         self._close_alert_window(instant=True)
         pct = max(0, min(100, int(percent)))
         tier_lvl, tier_title = self._resolve_alert_tier(pct, device_id=device_id)
         is_dark = self._effective_theme() == "dark"
         anim_on = self._effective_animations()
+        full_name = (full_device_name or device_label or "").strip() or "未知外设"
 
         native_main = getattr(self.window, "native", None) if self.window is not None else None
         if native_main is None:
@@ -1596,17 +1670,42 @@ class MouseBatteryApp:
         left, top, right, bottom = _get_tray_work_area()
         scale = _get_dpi_scale(self.hwnd) if self.hwnd else 1.0
         margin = int(round(EDGE_MARGIN * scale))
-        aw = int(round(ALERT_SIZE[0] * scale))
-        ah = int(round(ALERT_SIZE[1] * scale))
-        ax = max(left + margin, right - aw - margin)
-        ay = max(top + margin, bottom - ah - margin)
+        work_w = max(260, right - left - margin * 2)
 
         def _create_on_ui_thread() -> None:
             try:
                 import io
                 import System.Windows.Forms as WinForms
                 from System.Drawing import Color, ContentAlignment, Font, FontStyle, Image as GdiImage, Point, Size
+                from System.Drawing.Drawing2D import GraphicsPath, SmoothingMode
                 from System.IO import MemoryStream
+
+                title_text = f"{tier_title} · 剩余 {pct}%"
+                title_font = Font("Microsoft YaHei UI", 9.0, FontStyle.Bold)
+                dev_font = Font("Microsoft YaHei UI", 8.6, FontStyle.Regular)
+                btn_font = Font("Microsoft YaHei UI", 8.2, FontStyle.Regular)
+
+                # 紧凑参考参数（按当前显示器 DPI 动态缩放）
+                pad_x = int(round(11 * scale))
+                icon_px = int(round(22 * scale))
+                gap_icon = int(round(9 * scale))
+                gap_btn = int(round(11 * scale))
+                btn_w = int(round(50 * scale))
+                btn_h = int(round(25 * scale))
+                ah = int(round(56 * scale))
+                min_aw = int(round(250 * scale))
+                max_aw = min(int(round(360 * scale)), work_w)
+
+                # 按实际字体与文本宽度动态计算紧凑宽度（不因固定大宽造成留白，也不整体缩小字体）
+                t_flags = WinForms.TextFormatFlags.SingleLine | WinForms.TextFormatFlags.NoPadding
+                w_line1 = int(WinForms.TextRenderer.MeasureText(title_text, title_font, Size(1000, 40), t_flags).Width)
+                disp_name = device_label or full_name
+                w_line2 = int(WinForms.TextRenderer.MeasureText(disp_name, dev_font, Size(1000, 40), t_flags).Width)
+                chrome_w = pad_x + icon_px + gap_icon + gap_btn + btn_w + pad_x + int(round(6 * scale))
+                aw = max(min_aw, min(max_aw, chrome_w + max(w_line1, w_line2)))
+
+                ax = max(left + margin, min(right - aw - margin, right - aw - margin))
+                ay = max(top + margin, min(bottom - ah - margin, bottom - ah - margin))
 
                 form = WinForms.Form()
                 form.Text = ALERT_WINDOW_TITLE
@@ -1614,12 +1713,17 @@ class MouseBatteryApp:
                 form.ShowInTaskbar = False
                 form.TopMost = True
                 form.StartPosition = WinForms.FormStartPosition.Manual
-                form.BackColor = Color.FromArgb(24, 27, 34) if is_dark else Color.FromArgb(252, 253, 255)
+                form.BackColor = Color.FromArgb(24, 27, 35) if is_dark else Color.FromArgb(252, 253, 255)
                 form.Size = Size(aw, ah)
                 form.Location = Point(ax, ay)
 
-                # 左侧显示统一黑白实心设备图标（严格单色，不随电量等级变色）
-                icon_px = int(round(26 * scale))
+                # 1px 抗锯齿圆角外细边，确保 Win10/11 均精致清晰无毛刺
+                border_col = Color.FromArgb(46, 52, 68) if is_dark else Color.FromArgb(216, 222, 232)
+                def _on_form_paint(_s, pe):
+                    paint_winforms_rounded_border(pe.Graphics, form.Width, form.Height, 8.0 * scale, border_col)
+                form.Paint += _on_form_paint
+
+                # 左侧：统一黑白实心设备图标（严格单色，不随电量等级变色）
                 pil_ic = render_device_icon_pil(kind, size=icon_px, is_dark=is_dark)
                 buf = io.BytesIO()
                 pil_ic.save(buf, format="PNG")
@@ -1629,54 +1733,74 @@ class MouseBatteryApp:
                 pic.SizeMode = WinForms.PictureBoxSizeMode.Zoom
                 pic.BackColor = Color.Transparent
                 pic.Size = Size(icon_px, icon_px)
-                pic.Location = Point(int(round(14 * scale)), (ah - icon_px) // 2)
+                pic.Location = Point(pad_x, (ah - icon_px) // 2)
                 form.Controls.Add(pic)
 
-                btn_w = int(round(54 * scale))
-                btn_h = int(round(26 * scale))
+                # 右侧：紧凑圆角「知道了」按钮（带轻量悬停底色反馈）
+                btn_bg_norm = Color.FromArgb(44, 49, 62) if is_dark else Color.FromArgb(236, 240, 246)
+                btn_bg_hover = Color.FromArgb(56, 63, 79) if is_dark else Color.FromArgb(224, 230, 240)
                 btn = WinForms.Label()
                 btn.Text = "知道了"
                 btn.TextAlign = ContentAlignment.MiddleCenter
                 btn.ForeColor = Color.FromArgb(235, 240, 248) if is_dark else Color.FromArgb(30, 41, 59)
-                btn.BackColor = Color.FromArgb(44, 49, 62) if is_dark else Color.FromArgb(238, 241, 246)
-                btn.Font = Font("Microsoft YaHei UI", 8.5, FontStyle.Regular)
+                btn.BackColor = btn_bg_norm
+                btn.Font = btn_font
                 btn.Size = Size(btn_w, btn_h)
-                btn.Location = Point(aw - btn_w - int(round(12 * scale)), (ah - btn_h) // 2)
+                btn.Location = Point(aw - btn_w - pad_x, (ah - btn_h) // 2)
                 btn.Cursor = WinForms.Cursors.Hand
                 btn.Click += lambda _s, _e: self._close_alert_window()
+                btn.MouseEnter += lambda _s, _e: setattr(btn, "BackColor", btn_bg_hover)
+                btn.MouseLeave += lambda _s, _e: setattr(btn, "BackColor", btn_bg_norm)
                 form.Controls.Add(btn)
+                try:
+                    apply_window_rounded_corners(int(btn.Handle.ToInt64()), radius_dip=6, scale=scale, force_region=True)
+                except Exception:
+                    pass
 
-                text_x = int(round(50 * scale))
-                text_w = aw - text_x - btn_w - int(round(18 * scale))
+                text_x = pad_x + icon_px + gap_icon
+                text_w = max(80, aw - text_x - btn_w - gap_btn - pad_x)
 
-                # 第一行：三级提醒文案与颜色严格与电量阈值和进度条色阶联动
+                # 第一行：三级提醒文案与状态色（浅色使用高对比清晰黄/橙/红，深色柔和明亮）
                 if tier_lvl == 3:
                     t_col = Color.FromArgb(248, 113, 113) if is_dark else Color.FromArgb(220, 38, 38)
                 elif tier_lvl == 2:
                     t_col = Color.FromArgb(251, 146, 60) if is_dark else Color.FromArgb(234, 88, 12)
                 else:
-                    t_col = Color.FromArgb(250, 204, 21) if is_dark else Color.FromArgb(202, 138, 4)
+                    t_col = Color.FromArgb(250, 204, 21) if is_dark else Color.FromArgb(180, 126, 0)
+
+                line1_h = int(round(19 * scale))
+                line2_h = int(round(18 * scale))
+                line_gap = int(round(2 * scale))
+                block_top = max(int(round(6 * scale)), (ah - (line1_h + line_gap + line2_h)) // 2)
 
                 title_lbl = WinForms.Label()
-                title_lbl.Text = f"{tier_title} · 剩余 {pct}%"
+                title_lbl.Text = title_text
                 title_lbl.ForeColor = t_col
                 title_lbl.BackColor = Color.Transparent
-                title_lbl.Font = Font("Microsoft YaHei UI", 9.3, FontStyle.Bold)
+                title_lbl.Font = title_font
                 title_lbl.AutoEllipsis = True
-                title_lbl.Size = Size(text_w, int(round(21 * scale)))
-                title_lbl.Location = Point(text_x, int(round(13 * scale)))
+                title_lbl.Size = Size(text_w, line1_h)
+                title_lbl.Location = Point(text_x, block_top)
                 form.Controls.Add(title_lbl)
 
-                # 第二行：品牌名称（正常文字颜色）
+                # 第二行：完整标准设备名称（正常文字颜色；仅极端超长时优雅省略并支持悬停查看完整名）
                 dev_lbl = WinForms.Label()
-                dev_lbl.Text = device_label
-                dev_lbl.ForeColor = Color.FromArgb(235, 240, 248) if is_dark else Color.FromArgb(30, 41, 59)
+                dev_lbl.Text = disp_name
+                dev_lbl.ForeColor = Color.FromArgb(232, 237, 245) if is_dark else Color.FromArgb(30, 41, 59)
                 dev_lbl.BackColor = Color.Transparent
-                dev_lbl.Font = Font("Microsoft YaHei UI", 8.8, FontStyle.Regular)
+                dev_lbl.Font = dev_font
                 dev_lbl.AutoEllipsis = True
-                dev_lbl.Size = Size(text_w, int(round(19 * scale)))
-                dev_lbl.Location = Point(text_x, int(round(36 * scale)))
+                dev_lbl.Size = Size(text_w, line2_h)
+                dev_lbl.Location = Point(text_x, block_top + line1_h + line_gap)
                 form.Controls.Add(dev_lbl)
+
+                if disp_name != full_name or w_line2 > text_w:
+                    tt = WinForms.ToolTip()
+                    tt.AutoPopDelay = 5000
+                    tt.InitialDelay = 250
+                    tt.ShowAlways = True
+                    tt.SetToolTip(dev_lbl, full_name)
+                    tt.SetToolTip(form, full_name)
 
                 hwnd = int(form.Handle.ToInt64())
                 user32 = ctypes.windll.user32
@@ -1684,7 +1808,7 @@ class MouseBatteryApp:
                 ex = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
                 ex |= 0x00000008 | 0x08000000 | 0x00000080  # TOPMOST | NOACTIVATE | TOOLWINDOW
                 user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, ex)
-                apply_window_rounded_corners(hwnd, radius_dip=10, scale=scale)
+                apply_window_rounded_corners(hwnd, radius_dip=8, scale=scale)
 
                 SWP_NOACTIVATE = 0x0010
                 SWP_SHOWWINDOW = 0x0040
@@ -1732,19 +1856,21 @@ class MouseBatteryApp:
         kind: str,
         is_test: bool = False,
         device_id: Optional[str] = None,
+        full_device_name: str = "",
     ) -> None:
         if self.cfg.sound_enabled:
             threading.Thread(target=play_alert_sound, args=(self.cfg.sound_name,), daemon=True).start()
         if self.cfg.popup_alert_enabled or is_test:
             threading.Thread(
                 target=self._show_mini_alert,
-                args=(device_label, percent, kind, is_test, device_id),
+                args=(device_label, percent, kind, is_test, device_id, full_device_name),
                 daemon=True,
             ).start()
         if self.cfg.windows_notify_enabled and self._tray is not None:
             try:
                 _lvl, tier_title = self._resolve_alert_tier(int(percent), device_id=device_id)
-                self._tray.notify(f"{device_label} · 剩余电量 {percent}%", f"{APP_NAME} · {tier_title}")
+                notify_name = full_device_name or device_label
+                self._tray.notify(f"{notify_name} · 剩余电量 {percent}%", f"{APP_NAME} · {tier_title}")
             except Exception:
                 pass
 
@@ -1752,8 +1878,15 @@ class MouseBatteryApp:
         dev, _name = self._pick_floating_device()
         kind = dev.kind if dev else KIND_MOUSE
         pref = get_device_pref(self.cfg, dev.device_id) if dev else None
-        label = resolve_compact_device_label(dev, self.devices, alias=(pref.alias if pref else "")) if dev else "VGN"
-        self._dispatch_alert(label, 15, kind, is_test=True, device_id=(dev.device_id if dev else None))
+        disp_name, full_name = format_alert_device_name(dev, alias=(pref.alias if pref else ""))
+        self._dispatch_alert(
+            disp_name,
+            15,
+            kind,
+            is_test=True,
+            device_id=(dev.device_id if dev else None),
+            full_device_name=full_name,
+        )
 
     def quit_app(self) -> None:
         self._stop_event.set()
@@ -1818,8 +1951,15 @@ class MouseBatteryApp:
             return
         dev, _tier = min(triggered, key=lambda pair: int(pair[0].percent or 100))
         pref = get_device_pref(self.cfg, dev.device_id)
-        label = resolve_compact_device_label(dev, devices, alias=pref.alias)
-        self._dispatch_alert(label, int(dev.percent or 0), dev.kind, is_test=False, device_id=dev.device_id)
+        disp_name, full_name = format_alert_device_name(dev, alias=pref.alias)
+        self._dispatch_alert(
+            disp_name,
+            int(dev.percent or 0),
+            dev.kind,
+            is_test=False,
+            device_id=dev.device_id,
+            full_device_name=full_name,
+        )
 
     def _update_tray_visual(self) -> None:
         """托盘栏始终使用动态矢量电池图标，仅在电量或设备状态实际变化时重绘图标与提示文本。"""
@@ -2010,6 +2150,9 @@ class _JsApi:
 
     def update_device_pref(self, device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         return self._app.update_device_pref(device_id, updates)
+
+    def reorder_devices(self, device_ids: list[str]) -> dict[str, Any]:
+        return self._app.reorder_devices(device_ids)
 
     def move_device_order(self, device_id: str, direction: int) -> dict[str, Any]:
         return self._app.move_device_order(device_id, direction)

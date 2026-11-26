@@ -481,3 +481,62 @@ def resolve_compact_device_label(
     if len(same_brand_peers) >= 2 and full_name:
         return full_name
     return brand
+
+
+_ALERT_TRAILING_FLUFF_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\s+Wireless\s+Gaming\s+(?:Mouse|Headset|Keyboard|Earbuds)\s*$", re.IGNORECASE),
+    re.compile(r"\s+Wireless\s+Mechanical\s+(?:Gaming\s+)?Keyboard\s*$", re.IGNORECASE),
+    re.compile(r"\s+Mechanical\s+Gaming\s+Keyboard\s*$", re.IGNORECASE),
+    re.compile(r"\s+Gaming\s+(?:Mouse|Headset|Keyboard|Earbuds)\s*$", re.IGNORECASE),
+    re.compile(r"\s+Wireless\s+(?:Mouse|Headset|Keyboard|Earbuds)\s*$", re.IGNORECASE),
+    re.compile(r"\s+(?:Special|Collector'?s|Esports|Limited)\s+Edition\s*$", re.IGNORECASE),
+    re.compile(r"\s+(?:RGB|2\.4\s*GHz|Bluetooth|Dongle|Receiver|Edition)\s*$", re.IGNORECASE),
+    re.compile(r"\s+Wireless\s*$", re.IGNORECASE),
+)
+
+
+def format_alert_device_name(
+    device,
+    alias: str = "",
+    max_chars: int = 34,
+) -> tuple[str, str]:
+    """为低电量提醒弹窗生成设备名称，返回 (display_name, full_name)。
+
+    规则：
+    1. 用户自定义名称（alias）优先级最高。
+    2. 优先使用完整标准设备名称（保持自然大小写），绝不直接缩减为单独品牌名。
+    3. 仅当名称过长（超过 max_chars）时，优先去除尾部冗余营销修饰词，完整保留品牌、核心系列与型号。
+    """
+    custom = re.sub(r"\s+", " ", (alias or "").strip())
+    if custom:
+        full_name = custom
+    elif device is not None:
+        raw_name = (getattr(device, "name", "") or "").strip()
+        vid = getattr(device, "vid", None)
+        pid = getattr(device, "pid", None)
+        brand = (getattr(device, "brand", "") or "").strip()
+        full_name = normalize_device_display_name(raw_name, vid=vid, pid=pid, brand=brand)
+    else:
+        full_name = "VGN Dragonfly F2 Pro Max"
+
+    if len(full_name) <= max_chars:
+        return full_name, full_name
+
+    # 仅移除冗余营销后缀，同时保证至少保留品牌 + 系列/型号（>=2 个词元且不等于纯品牌名）
+    brand_only = canonical_brand_name(
+        getattr(device, "brand", "") if device is not None else "",
+        full_name,
+    ).lower()
+    trimmed = full_name
+    for pat in _ALERT_TRAILING_FLUFF_PATTERNS:
+        if len(trimmed) <= max_chars:
+            break
+        candidate = pat.sub("", trimmed).strip(" -/·")
+        if (
+            candidate
+            and len(candidate.split()) >= 2
+            and candidate.lower() != brand_only
+        ):
+            trimmed = candidate
+
+    return trimmed, full_name

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import io
+import os
 import sys
 import threading
 from ctypes import wintypes
@@ -24,23 +25,38 @@ def is_windows_11() -> bool:
     """准确区分 Windows 11 (Build >= 22000) 与 Windows 10。"""
     if sys.platform != "win32":
         return False
+    if os.environ.get("BATTDOCK_FORCE_WIN10_ROUND") == "1":
+        return False
     try:
         return int(sys.getwindowsversion().build) >= 22000
     except Exception:
         return False
 
 
+def _query_hwnd_dpi_scale(hwnd: int, fallback: float = 1.0) -> float:
+    if sys.platform != "win32" or not hwnd:
+        return float(fallback or 1.0)
+    try:
+        dpi = ctypes.windll.user32.GetDpiForWindow(wintypes.HWND(hwnd))
+        if dpi and dpi > 0:
+            return float(dpi) / 96.0
+    except Exception:
+        pass
+    return float(fallback or 1.0)
+
+
 def apply_window_rounded_corners(
     hwnd: int,
     radius_dip: int = 10,
-    scale: float = 1.0,
+    scale: float = 0.0,
     force_region: bool = False,
 ) -> str:
     """跨 Windows 10 / 11 统一窗口外轮廓圆角实现。
 
     - Windows 11 (>= 22000)：优先使用原生 DWM 圆角（自带系统抗锯齿阴影，零性能开销）。
-    - Windows 10 (< 22000)：使用 Win32 CreateRoundRectRgn + SetWindowRgn 精确裁剪外轮廓；
-      最大化时自动调用 SetWindowRgn(hwnd, 0, True) 恢复满屏直角边缘，不产生黑/白角边。
+    - Windows 10 (< 22000)：使用 Win32 64 位显式 HRGN 签名的 CreateRoundRectRgn + SetWindowRgn
+      按当前显示器真实 DPI 缩放精确裁剪外轮廓，四角对称且零黑/白角边残留；
+      最大化时自动调用 SetWindowRgn(hwnd, 0, True) 恢复满屏直角边缘。
     """
     if sys.platform != "win32" or not hwnd:
         return "noop"
@@ -58,8 +74,11 @@ def apply_window_rounded_corners(
             pass
 
     try:
+        user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+        user32.SetWindowRgn.restype = ctypes.c_int
+
         if user32.IsZoomed(wintypes.HWND(hwnd)):
-            user32.SetWindowRgn(wintypes.HWND(hwnd), wintypes.HANDLE(0), True)
+            user32.SetWindowRgn(wintypes.HWND(hwnd), wintypes.HRGN(0), True)
             return "win10_rgn_cleared"
 
         rect = wintypes.RECT()
@@ -67,18 +86,18 @@ def apply_window_rounded_corners(
             return "error"
         w = max(1, rect.right - rect.left)
         h = max(1, rect.bottom - rect.top)
-        eff_scale = float(scale or 1.0)
-        if eff_scale <= 0:
-            eff_scale = 1.0
+        eff_scale = float(scale) if (scale and float(scale) > 0) else _query_hwnd_dpi_scale(hwnd, 1.0)
         diam = max(8, int(round(radius_dip * 2 * eff_scale)))
+
         gdi32 = ctypes.windll.gdi32
-        gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        gdi32.CreateRoundRectRgn.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int
+        ]
         gdi32.CreateRoundRectRgn.restype = wintypes.HRGN
         gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
         gdi32.DeleteObject.restype = wintypes.BOOL
-        user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
-        user32.SetWindowRgn.restype = ctypes.c_int
 
+        # Win32 CreateRoundRectRgn 右/下坐标为开区间，传入 (0, 0, w + 1, h + 1) 可保证四边与四角像素完全对称
         hrgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, diam, diam)
         if hrgn:
             # SetWindowRgn 接管区域句柄所有权，成功时不可再 DeleteObject
@@ -89,6 +108,34 @@ def apply_window_rounded_corners(
     except Exception:
         return "error"
     return "noop"
+
+
+def paint_winforms_rounded_border(graphics, width: int, height: int, radius_px: float, border_color) -> None:
+    """在 WinForms 原生无边框窗口（悬浮窗 / 低电量弹窗）内绘制 1px 抗锯齿圆角细边，消除 Win10 锯齿感。"""
+    try:
+        from System.Drawing import Pen
+        from System.Drawing.Drawing2D import GraphicsPath, SmoothingMode
+
+        if width <= 4 or height <= 4:
+            return
+        d = max(4.0, min(float(radius_px) * 2.0, float(min(width, height) - 2)))
+        x, y = 0.5, 0.5
+        w, h = float(width) - 1.5, float(height) - 1.5
+        path = GraphicsPath()
+        path.AddArc(x, y, d, d, 180.0, 90.0)
+        path.AddArc(x + w - d, y, d, d, 270.0, 90.0)
+        path.AddArc(x + w - d, y + h - d, d, d, 0.0, 90.0)
+        path.AddArc(x, y + h - d, d, d, 90.0, 90.0)
+        path.CloseFigure()
+        graphics.SmoothingMode = SmoothingMode.AntiAlias
+        pen = Pen(border_color, 1.0)
+        try:
+            graphics.DrawPath(pen, path)
+        finally:
+            pen.Dispose()
+            path.Dispose()
+    except Exception:
+        pass
 
 
 def play_alert_sound(sound_name: str = "default") -> None:
@@ -411,6 +458,30 @@ class DesktopFloatingWidget:
                         ctrl.MouseUp += _on_up
                         ctrl.DoubleClick += _on_dbl
 
+                    def _on_paint(_s, pe):
+                        try:
+                            dark_now = bool(getattr(form, "_battdock_dark", False))
+                            sc_now = float(getattr(form, "_battdock_scale", 1.0))
+                            bcol = Color.FromArgb(46, 52, 68) if dark_now else Color.FromArgb(216, 222, 232)
+                            paint_winforms_rounded_border(pe.Graphics, form.Width, form.Height, 10.0 * sc_now, bcol)
+                        except Exception:
+                            pass
+
+                    def _on_rgn_sync(_s, _e):
+                        try:
+                            if not form.IsDisposed:
+                                apply_window_rounded_corners(int(form.Handle.ToInt64()), radius_dip=10, scale=0.0)
+                                form.Invalidate()
+                        except Exception:
+                            pass
+
+                    form.Paint += _on_paint
+                    form.SizeChanged += _on_rgn_sync
+                    try:
+                        form.DpiChanged += _on_rgn_sync
+                    except Exception:
+                        pass
+
                     self._form = form
                     self._pic = pic
                     self._name_lbl = name_lbl
@@ -420,9 +491,12 @@ class DesktopFloatingWidget:
                     self._tooltip = tt
 
                 form = self._form
+                setattr(form, "_battdock_dark", is_dark)
+                setattr(form, "_battdock_scale", scale)
                 form.TopMost = bool(fcfg.topmost)
                 form.Opacity = max(0.4, min(1.0, int(fcfg.opacity) / 100.0))
                 form.BackColor = Color.FromArgb(26, 30, 39) if is_dark else Color.FromArgb(250, 251, 254)
+                form.Invalidate()
                 size_changed = (form.Size.Width != w or form.Size.Height != h)
                 form.Size = Size(w, h)
                 if not self._dragging:

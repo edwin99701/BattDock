@@ -80,12 +80,12 @@
     transform: scaleY(1);
   }
 
-  /* 右侧内容区（仅此处播放过渡动画） */
+  /* 右侧内容区（仅此处播放过渡动画，支持普通与最大化/宽屏自适应布局） */
   .content-pane {
     flex: 1;
     min-width: 0;
     overflow-y: auto;
-    padding: 14px 24px 16px;
+    padding: 16px 24px 20px;
     background: var(--bg-app);
   }
 
@@ -93,11 +93,43 @@
     display: none;
     flex-direction: column;
     gap: 10px;
-    max-width: 640px;
+    width: 100%;
+    max-width: 680px;
+    margin: 0 auto;
   }
 
   .page.active {
     display: flex;
+  }
+
+  .app-shell.maximized .sidebar {
+    width: 214px;
+    padding: 16px 12px;
+  }
+
+  .app-shell.maximized .content-pane {
+    padding: 22px 40px 28px;
+  }
+
+  .app-shell.maximized .page {
+    max-width: 860px;
+    gap: 12px;
+  }
+
+  @media (min-width: 1040px) {
+    .sidebar {
+      width: 214px;
+      padding: 16px 12px;
+    }
+
+    .content-pane {
+      padding: 22px 40px 28px;
+    }
+
+    .page {
+      max-width: 860px;
+      gap: 12px;
+    }
   }
 
   /* 各类轻量过渡动画（可随时打断重播，零弹簧回弹） */
@@ -185,10 +217,10 @@
   .row-hint { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
   .row-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
-  /* 三级色点 */
+  /* 三级色点（严格与一级黄 / 二级橙 / 三级红体系一致） */
   .tier-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-  .tier-dot.yellow { background: #A3E635; }
-  .tier-dot.orange { background: #FBBF24; }
+  .tier-dot.yellow { background: #EAB308; }
+  .tier-dot.orange { background: #F97316; }
   .tier-dot.red { background: #EF4444; }
 
   /* 步进百分比输入 */
@@ -273,22 +305,193 @@
 
   .tag-chip button { border: none; background: transparent; color: inherit; cursor: pointer; font-size: 13px; line-height: 1; }
 
-  /* 设备管理行卡片 */
-  .dev-mgr-card {
-    border: 1px solid var(--border-hairline);
-    border-radius: 9px;
-    padding: 12px 14px;
-    background: var(--bg-subpanel);
+  /* 设备管理可折叠设置卡片（与常规设置及支持设备清单保持统一视觉语言） */
+  .dev-mgr-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
   }
 
-  .dev-mgr-card + .dev-mgr-card { margin-top: 10px; }
-  .dev-mgr-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .dev-mgr-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-secondary); }
-  .mini-badge { padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-input); background: var(--bg-card); color: var(--text-secondary); font-size: 11px; }
-  .dev-mgr-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .dev-mgr-card {
+    border: 1px solid var(--border-card);
+    border-radius: 10px;
+    background: var(--bg-subpanel);
+    overflow: hidden;
+    transition: border-color 140ms var(--ease-out), box-shadow 180ms var(--ease-out), background-color 140ms var(--ease-out);
+  }
+
+  .dev-mgr-card.expanded {
+    background: var(--bg-card);
+    border-color: var(--border-input);
+  }
+
+  .dev-mgr-card.dragging {
+    position: relative;
+    z-index: 20;
+    background: var(--bg-card);
+    border-color: var(--brand);
+    box-shadow: var(--shadow-popover);
+    opacity: 0.96;
+  }
+
+  .dev-mgr-head {
+    min-height: 54px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    cursor: pointer;
+    transition: background-color 120ms var(--ease-out);
+  }
+
+  .dev-mgr-head:hover {
+    background: var(--bg-hover);
+  }
+
+  .dev-mgr-head-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .dev-drag-handle {
+    width: 22px;
+    height: 28px;
+    margin-left: -4px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: grab;
+    touch-action: none;
+    transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+  }
+
+  .dev-drag-handle:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .dev-drag-handle:active {
+    cursor: grabbing;
+  }
+
+  .dev-mgr-title-wrap {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .dev-mgr-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .dev-mgr-name {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dev-mgr-sub {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dev-status-tag {
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border-input);
+    background: var(--bg-subpanel);
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .dev-expand-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out), transform 200ms var(--ease-out);
+  }
+
+  .dev-expand-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .dev-mgr-card.expanded .dev-expand-btn svg {
+    transform: rotate(180deg);
+  }
+
+  .dev-expand-btn svg {
+    transition: transform 200ms var(--ease-out);
+  }
+
+  .dev-mgr-collapse {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 200ms var(--ease-out);
+  }
+
+  .dev-mgr-card.expanded .dev-mgr-collapse {
+    grid-template-rows: 1fr;
+  }
+
+  .dev-mgr-collapse-inner {
+    overflow: hidden;
+  }
+
+  .dev-mgr-body {
+    padding: 2px 16px 12px;
+    border-top: 1px solid var(--border-hairline);
+    background: var(--bg-card);
+  }
+
+  .dev-tier-subpanel {
+    margin: 4px 0 2px;
+    padding: 4px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-hairline);
+    background: var(--bg-subpanel);
+  }
+
+  .dev-tier-subpanel .row {
+    min-height: 36px;
+    padding: 5px 0;
+  }
+
+  .dev-mgr-hint {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
 
   /* 分段选项组 */
   .seg-group {
@@ -808,9 +1011,6 @@
             <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
           </svg>
         </button>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary)">
-          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
         <span class="app-title">设置</span>
       </div>
       <div class="titlebar-controls">
@@ -1659,57 +1859,274 @@
     document.querySelectorAll(`#${groupId} .seg-btn`).forEach((b) => b.classList.toggle("active", b.dataset.v === val));
   }
 
+  const expandedDeviceIds = new Set();
+  let deviceMgrInitialized = false;
+  let activeDragCleanup = null;
+
+  function _normalizeDevTiersArray(raw) {
+    const fallback = [30, 20, 10];
+    if (!Array.isArray(raw) || raw.length === 0) return fallback;
+    const vals = raw.map((n) => Math.max(1, Math.min(95, Math.round(Number(n) || 0)))).filter((n) => n >= 1);
+    const uniq = Array.from(new Set(vals)).sort((a, b) => b - a);
+    if (uniq.length >= 3) return [uniq[0], uniq[1], uniq[2]];
+    if (uniq.length === 2) return [uniq[0], uniq[1], Math.max(1, uniq[1] - 5)];
+    if (uniq.length === 1) {
+      const t1 = Math.max(10, uniq[0]);
+      const t2 = Math.max(5, t1 - 10);
+      const t3 = Math.max(1, t2 - 5);
+      return [t1, t2, t3];
+    }
+    return fallback;
+  }
+
+  function toggleDeviceCard(did) {
+    if (expandedDeviceIds.has(did)) expandedDeviceIds.delete(did);
+    else expandedDeviceIds.add(did);
+    const card = document.querySelector(`.dev-mgr-card[data-did="${CSS.escape(did)}"]`);
+    if (card) card.classList.toggle("expanded", expandedDeviceIds.has(did));
+  }
+
+  function _bindDeviceDragHandles(listEl) {
+    if (activeDragCleanup) {
+      activeDragCleanup();
+      activeDragCleanup = null;
+    }
+    const handles = listEl.querySelectorAll(".dev-drag-handle");
+    if (handles.length < 2) return;
+
+    handles.forEach((handle) => {
+      handle.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        const card = handle.closest(".dev-mgr-card");
+        if (!card) return;
+        const startY = e.clientY;
+        let currentOffset = 0;
+        let moved = false;
+
+        card.classList.add("dragging");
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+
+        const onMove = (ev) => {
+          const dy = ev.clientY - startY;
+          if (Math.abs(dy) > 3) moved = true;
+          currentOffset = dy;
+          card.style.transform = `translateY(${currentOffset}px)`;
+
+          const cardRect = card.getBoundingClientRect();
+          const cardMid = cardRect.top + cardRect.height / 2;
+          const siblings = Array.from(listEl.querySelectorAll(".dev-mgr-card"));
+          const myIdx = siblings.indexOf(card);
+
+          // 检测是否越过上方或下方相邻卡片中点，执行平滑 FLIP 位移交换
+          let swapTarget = null;
+          let insertBefore = false;
+          if (myIdx > 0) {
+            const prev = siblings[myIdx - 1];
+            const r = prev.getBoundingClientRect();
+            if (cardMid < r.top + r.height / 2) {
+              swapTarget = prev;
+              insertBefore = true;
+            }
+          }
+          if (!swapTarget && myIdx < siblings.length - 1) {
+            const next = siblings[myIdx + 1];
+            const r = next.getBoundingClientRect();
+            if (cardMid > r.top + r.height / 2) {
+              swapTarget = next;
+              insertBefore = false;
+            }
+          }
+
+          if (swapTarget) {
+            const oldTop = swapTarget.getBoundingClientRect().top;
+            const oldCardTop = card.getBoundingClientRect().top;
+            if (insertBefore) {
+              listEl.insertBefore(card, swapTarget);
+            } else {
+              listEl.insertBefore(card, swapTarget.nextSibling);
+            }
+            const newCardTop = card.getBoundingClientRect().top;
+            currentOffset += (oldCardTop - newCardTop);
+            card.style.transform = `translateY(${currentOffset}px)`;
+
+            const newTop = swapTarget.getBoundingClientRect().top;
+            const delta = oldTop - newTop;
+            if (Math.abs(delta) > 1) {
+              swapTarget.style.transition = "none";
+              swapTarget.style.transform = `translateY(${delta}px)`;
+              requestAnimationFrame(() => {
+                swapTarget.style.transition = "transform 180ms var(--ease-out)";
+                swapTarget.style.transform = "translateY(0)";
+                setTimeout(() => { swapTarget.style.transition = ""; }, 200);
+              });
+            }
+          }
+        };
+
+        const finish = () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", finish);
+          window.removeEventListener("pointercancel", finish);
+          activeDragCleanup = null;
+
+          card.classList.remove("dragging");
+          card.style.transition = "transform 160ms var(--ease-out)";
+          card.style.transform = "translateY(0)";
+          setTimeout(() => { card.style.transition = ""; card.style.transform = ""; }, 180);
+
+          if (moved) {
+            const newIds = Array.from(listEl.querySelectorAll(".dev-mgr-card")).map((el) => el.dataset.did).filter(Boolean);
+            if (newIds.length > 1) {
+              window.pywebview?.api?.reorder_devices(newIds).then(applyState);
+              showToast("设备显示顺序已保存");
+            }
+          }
+        };
+
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", finish);
+        window.addEventListener("pointercancel", finish);
+        activeDragCleanup = finish;
+      });
+    });
+  }
+
   function renderDeviceManager(allDevices) {
     const wrap = document.getElementById("deviceMgrList");
     if (!allDevices || allDevices.length === 0) {
       wrap.innerHTML = `<div style="padding:18px 4px;color:var(--text-secondary);font-size:13px">当前未检测到已连接的无线外设。插入 2.4GHz 接收器或连接蓝牙设备后将自动显示在此处。</div>`;
       return;
     }
-    wrap.innerHTML = allDevices.map((d, idx) => {
+
+    // 若用户正在输入设备自定义名称或自定义阈值数字，避免重绘打断焦点
+    const activeEl = document.activeElement;
+    if (activeEl && wrap.contains(activeEl) && (activeEl.tagName === "INPUT")) {
+      return;
+    }
+
+    if (!deviceMgrInitialized) {
+      deviceMgrInitialized = true;
+      if (allDevices.length === 1) {
+        expandedDeviceIds.add(allDevices[0].device_id);
+      }
+    }
+
+    const multi = allDevices.length > 1;
+    const hintHtml = multi
+      ? `<div class="dev-mgr-hint">拖动左侧手柄可调整主窗口与悬浮窗的设备顺序，点击卡片可展开或折叠详细设置</div>`
+      : "";
+
+    const dragHandleSvg = `<svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.25"/><circle cx="8.5" cy="3.5" r="1.25"/><circle cx="3.5" cy="8" r="1.25"/><circle cx="8.5" cy="8" r="1.25"/><circle cx="3.5" cy="12.5" r="1.25"/><circle cx="8.5" cy="12.5" r="1.25"/></svg>`;
+    const chevronSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    const spinUpSvg = `<svg width="8" height="8" viewBox="0 0 12 12"><path d="M2 8l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+    const spinDownSvg = `<svg width="8" height="8" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+
+    const cardsHtml = allDevices.map((d) => {
       const pref = d.pref || {};
       const customOn = Boolean(pref.custom_tiers_enabled);
-      const customStr = (pref.custom_tiers || [30, 20, 10]).join(", ");
+      const tiers = _normalizeDevTiersArray(pref.custom_tiers);
+      const isVisible = !pref.hidden;
+      const isMonitorOn = pref.monitor_enabled !== false;
+      const isExpanded = expandedDeviceIds.has(d.device_id);
       const did = esc(d.device_id);
-      return `
-        <div class="dev-mgr-card">
-          <div class="dev-mgr-top">
-            <div style="display:flex;align-items:center;gap:10px;min-width:0">
-              <span class="dev-mgr-icon">${KIND_ICONS[d.kind] || KIND_ICONS.other}</span>
-              <div style="min-width:0">
-                <div style="font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px" title="${esc(d.display_name)}">${esc(d.display_name)}</div>
-                <div class="dev-mgr-badges" style="margin-top:4px">
-                  ${d.subtitle ? `<span class="mini-badge">${esc(d.subtitle)}</span>` : ""}
-                  <span class="mini-badge">协议：${esc(d.provider_name || "HID")}</span>
+      const didJs = JSON.stringify(d.device_id).replace(/"/g, "&quot;");
+      const fullTitle = d.display_name || d.original_name || "未命名设备";
+      const subText = d.subtitle || (d.connected ? "已连接" : "未连接");
+      const statusPills = [
+        !isVisible ? `<span class="dev-status-tag">已隐藏</span>` : "",
+        !isMonitorOn ? `<span class="dev-status-tag">已暂停监控</span>` : "",
+      ].filter(Boolean).join("");
+
+      const tierMeta = [
+        { idx: 0, dot: "yellow", label: "一级提醒（电量预警）" },
+        { idx: 1, dot: "orange", label: "二级提醒（电量偏低）" },
+        { idx: 2, dot: "red", label: "三级提醒（电量紧急）" },
+      ];
+
+      const customTiersHtml = customOn ? `
+        <div class="dev-tier-subpanel">
+          ${tierMeta.map((m) => `
+            <div class="row">
+              <div class="row-left"><span class="tier-dot ${m.dot}"></span><span class="row-label" style="font-size:12.5px">${m.label}</span></div>
+              <div class="row-right">
+                <div class="pct-input-wrap">
+                  <input type="number" min="1" max="95" class="pct-input" data-dev-tier-did="${did}" data-tier-idx="${m.idx}" value="${tiers[m.idx]}" onchange="saveDevTierInput(${didJs}, ${m.idx}, this.value)" /><span class="pct-unit">%</span>
+                  <div class="pct-spins">
+                    <button class="pct-spin-btn" tabindex="-1" onclick="stepDevTier(${didJs}, ${m.idx}, 5)">${spinUpSvg}</button>
+                    <button class="pct-spin-btn" tabindex="-1" onclick="stepDevTier(${didJs}, ${m.idx}, -5)">${spinDownSvg}</button>
+                  </div>
                 </div>
               </div>
-            </div>
+            </div>`).join("")}
+        </div>` : "";
+
+      return `
+        <div class="dev-mgr-card ${isExpanded ? "expanded" : ""}" data-did="${did}">
+          <div class="dev-mgr-head" onclick="toggleDeviceCard(${didJs})">
+            <div class="dev-mgr-head-left">
+              ${multi ? `<button class="dev-drag-handle" title="按住上下拖拽调整顺序" onclick="event.stopPropagation()" onkeydown="handleDevKeySort(event, ${didJs})">${dragHandleSvg}</button>` : ""}
+              <span class="dev-mgr-icon">${KIND_ICONS[d.kind] || KIND_ICONS.other}</span>
+              <div class="dev-mgr-title-wrap">
+                <div class="dev-mgr-name-row">
+                  <span class="dev-mgr-name" title="${esc(fullTitle)}">${esc(fullTitle)}</span>
+                  ${statusPills}
+                </div>
+                <div class="dev-mgr-sub">${esc(subText)}</div>
               </div>
             </div>
-            <div style="display:flex;gap:4px">
-              <button class="btn btn-sm" title="上移" ${idx === 0 ? "disabled" : ""} onclick="moveDev('${did}', -1)">↑</button>
-              <button class="btn btn-sm" title="下移" ${idx === allDevices.length - 1 ? "disabled" : ""} onclick="moveDev('${did}', 1)">↓</button>
-            </div>
+            <button class="dev-expand-btn" title="${isExpanded ? "收起设置" : "展开设置"}" onclick="event.stopPropagation();toggleDeviceCard(${didJs})">${chevronSvg}</button>
           </div>
-          <div class="dev-mgr-controls">
-            <input class="input" style="width:180px" placeholder="自定义设备名称" value="${esc(pref.alias || '')}" onchange="updateDevPref('${did}', { alias: this.value })" />
-            <button class="btn btn-sm" onclick="updateDevPref('${did}', { hidden: ${!pref.hidden} })">${pref.hidden ? "恢复显示" : "主列表隐藏"}</button>
-            <button class="btn btn-sm" onclick="updateDevPref('${did}', { monitor_enabled: ${pref.monitor_enabled === false ? 'true' : 'false'} })">${pref.monitor_enabled === false ? "恢复监控" : "暂停监控"}</button>
-            <button class="btn btn-sm" onclick="updateDevPref('${did}', { custom_tiers_enabled: ${!customOn} })">${customOn ? "改回全局阈值" : "独立提醒阈值"}</button>
-            ${customOn ? `<input class="input" style="width:128px" title="用逗号分隔百分比，如 30,20,10" value="${esc(customStr)}" onchange="saveDevCustomTiers('${did}', this.value)" />` : ""}
+          <div class="dev-mgr-collapse">
+            <div class="dev-mgr-collapse-inner">
+              <div class="dev-mgr-body">
+                <div class="row">
+                  <div class="row-text"><span class="row-label">自定义设备名称</span><span class="row-hint">留空则显示标准型号名称</span></div>
+                  <input class="input" style="width:210px" placeholder="${esc(d.original_name || "输入自定义名称")}" value="${esc(pref.alias || "")}" onchange="updateDevPref(${didJs}, { alias: this.value })" onkeydown="if(event.key==='Enter'){this.blur();}" />
+                </div>
+                <div class="row">
+                  <div class="row-text"><span class="row-label">在主窗口中显示</span><span class="row-hint">关闭后该设备将从主窗口设备列表中隐藏</span></div>
+                  <button class="toggle ${isVisible ? "on" : ""}" onclick="updateDevPref(${didJs}, { hidden: ${isVisible} })"><span class="toggle-knob"></span></button>
+                </div>
+                <div class="row">
+                  <div class="row-text"><span class="row-label">启用电量监控</span><span class="row-hint">关闭后暂停该设备的低电量提醒</span></div>
+                  <button class="toggle ${isMonitorOn ? "on" : ""}" onclick="updateDevPref(${didJs}, { monitor_enabled: ${!isMonitorOn} })"><span class="toggle-knob"></span></button>
+                </div>
+                <div class="row">
+                  <div class="row-text"><span class="row-label">提醒阈值</span><span class="row-hint">选择跟随全局阈值或为本设备单独设定三级阈值</span></div>
+                  <div class="seg-group">
+                    <button class="seg-btn ${!customOn ? "active" : ""}" onclick="updateDevPref(${didJs}, { custom_tiers_enabled: false })">跟随全局设置</button>
+                    <button class="seg-btn ${customOn ? "active" : ""}" onclick="updateDevPref(${didJs}, { custom_tiers_enabled: true, custom_tiers: [${tiers.join(",")}] })">自定义</button>
+                  </div>
+                </div>
+                ${customTiersHtml}
+              </div>
+            </div>
           </div>
         </div>`;
     }).join("");
+
+    wrap.innerHTML = `${hintHtml}<div class="dev-mgr-list">${cardsHtml}</div>`;
+    const listEl = wrap.querySelector(".dev-mgr-list");
+    if (listEl && multi) {
+      _bindDeviceDragHandles(listEl);
+    }
   }
 
   function applyState(state) {
     appState = state;
     const cfg = state.config || {};
     const flt = cfg.floating || {};
+    const zoomVal = (cfg.ui_scale || 100) / 100;
 
     document.documentElement.dataset.theme = state.effective_theme || "light";
+    document.documentElement.dataset.os = state.is_win11 === false ? "win10" : "win11";
     document.documentElement.dataset.colors = cfg.color_scheme || "standard";
     document.documentElement.dataset.anim = state.effective_animations === false ? "off" : "on";
-    document.body.style.zoom = `${(cfg.ui_scale || 100) / 100}`;
+    document.documentElement.style.setProperty("--ui-zoom", String(zoomVal));
+    document.body.style.zoom = `${zoomVal}`;
 
     // 常规
     setSw("sw-autostart", state.autostart);
@@ -1790,6 +2207,7 @@
     }
     const appShell = document.querySelector(".app-shell");
     if (appShell) appShell.classList.toggle("maximized", Boolean(state.settings_maximized));
+    document.documentElement.classList.toggle("win-maximized", Boolean(state.settings_maximized));
 
     renderDeviceManager(state.all_devices || []);
     if (state.app_name) document.getElementById("aboutAppName").textContent = state.app_name;
@@ -1966,11 +2384,63 @@
   function patchFloating(patch) { patchSettings({ floating: patch }); }
   function toggleFloating(key) { if (appState) patchFloating({ [key]: !Boolean((appState.config.floating || {})[key]) }); }
   function updateDevPref(did, updates) { window.pywebview?.api?.update_device_pref(did, updates).then(applyState); }
-  function saveDevCustomTiers(did, rawText) {
-    const arr = rawText.split(/[,，\s]+/).map((s) => Number(s)).filter((n) => Number.isFinite(n) && n >= 1 && n <= 95);
-    updateDevPref(did, { custom_tiers: arr });
-    showToast("设备独立提醒阈值已保存");
+
+  function _getCurrentDevTiers(did) {
+    const dev = (appState?.all_devices || []).find((x) => x.device_id === did);
+    return _normalizeDevTiersArray(dev?.pref?.custom_tiers);
   }
+
+  function _validateAndSaveDevTiers(did, tiers) {
+    const [t1, t2, t3] = tiers.map((n) => Math.max(1, Math.min(95, Math.round(Number(n) || 0))));
+    if (!(t1 > t2 && t2 > t3)) {
+      showToast("请保持 一级 > 二级 > 三级（1%–95%）");
+      // 回刷原有效值避免输入框停留非法数值
+      renderDeviceManager(appState?.all_devices || []);
+      return;
+    }
+    updateDevPref(did, { custom_tiers_enabled: true, custom_tiers: [t1, t2, t3] });
+  }
+
+  function saveDevTierInput(did, idx, rawVal) {
+    const tiers = _getCurrentDevTiers(did);
+    const v = Math.round(Number(rawVal));
+    if (!Number.isFinite(v) || v < 1 || v > 95) {
+      showToast("提醒阈值需为 1%–95% 之间的整数");
+      renderDeviceManager(appState?.all_devices || []);
+      return;
+    }
+    tiers[idx] = v;
+    _validateAndSaveDevTiers(did, tiers);
+  }
+
+  function stepDevTier(did, idx, delta) {
+    const tiers = _getCurrentDevTiers(did);
+    const next = Math.max(1, Math.min(95, tiers[idx] + delta));
+    tiers[idx] = next;
+    // 步进调整时自动维持严格递减顺序，体验更顺手
+    if (idx === 0) {
+      if (tiers[1] >= tiers[0]) tiers[1] = Math.max(2, tiers[0] - 5);
+      if (tiers[2] >= tiers[1]) tiers[2] = Math.max(1, tiers[1] - 5);
+    } else if (idx === 1) {
+      if (tiers[1] >= tiers[0]) tiers[0] = Math.min(95, tiers[1] + 5);
+      if (tiers[2] >= tiers[1]) tiers[2] = Math.max(1, tiers[1] - 5);
+    } else if (idx === 2) {
+      if (tiers[2] >= tiers[1]) tiers[1] = Math.min(94, tiers[2] + 5);
+      if (tiers[1] >= tiers[0]) tiers[0] = Math.min(95, tiers[1] + 5);
+    }
+    _validateAndSaveDevTiers(did, tiers);
+  }
+
+  function handleDevKeySort(event, did) {
+    if (event.altKey && event.key === "ArrowUp") {
+      event.preventDefault();
+      moveDev(did, -1);
+    } else if (event.altKey && event.key === "ArrowDown") {
+      event.preventDefault();
+      moveDev(did, 1);
+    }
+  }
+
   function moveDev(did, dir) { window.pywebview?.api?.move_device_order(did, dir).then(applyState); }
   function doExportDiag() { window.pywebview?.api?.export_diagnostics().then((res) => { if (res && res.ok) showToast(`诊断报告已导出：${res.filename}`); }); }
   function doCheckUpdates() { window.pywebview?.api?.check_updates(false); }

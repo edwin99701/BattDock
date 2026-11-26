@@ -610,6 +610,55 @@ class TestBrandAndDeviceNaming(unittest.TestCase):
         self.assertIn("Join-Path $TargetDir ('._battdock_rollback_' + $TargetPid)", ps)
         self.assertNotIn("Join-Path $env:TEMP ('battdock_rollback_'", ps)
 
+    def test_v250_alert_device_names_reorder_and_ui_invariants(self):
+        import os
+        from floating_widget import is_windows_11
+        from providers.base import DeviceBattery, KIND_HEADSET, KIND_KEYBOARD, KIND_MOUSE
+        from providers.device_naming import format_alert_device_name, resolve_compact_device_label
+
+        # 1. 低电量提醒设备名：优先自定义名 > 完整标准型号名；超长仅删冗余修饰词，绝不退化为纯品牌名
+        d_vgn = DeviceBattery("vgn:1", "VGN Dragonfly F2 Pro Max", "VGN", KIND_MOUSE)
+        d_ss = DeviceBattery("ss:1", "SteelSeries Arctis Nova 7", "SteelSeries", KIND_HEADSET)
+        d_long = DeviceBattery(
+            "logi:long",
+            "Logitech G Pro X Superlight 2 DEX Wireless Gaming Mouse",
+            "Logitech",
+            KIND_MOUSE,
+        )
+        self.assertEqual(format_alert_device_name(d_vgn), ("VGN Dragonfly F2 Pro Max", "VGN Dragonfly F2 Pro Max"))
+        self.assertEqual(format_alert_device_name(d_vgn, alias="我的主力鼠"), ("我的主力鼠", "我的主力鼠"))
+        self.assertEqual(format_alert_device_name(d_ss), ("SteelSeries Arctis Nova 7", "SteelSeries Arctis Nova 7"))
+        short_long, full_long = format_alert_device_name(d_long)
+        self.assertEqual(full_long, "Logitech G Pro X Superlight 2 DEX Wireless Gaming Mouse")
+        self.assertEqual(short_long, "Logitech G Pro X Superlight 2 DEX")
+        self.assertNotEqual(short_long, "Logitech")
+
+        # 2. 悬浮窗依旧保持默认仅品牌名规则（不受提醒弹窗完整名称规则影响）
+        self.assertEqual(resolve_compact_device_label(d_vgn, [d_vgn, d_ss]), "VGN")
+        self.assertEqual(resolve_compact_device_label(d_ss, [d_vgn, d_ss]), "SteelSeries")
+
+        # 3. Windows 10 圆角模式强制开关校验
+        old_env = os.environ.get("BATTDOCK_FORCE_WIN10_ROUND")
+        try:
+            os.environ["BATTDOCK_FORCE_WIN10_ROUND"] = "1"
+            self.assertFalse(is_windows_11())
+        finally:
+            if old_env is None:
+                os.environ.pop("BATTDOCK_FORCE_WIN10_ROUND", None)
+            else:
+                os.environ["BATTDOCK_FORCE_WIN10_ROUND"] = old_env
+
+        # 4. 设置页 HTML 结构不变量：无标题栏齿轮图标、无底层协议名暴露、无逗号分隔阈值输入框、保留左侧导航图标
+        settings_html = (Path(__file__).resolve().parent.parent / "ui" / "settings.html").read_text(encoding="utf-8")
+        self.assertNotIn("协议：", settings_html)
+        self.assertNotIn("用逗号分隔百分比", settings_html)
+        self.assertIn("dev-drag-handle", settings_html)
+        self.assertIn("reorder_devices", settings_html)
+        titlebar_block = settings_html.split('id="titlebar"', 1)[1].split("</div>", 2)[0]
+        self.assertNotIn("M19.4 15", titlebar_block)  # 标题栏“设置”左侧无齿轮 SVG
+        self.assertIn("返回主窗口", titlebar_block)  # 保留返回箭头
+        self.assertIn('data-sec="general"', settings_html)  # 保留左侧导航栏
+
 
 if __name__ == "__main__":
     unittest.main()

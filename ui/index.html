@@ -640,10 +640,13 @@
       Object.assign(ICONS, state.device_icons);
     }
     const cfg = state.config || {};
+    const zoomVal = (cfg.ui_scale || 100) / 100;
     document.documentElement.dataset.theme = state.effective_theme || "light";
+    document.documentElement.dataset.os = state.is_win11 === false ? "win10" : "win11";
     document.documentElement.dataset.colors = cfg.color_scheme || "standard";
     document.documentElement.dataset.anim = state.effective_animations === false ? "off" : "on";
-    document.body.style.zoom = `${(cfg.ui_scale || 100) / 100}`;
+    document.documentElement.style.setProperty("--ui-zoom", String(zoomVal));
+    document.body.style.zoom = `${zoomVal}`;
 
     const shell = document.getElementById("appShell");
     shell.classList.remove("density-compact", "density-standard", "density-comfortable");
@@ -651,6 +654,7 @@
     shell.classList.toggle("hide-bars", cfg.show_progress_bar === false);
     shell.classList.toggle("hide-icons", cfg.show_device_icon === false);
     shell.classList.toggle("maximized", Boolean(state.main_maximized));
+    document.documentElement.classList.toggle("win-maximized", Boolean(state.main_maximized));
 
     const devs = state.devices || [];
     document.getElementById("deviceCountText").textContent = `已连接设备 · ${devs.length} 个`;

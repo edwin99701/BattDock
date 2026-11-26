@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.4.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.5.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
 </a>
 
 </div>
@@ -114,13 +114,13 @@
 
 ### 发布产物说明
 前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载：
-- **`BattDock-v2.4.0-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
-- **`BattDock-v2.4.0-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
+- **`BattDock-v2.5.0-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
+- **`BattDock-v2.5.0-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
 - **`SHA256SUMS.txt`**：所有发布文件的 SHA-256 校验值清单，用于核对文件完整性。
 - **`update-summary.json`**：供软件内部直接读取的简明中文更新摘要。
-- **`VGNMouseBattery-v2.4.0-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
+- **`VGNMouseBattery-v2.5.0-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
 
-> **旧版升级说明**：旧版 `v2.3.0` 因自身内置的更新脚本启动缺陷，本次升级至 `v2.4.0` 请运行 **`BattDock-v2.4.0-Setup.exe`** 安装（或下载便携版解压覆盖一次，个人配置保存在 `%LOCALAPPDATA%\BattDock\config.json` 完整保留）；从 `v2.4.0` 起所有盘符均可直接软件内一键自动覆盖并自动重启。
+> **升级说明**：已安装 `v2.4.0` 的用户可直接点击软件内「立即更新」一键自动覆盖并自动重启；`v2.3.0` 及更早版本请下载运行 **`BattDock-v2.5.0-Setup.exe`**（或便携版覆盖一次，个人配置保存在 `%LOCALAPPDATA%\BattDock\config.json` 完整保留）。
 
 ### 首次启动与在线更新
 1. **开机静默自启**：在安装向导或「设置 → 常规设置」中开启开机自启，默认以 `--background` 静默驻留系统托盘，不弹出窗口。
