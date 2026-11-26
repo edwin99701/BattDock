@@ -50,7 +50,7 @@ BrowseDialogLabel=请在下方列表中选择文件夹，然后单击「确定�
 NewFolderName=新建文件夹
 
 WelcomeLabel1=欢迎使用 [name] 安装向导
-WelcomeLabel2=即将把 [name/ver] 安装到您的计算机。%n%n安装无需管理员权限，支持后续软件内一键自动更新。
+WelcomeLabel2=即将把 [name/ver] 安装到您的计算机。%n%n支持安装到任意盘符和路径，并支持后续软件内一键自动更新。
 
 WizardSelectDir=选择安装位置
 SelectDirDesc=您希望将 [name] 安装到哪个文件夹？

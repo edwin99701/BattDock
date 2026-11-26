@@ -21,12 +21,12 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
-; 默认安装到 %LOCALAPPDATA%\Programs\BattDock（无需管理员权限，确保软件内一键自动覆盖更新始终拥有写权限）
+; 默认安装到 Program Files\BattDock，支持任意盘符/路径（如 E:\BattDock），并对程序目录授予用户修改权限以保障软件内一键自动更新
 DefaultDirName={autopf}\{#MyAppName}
 UsePreviousAppDir=yes
 DisableDirPage=no
 DisableProgramGroupPage=yes
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\release\assets_v{#MyAppVersion}
@@ -57,6 +57,10 @@ Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:AutoStartGroup}"; Flags: unchecked
 
+[Dirs]
+; 授予普通用户对 BattDock 安装目录的修改权限，确保安装在 E:\BattDock 或 Program Files 后软件内自动更新无需提权即可覆盖
+Name: "{app}"; Permissions: users-modify
+
 [Files]
 ; 打包已编译的 release\BattDock 全部运行文件（排除仅给便携 ZIP 用的两个 bat 脚本）
 Source: "..\release\BattDock\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "卸载BattDock.bat,创建桌面与开始菜单快捷方式.bat"
@@ -70,7 +74,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "BattDock"; ValueData: """{app}\{#MyAppExeName}"" --background"; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallDelete]
 ; 清理软件运行/在线更新过程中可能产生的残留临时回滚目录
