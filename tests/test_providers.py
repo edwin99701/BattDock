@@ -378,6 +378,35 @@ class TestTieredAlertStateMachine(unittest.TestCase):
         dev_a.percent = 5
         self.assertEqual(evaluate_tiered_alerts([dev_a], cfg, alerted), [])
 
+    def test_custom_thresholds_repeat_cooldown_and_device_pause(self) -> None:
+        from app_config import AppConfig, set_device_pref
+        from mouse_battery_app import evaluate_tiered_alerts
+
+        cfg = AppConfig()
+        cfg.custom_alerts_enabled = True
+        cfg.custom_thresholds = [25, 15]
+        cfg.repeat_alert_enabled = True
+        cfg.repeat_interval_min = 10
+
+        dev = DeviceBattery("dev:r", "Test Headset", "SteelSeries", KIND_HEADSET, online=True, percent=24)
+        alerted: dict[str, set[int]] = {}
+        last_ts: dict[str, float] = {}
+
+        # t=1000 首次低于 25%（且低于 30%），取最紧急的 25%
+        fired1 = evaluate_tiered_alerts([dev], cfg, alerted, last_ts, now_ts=1000.0)
+        self.assertEqual([(d.device_id, t) for d, t in fired1], [("dev:r", 25)])
+
+        # t=1300（仅过 5 分钟 < 10 分钟）不重复触发
+        self.assertEqual(evaluate_tiered_alerts([dev], cfg, alerted, last_ts, now_ts=1300.0), [])
+
+        # t=1605（超过 10 分钟）触发重复提醒
+        fired2 = evaluate_tiered_alerts([dev], cfg, alerted, last_ts, now_ts=1605.0)
+        self.assertEqual([(d.device_id, t) for d, t in fired2], [("dev:r", 25)])
+
+        # 单设备暂停监控后，不再触发提醒
+        set_device_pref(cfg, "dev:r", {"monitor_enabled": False})
+        self.assertEqual(evaluate_tiered_alerts([dev], cfg, alerted, last_ts, now_ts=3000.0), [])
+
 
 if __name__ == "__main__":
     unittest.main()

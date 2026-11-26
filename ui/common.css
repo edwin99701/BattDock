@@ -1,0 +1,389 @@
+/* 外设电量监控工具 — 统一设计令牌与跨窗口基础样式（Windows 10 / 11 通用，不依赖系统专属特效） */
+
+:root {
+  --font-sans: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* 浅色主题（默认，融合 Win11 与 macOS 轻量化浅灰白风格） */
+  --bg-app: #F5F6FA;
+  --bg-titlebar: #F7F8FB;
+  --bg-sidebar: #F1F3F8;
+  --bg-card: #FFFFFF;
+  --bg-subpanel: #F6F7FA;
+  --bg-icon-box: #F3F5F8;
+  --bg-hover: rgba(15, 23, 42, 0.05);
+  --bg-active: rgba(15, 23, 42, 0.08);
+  --bg-input: #FFFFFF;
+
+  --border-window: #DDE1EA;
+  --border-card: #E6E9F0;
+  --border-hairline: #ECEEF4;
+  --border-input: #D5DAE4;
+
+  --text-primary: #181B22;
+  --text-secondary: #5E6675;
+  --text-muted: #8A92A2;
+
+  --brand: #2563EB;
+  --brand-hover: #1D4ED8;
+  --brand-soft: #DCE9FE;
+  --brand-text: #1D4ED8;
+
+  --track-bg: #E9ECF2;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.035);
+
+  /* 标准电量状态色 */
+  --bat-normal: #22C55E;
+  --bat-charging: #16A34A;
+  --bat-tier1: #EAB308;
+  --bat-tier2: #F59E0B;
+  --bat-tier3: #EF4444;
+  --bat-offline: #CBD5E1;
+
+  /* 低电量高亮卡片 */
+  --warn-card-bg: #FFF7ED;
+  --warn-card-border: #F2D6B5;
+  --warn-icon-bg: #FDECE0;
+  --warn-badge-bg: #FDE8C8;
+  --warn-badge-text: #B45309;
+  --warn-pct-text: #C25E12;
+
+  /* 紧急电量高亮卡片 */
+  --crit-card-bg: #FEF2F2;
+  --crit-card-border: #FACACA;
+  --crit-icon-bg: #FEE2E2;
+  --crit-badge-bg: #FEE2E2;
+  --crit-badge-text: #B91C1C;
+  --crit-pct-text: #DC2626;
+
+  --toggle-off: #CBD2DF;
+  --toggle-on: #2563EB;
+}
+
+:root[data-theme="dark"] {
+  --bg-app: #151820;
+  --bg-titlebar: #1A1D26;
+  --bg-sidebar: #181B24;
+  --bg-card: #202430;
+  --bg-subpanel: #1B1F2A;
+  --bg-icon-box: #2A2F3E;
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --bg-input: #1A1E28;
+
+  --border-window: #2B3040;
+  --border-card: #2D3242;
+  --border-hairline: #282D3B;
+  --border-input: #383F52;
+
+  --text-primary: #F1F5F9;
+  --text-secondary: #9EA7B8;
+  --text-muted: #70798C;
+
+  --brand: #3B82F6;
+  --brand-hover: #60A5FA;
+  --brand-soft: rgba(59, 130, 246, 0.20);
+  --brand-text: #93C5FD;
+
+  --track-bg: #2E3444;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.24);
+
+  --warn-card-bg: rgba(245, 158, 11, 0.10);
+  --warn-card-border: rgba(245, 158, 11, 0.34);
+  --warn-icon-bg: rgba(245, 158, 11, 0.18);
+  --warn-badge-bg: rgba(245, 158, 11, 0.22);
+  --warn-badge-text: #FCD34D;
+  --warn-pct-text: #FBBF24;
+
+  --crit-card-bg: rgba(239, 68, 68, 0.11);
+  --crit-card-border: rgba(239, 68, 68, 0.36);
+  --crit-icon-bg: rgba(239, 68, 68, 0.18);
+  --crit-badge-bg: rgba(239, 68, 68, 0.22);
+  --crit-badge-text: #FCA5A5;
+  --crit-pct-text: #F87171;
+
+  --toggle-off: #41485A;
+  --toggle-on: #3B82F6;
+}
+
+/* 配色方案扩展 */
+:root[data-colors="high_contrast"] {
+  --bat-normal: #16A34A;
+  --bat-tier1: #CA8A04;
+  --bat-tier2: #EA580C;
+  --bat-tier3: #DC2626;
+}
+
+:root[data-colors="soft"] {
+  --bat-normal: #34D399;
+  --bat-tier1: #FACC15;
+  --bat-tier2: #FB923C;
+  --bat-tier3: #F87171;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 窗口外框（确保 Win10/11 无边框窗口边界清晰不发黑） */
+.app-shell {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  border: 1px solid var(--border-window);
+  overflow: hidden;
+}
+
+/* 顶部统一标题栏 */
+.titlebar {
+  flex-shrink: 0;
+  height: 46px;
+  padding: 0 10px 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-titlebar);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  cursor: default;
+}
+
+:root[data-theme="dark"] .titlebar {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(180deg, #3B82F6 0%, #2563EB 100%);
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.28);
+}
+
+.app-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.win-btn {
+  width: 34px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.win-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.win-btn:active {
+  background: var(--bg-active);
+}
+
+.win-btn.close:hover {
+  background: #E81123;
+  color: #FFFFFF;
+}
+
+.win-btn:focus-visible,
+.btn:focus-visible,
+.toggle:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+/* 通用按钮 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 7px;
+  border: 1px solid var(--border-input);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.1s ease;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #FFFFFF;
+}
+
+.btn-primary:hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+}
+
+.btn-sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.btn-icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+/* 蓝色胶囊开关（精准还原设计图） */
+.toggle {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  border: none;
+  background: var(--toggle-off);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+.toggle.on {
+  background: var(--toggle-on);
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: transform 0.2s cubic-bezier(0.22, 1.15, 0.36, 1);
+  pointer-events: none;
+}
+
+.toggle.on .toggle-knob {
+  transform: translateX(18px);
+}
+
+/* 输入框与下拉框 */
+.input, .select {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-input);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.input:focus, .select:focus {
+  border-color: var(--brand);
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.38);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.62);
+}
+
+/* 轻量顶部提示条 */
+.toast-bar {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translate(-50%, -16px);
+  z-index: 200;
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: #1E293B;
+  color: #F8FAFC;
+  font-size: 12.5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast-bar.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

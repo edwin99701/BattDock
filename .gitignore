@@ -18,6 +18,14 @@ release/
 config.json
 diagnostics_*.json
 
+# Secrets / credentials / local env
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+secrets.*
+
 # Local archive & backups
 archive/
 *.bak

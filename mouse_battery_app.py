@@ -1,33 +1,48 @@
-"""通用 Windows 无线外设电量监控工具：多品牌统一适配 + 系统托盘 + Windows 11 原生毛玻璃主窗口。"""
+"""外设电量监控工具：多品牌统一适配 + 主窗口/设置窗口双窗口 + 桌面悬浮窗 + Win10/11 全兼容。"""
 
 from __future__ import annotations
 
 import ctypes
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
 from ctypes import wintypes
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pystray
 import webview
-from PIL import Image, ImageDraw
 
 from app_config import (
+    APP_AUTHOR,
     APP_DIR,
+    APP_VERSION,
     DATA_DIR,
-    DEFAULT_ALERT_TIERS,
     RESOURCE_DIR,
     AppConfig,
+    FloatingWidgetConfig,
+    get_device_pref,
     get_device_tiers,
+    get_floating_config,
     is_autostart_enabled,
     load_config,
+    normalize_tiers,
+    resolve_effective_theme,
     save_config,
     set_autostart,
-    set_device_tiers,
+    set_device_pref,
+)
+from floating_widget import (
+    DesktopFloatingWidget,
+    EDGE_MARGIN,
+    _try_win11_round_corners,
+    draw_battery_icon,
+    play_alert_sound,
 )
 from providers import (
     DeviceBattery,
@@ -36,6 +51,9 @@ from providers import (
     KIND_HEADSET,
     KIND_KEYBOARD,
     KIND_MOUSE,
+    STATUS_PROTOCOL,
+    STATUS_UNSUPPORTED,
+    STATUS_VERIFIED,
 )
 
 if sys.platform == "win32":
@@ -47,26 +65,21 @@ if sys.platform == "win32":
         except Exception:
             pass
 
-UI_HTML = RESOURCE_DIR / "ui" / "index.html"
+UI_MAIN_HTML = RESOURCE_DIR / "ui" / "index.html"
+UI_SETTINGS_HTML = RESOURCE_DIR / "ui" / "settings.html"
 APP_ICON_ICO = RESOURCE_DIR / "assets" / "app_icon.ico"
-WINDOW_TITLE = "无线外设电量监控"
+
+WINDOW_TITLE = "外设电量"
+SETTINGS_WINDOW_TITLE = "外设电量 - 设置"
 ALERT_WINDOW_TITLE = "外设电量低提醒"
-APP_SIZE = (356, 580)
+
+MAIN_DEFAULT_SIZE = (760, 480)
+SETTINGS_DEFAULT_SIZE = (840, 742)
 ALERT_SIZE = (296, 68)
 ALERT_DURATION_SEC = 5.0
-EDGE_MARGIN = 16
 
 
-# ================= Windows 11 原生 DWM 玻璃与窗口辅助 =================
-
-class MARGINS(ctypes.Structure):
-    _fields_ = [
-        ("cxLeftWidth", ctypes.c_int),
-        ("cxRightWidth", ctypes.c_int),
-        ("cyTopHeight", ctypes.c_int),
-        ("cyBottomHeight", ctypes.c_int),
-    ]
-
+# ================= Windows 10 / 11 通用窗口辅助（不依赖 Win11 专属特效） =================
 
 class MONITORINFO(ctypes.Structure):
     _fields_ = [
@@ -78,13 +91,12 @@ class MONITORINFO(ctypes.Structure):
 
 
 def _get_tray_work_area() -> tuple[int, int, int, int]:
-    """获取系统托盘所在显示器的工作区 (left, top, right, bottom)，自动避开任务栏并适配多显示器。"""
+    """获取系统托盘所在显示器的工作区 (left, top, right, bottom)，适配多显示器与不同 DPI。"""
     user32 = ctypes.windll.user32
     try:
         tray_hwnd = user32.FindWindowW("Shell_TrayWnd", None)
         if tray_hwnd:
-            MONITOR_DEFAULTTONEAREST = 2
-            hmon = user32.MonitorFromWindow(wintypes.HWND(tray_hwnd), MONITOR_DEFAULTTONEAREST)
+            hmon = user32.MonitorFromWindow(wintypes.HWND(tray_hwnd), 2)
             if hmon:
                 info = MONITORINFO()
                 info.cbSize = ctypes.sizeof(MONITORINFO)
@@ -96,9 +108,7 @@ def _get_tray_work_area() -> tuple[int, int, int, int]:
     rect = wintypes.RECT()
     if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
         return rect.left, rect.top, rect.right, rect.bottom
-    sw = user32.GetSystemMetrics(0)
-    sh = user32.GetSystemMetrics(1)
-    return 0, 0, sw, sh - 48
+    return 0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1) - 48
 
 
 def _get_work_area_for_window(hwnd: int) -> tuple[int, int, int, int]:
@@ -160,148 +170,20 @@ def _set_window_pos(hwnd: int, x: int, y: int, w: int, h: int, topmost: Optional
     )
 
 
-def _apply_windows_glass(hwnd: int, native_form=None) -> dict:
-    """启用 Windows 11 原生桌面级 Desktop Acrylic 实时毛玻璃与圆角，并关闭多余的 DWM 外边框。"""
-    status = {"backcolor": False, "extend": -1, "corner": -1, "border_none": -1, "backdrop": -1}
+def _apply_window_chrome(hwnd: int, is_dark: bool) -> None:
+    """Windows 10/11 通用轻量窗口装饰：能力检测式启用 Win11 圆角与深浅色边框，Win10 自动安全降级。"""
     if sys.platform != "win32" or not hwnd:
-        return status
-    dwmapi = ctypes.windll.dwmapi
-
-    if native_form is not None:
-        try:
-            from System import Action
-            from System.Drawing import Color
-
-            def _set_black():
-                native_form.BackColor = Color.Black
-
-            if getattr(native_form, "InvokeRequired", False):
-                native_form.Invoke(Action(_set_black))
-            else:
-                _set_black()
-            status["backcolor"] = True
-        except Exception:
-            pass
-
+        return
     try:
-        margins = MARGINS(-1, -1, -1, -1)
-        dwmapi.DwmExtendFrameIntoClientArea.argtypes = [wintypes.HWND, ctypes.POINTER(MARGINS)]
-        dwmapi.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
-        status["extend"] = int(dwmapi.DwmExtendFrameIntoClientArea(wintypes.HWND(hwnd), ctypes.byref(margins)))
+        dwmapi = ctypes.windll.dwmapi
+        dark_val = ctypes.c_int(1 if is_dark else 0)
+        dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 20, ctypes.byref(dark_val), ctypes.sizeof(dark_val))
     except Exception:
         pass
-
-    try:
-        dark = ctypes.c_int(1)
-        dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 20, ctypes.byref(dark), ctypes.sizeof(dark))
-    except Exception:
-        pass
-
-    try:
-        corner = ctypes.c_int(2)
-        dwmapi.DwmSetWindowAttribute.argtypes = [wintypes.HWND, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
-        dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
-        status["corner"] = int(dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 33, ctypes.byref(corner), ctypes.sizeof(corner)))
-    except Exception:
-        pass
-
-    try:
-        no_border = ctypes.c_uint(0xFFFFFFFE)
-        status["border_none"] = int(dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 34, ctypes.byref(no_border), ctypes.sizeof(no_border)))
-    except Exception:
-        pass
-
-    try:
-        backdrop = ctypes.c_int(3)
-        status["backdrop"] = int(dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 38, ctypes.byref(backdrop), ctypes.sizeof(backdrop)))
-    except Exception:
-        pass
-
-    return status
-
-
-# ================= 矢量透明电池托盘图标 & 多尺寸 ICO =================
-
-def draw_battery_icon(
-    size: int = 64,
-    percent: Optional[int] = 85,
-    charging: bool = False,
-    connected: bool = True,
-) -> Image.Image:
-    """高对比度饱满矢量电池轮廓（透明背景，16/20/24px 明暗任务栏均清晰）。"""
-    scale = 4
-    s = size * scale
-    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    if not connected or percent is None:
-        outline_col = (180, 190, 204, 220)
-        inner_bg = (15, 23, 42, 95)
-        fill_col = (148, 163, 184, 180)
-        pct = 0
-    else:
-        outline_col = (248, 250, 252, 255)
-        inner_bg = (15, 23, 42, 130)
-        pct = max(0, min(100, int(percent)))
-        if charging:
-            fill_col = (34, 211, 106, 255)
-        elif pct <= 10:
-            fill_col = (239, 68, 68, 255)
-        elif pct <= 20:
-            fill_col = (245, 158, 11, 255)
-        elif pct <= 30:
-            fill_col = (250, 204, 21, 255)
-        else:
-            fill_col = (34, 211, 106, 255)
-
-    stroke = max(scale, int(round(s * 0.085)))
-    bx0 = int(round(s * 0.04))
-    by0 = int(round(s * 0.16))
-    bx1 = int(round(s * 0.84))
-    by1 = int(round(s * 0.84))
-    radius = max(2, int(round(s * 0.14)))
-
-    draw.rounded_rectangle([bx0, by0, bx1, by1], radius=radius, fill=inner_bg, outline=outline_col, width=stroke)
-
-    cap_x0 = bx1 + max(1, int(round(s * 0.03)))
-    cap_x1 = int(round(s * 0.97))
-    cap_y0 = int(round(s * 0.33))
-    cap_y1 = int(round(s * 0.67))
-    draw.rounded_rectangle([cap_x0, cap_y0, cap_x1, cap_y1], radius=max(1, int(round(s * 0.05))), fill=outline_col)
-
-    inset = stroke + max(1, int(round(s * 0.035)))
-    fx0 = bx0 + inset
-    fy0 = by0 + inset
-    fx1_max = bx1 - inset
-    fy1 = by1 - inset
-    if pct > 0 and fx1_max > fx0:
-        min_w = max(2, int(round((fx1_max - fx0) * 0.09)))
-        fw = max(min_w, int(round((fx1_max - fx0) * (pct / 100.0))))
-        draw.rounded_rectangle(
-            [fx0, fy0, min(fx1_max, fx0 + fw), fy1],
-            radius=max(1, int(round(s * 0.05))),
-            fill=fill_col,
-        )
-
-    if connected and charging:
-        cx = (bx0 + bx1) / 2.0
-        cy = (by0 + by1) / 2.0
-        u = s * 0.042
-        bolt = [
-            (cx + 1.2 * u, cy - 4.4 * u),
-            (cx - 2.6 * u, cy + 0.5 * u),
-            (cx - 0.1 * u, cy + 0.5 * u),
-            (cx - 1.2 * u, cy + 4.4 * u),
-            (cx + 2.6 * u, cy - 0.5 * u),
-            (cx + 0.1 * u, cy - 0.5 * u),
-        ]
-        draw.polygon(bolt, fill=(255, 255, 255, 255))
-
-    return img.resize((size, size), Image.Resampling.LANCZOS)
+    _try_win11_round_corners(hwnd)
 
 
 def ensure_app_ico() -> Optional[str]:
-    """生成多尺寸 Windows ICO 图标资源（16/20/24/32/48/64/256），供任务栏与程序图标使用。"""
     try:
         APP_ICON_ICO.parent.mkdir(parents=True, exist_ok=True)
         base = draw_battery_icon(size=256, percent=85, charging=False, connected=True)
@@ -319,20 +201,47 @@ def _kind_cn(kind: str) -> str:
     return {
         KIND_MOUSE: "鼠标",
         KIND_HEADSET: "耳机",
-        KIND_EARBUDS: "耳塞",
+        KIND_EARBUDS: "耳机",
         KIND_KEYBOARD: "键盘",
     }.get(kind, "外设")
 
 
-# ================= 三级低电量防抖评估（独立纯逻辑，便于测试） =================
+def _connection_label(dev: DeviceBattery) -> str:
+    mode = (dev.connection_mode or "").strip()
+    if mode in ("2.4G", "休眠", "检测中", ""):
+        if dev.brand == "Logitech":
+            return "LIGHTSPEED 无线连接"
+        return "2.4GHz 无线连接"
+    if mode == "有线":
+        return "USB 有线连接"
+    if "蓝牙" in mode:
+        return "蓝牙连接"
+    return mode
+
+
+def _support_label(status: str) -> str:
+    return {
+        STATUS_VERIFIED: "已真机验证",
+        STATUS_PROTOCOL: "协议已实现待实测",
+        STATUS_UNSUPPORTED: "暂不支持",
+    }.get(status, "协议已实现待实测")
+
+
+# ================= 三级/自定义低电量提醒状态机（含重复提醒冷却与单设备独立配置） =================
 
 def evaluate_tiered_alerts(
     devices: list[DeviceBattery],
     cfg: AppConfig,
     alerted_map: dict[str, set[int]],
+    last_alert_ts: Optional[dict[str, float]] = None,
+    now_ts: Optional[float] = None,
 ) -> list[tuple[DeviceBattery, int]]:
-    """根据每台设备的独立三级阈值（默认 30/20/10%）评估本次应触发的提醒列表 [(device, tier), ...]。"""
+    """评估本轮需要提醒的设备列表 [(device, threshold), ...]。"""
+    now = time.time() if now_ts is None else now_ts
     triggered: list[tuple[DeviceBattery, int]] = []
+    if not cfg.alerts_master_enabled:
+        return triggered
+
     for dev in devices:
         tiers = get_device_tiers(cfg, dev.device_id)
         seen = alerted_map.setdefault(dev.device_id, set())
@@ -340,25 +249,37 @@ def evaluate_tiered_alerts(
         if not tiers or not dev.connected or not dev.online or dev.asleep or dev.percent is None:
             continue
 
-        # 充电中自动重置所有已触发档位
         if dev.charging:
             seen.clear()
+            if last_alert_ts is not None:
+                last_alert_ts.pop(dev.device_id, None)
             continue
 
         pct = int(dev.percent)
-        # 滞回防抖：电量回升至某档位 +5% 以上时，解除该档位的已触发标记
         for t in list(seen):
             if pct >= t + 5:
                 seen.discard(t)
 
-        # 查找本次新触及的档位
+        # 1. 检查是否触及新的未提醒档位
         pending = [t for t in tiers if pct <= t and t not in seen]
         if pending:
             for t in pending:
                 seen.add(t)
-            # 同一时刻跨越多级（如刚启动即为 15%）时，只弹出最紧急（最低阈值）的一条，防止弹窗轰炸
             most_urgent = min(pending)
+            if last_alert_ts is not None:
+                last_alert_ts[dev.device_id] = now
             triggered.append((dev, most_urgent))
+            continue
+
+        # 2. 若用户开启了重复提醒且电量持续低于任意启用阈值，到达冷却间隔后再次提醒
+        if cfg.repeat_alert_enabled and last_alert_ts is not None:
+            active_hits = [t for t in tiers if pct <= t]
+            if active_hits:
+                interval_sec = max(60, int(cfg.repeat_interval_min) * 60)
+                prev_ts = last_alert_ts.get(dev.device_id, 0.0)
+                if now - prev_ts >= interval_sec:
+                    last_alert_ts[dev.device_id] = now
+                    triggered.append((dev, min(active_hits)))
 
     return triggered
 
@@ -372,93 +293,157 @@ class MouseBatteryApp:
         self._allow_show = not start_hidden
         self.manager = DeviceManager()
         self.devices: list[DeviceBattery] = []
+        self._known_devices: dict[str, DeviceBattery] = {}
         self._last_poll_ts: float = 0.0
+
         self.window: Optional[webview.Window] = None
+        self.settings_window: Optional[webview.Window] = None
+        self.hwnd: int = 0
+        self.settings_hwnd: int = 0
+        self._main_maximized = False
+        self._settings_maximized = False
+
         self._alert_window = None
         self._alert_timer: Optional[threading.Timer] = None
         self._alert_lock = threading.Lock()
-        self.hwnd: int = 0
         self._tray: Optional[pystray.Icon] = None
         self._stop_event = threading.Event()
         self._alerted_tiers: dict[str, set[int]] = {}
+        self._last_alert_ts: dict[str, float] = {}
         self._last_cursor = _get_cursor_pos()
 
-        # 拖拽状态
-        self._drag_cursor_origin = (0, 0)
-        self._drag_win_origin = (0, 0)
-        self._drag_win_size = APP_SIZE
+        # 拖拽状态（按窗口名区分）
+        self._drag_state: dict[str, tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = {}
 
-    def _active_device(self) -> Optional[DeviceBattery]:
-        if not self.devices:
-            return None
-        if self.cfg.selected_device_id:
+        # 桌面悬浮窗管理器
+        self.floating_widget = DesktopFloatingWidget(
+            get_native_host=lambda: getattr(self.window, "native", None) if self.window is not None else None,
+            get_work_area=_get_tray_work_area,
+            get_dpi_scale=lambda: _get_dpi_scale(self.hwnd) if self.hwnd else 1.0,
+            on_position_saved=self._on_floating_position_saved,
+            on_double_click=self.show_main_window,
+        )
+
+    def _effective_theme(self) -> str:
+        return resolve_effective_theme(self.cfg.theme)
+
+    def _sorted_devices(self, include_hidden: bool = False) -> list[dict[str, Any]]:
+        """生成带独立偏好、排序、状态配色与提醒阈值的统一前端设备列表。"""
+        items: list[tuple[int, int, str, dict[str, Any]]] = []
+        for idx, dev in enumerate(self.devices):
+            pref = get_device_pref(self.cfg, dev.device_id)
+            if not include_hidden and pref.hidden:
+                continue
+            tiers = get_device_tiers(self.cfg, dev.device_id)
+            display_name = pref.alias or dev.name
+            d = dev.to_dict()
+            d["original_name"] = dev.name
+            d["display_name"] = display_name
+            d["connection_label"] = _connection_label(dev)
+            d["support_label"] = _support_label(dev.support_status)
+            d["pref"] = asdict(pref)
+            d["effective_tiers"] = tiers
+            d["alert_level"] = self._compute_alert_level(dev, tiers)
+            items.append((pref.order, idx, dev.device_id, d))
+        items.sort(key=lambda x: (x[0], x[1], x[2]))
+        return [x[3] for x in items]
+
+    def _compute_alert_level(self, dev: DeviceBattery, tiers: list[int]) -> str:
+        """返回 normal | tier1 | tier2 | tier3 | charging | offline | unknown。"""
+        if not dev.connected or (not dev.online and not dev.asleep):
+            return "offline"
+        if dev.asleep:
+            return "offline"
+        if dev.percent is None:
+            return "unknown"
+        if dev.charging:
+            return "charging"
+        pct = int(dev.percent)
+        # 按 3 级规则阈值判断色阶
+        t1 = int(self.cfg.tier_rules[0]["threshold"]) if len(self.cfg.tier_rules) > 0 else 30
+        t2 = int(self.cfg.tier_rules[1]["threshold"]) if len(self.cfg.tier_rules) > 1 else 20
+        t3 = int(self.cfg.tier_rules[2]["threshold"]) if len(self.cfg.tier_rules) > 2 else 10
+        if tiers:
+            sorted_t = sorted(tiers, reverse=True)
+            if len(sorted_t) >= 3:
+                t1, t2, t3 = sorted_t[0], sorted_t[1], sorted_t[-1]
+            elif len(sorted_t) == 2:
+                t1, t2, t3 = sorted_t[0], sorted_t[1], min(10, sorted_t[1])
+            elif len(sorted_t) == 1:
+                t1 = t2 = t3 = sorted_t[0]
+        if pct <= t3:
+            return "tier3"
+        if pct <= t2:
+            return "tier2"
+        if pct <= t1:
+            return "tier1"
+        return "normal"
+
+    def _pick_floating_device(self) -> tuple[Optional[DeviceBattery], str]:
+        fcfg = get_floating_config(self.cfg)
+        if fcfg.device_id and fcfg.device_id != "auto":
             for d in self.devices:
-                if d.device_id == self.cfg.selected_device_id:
-                    return d
-        return self.devices[0]
-
-    def _tray_device(self) -> Optional[DeviceBattery]:
-        """托盘图标优先显示当前选中的设备；若当前设备无读数则优先显示电量最低的在线设备。"""
-        active = self._active_device()
-        if active is not None and active.percent is not None:
-            return active
-        with_pct = [d for d in self.devices if d.connected and d.percent is not None]
+                if d.device_id == fcfg.device_id:
+                    pref = get_device_pref(self.cfg, d.device_id)
+                    return d, (pref.alias or d.name)
+        visible = [d for d in self.devices if not get_device_pref(self.cfg, d.device_id).hidden]
+        pool = visible or self.devices
+        with_pct = [d for d in pool if d.connected and d.percent is not None]
         if with_pct:
-            return min(with_pct, key=lambda d: int(d.percent or 100))
-        return active
+            best = min(with_pct, key=lambda d: int(d.percent or 100))
+            return best, (get_device_pref(self.cfg, best.device_id).alias or best.name)
+        if pool:
+            return pool[0], (get_device_pref(self.cfg, pool[0].device_id).alias or pool[0].name)
+        return None, "未连接外设"
 
-    def _app_phys_size(self) -> tuple[int, int]:
-        scale = _get_dpi_scale(self.hwnd)
-        return int(round(APP_SIZE[0] * scale)), int(round(APP_SIZE[1] * scale))
+    def _build_state_dict(self) -> dict[str, Any]:
+        updated_str = ""
+        if self._last_poll_ts > 0:
+            updated_str = f"今天 {datetime.fromtimestamp(self._last_poll_ts).strftime('%H:%M')}"
 
-    def _build_state_dict(self) -> dict:
-        active = self._active_device()
-        ts_str = ""
-        ts_val = active.timestamp if (active and active.timestamp > 0) else self._last_poll_ts
-        if ts_val > 0:
-            ts_str = datetime.fromtimestamp(ts_val).strftime("%H:%M:%S")
-
-        dev_list = []
-        for d in self.devices:
-            item = d.to_dict()
-            item["alert_tiers"] = get_device_tiers(self.cfg, d.device_id)
-            dev_list.append(item)
-
-        active_id = active.device_id if active else ""
-        active_tiers = get_device_tiers(self.cfg, active_id) if active_id else list(DEFAULT_ALERT_TIERS)
+        visible_devices = self._sorted_devices(include_hidden=False)
+        all_devices = self._sorted_devices(include_hidden=True)
 
         return {
-            "lock_position": self.cfg.lock_position,
-            "topmost": self.cfg.topmost,
+            "app_version": APP_VERSION,
+            "app_author": APP_AUTHOR,
+            "effective_theme": self._effective_theme(),
             "autostart": is_autostart_enabled(),
-            "selected_device_id": active_id,
-            "devices": dev_list,
-            "active_device": active.to_dict() if active else None,
-            "active_alert_tiers": active_tiers,
-            "updated_str": ts_str,
+            "config": asdict(self.cfg),
+            "devices": visible_devices,
+            "all_devices": all_devices,
+            "updated_str": updated_str,
+            "auto_monitor": bool(self.cfg.auto_monitor),
+            "main_maximized": self._main_maximized,
+            "settings_maximized": self._settings_maximized,
         }
 
     def _push_state_to_ui(self) -> None:
-        if self.window is None:
-            return
         payload = json.dumps(self._build_state_dict(), ensure_ascii=False)
-        try:
-            self.window.evaluate_js(f"window.applyState && applyState({payload});")
-        except Exception:
-            pass
+        for win in (self.window, self.settings_window):
+            if win is not None:
+                try:
+                    win.evaluate_js(f"window.applyState && applyState({payload});")
+                except Exception:
+                    pass
 
-    def _show_ui_toast(self, msg: str) -> None:
-        if self.window is None:
-            return
-        safe_msg = json.dumps(msg, ensure_ascii=False)
-        try:
-            self.window.evaluate_js(f"window.showToast && showToast({safe_msg});")
-        except Exception:
-            pass
+    def _sync_floating_widget(self) -> None:
+        fcfg = get_floating_config(self.cfg)
+        dev, name = self._pick_floating_device()
+        self.floating_widget.sync(fcfg, dev, name, self._effective_theme())
 
-    def _find_hwnd(self) -> int:
-        if self.window is not None:
-            native = getattr(self.window, "native", None)
+    def _on_floating_position_saved(self, x: int, y: int) -> None:
+        fcfg = get_floating_config(self.cfg)
+        fcfg.position_preset = "custom"
+        fcfg.x = int(x)
+        fcfg.y = int(y)
+        self.cfg.floating = asdict(fcfg)
+        save_config(self.cfg)
+        self._push_state_to_ui()
+
+    def _find_hwnd_for(self, win: Optional[webview.Window], title: str) -> int:
+        if win is not None:
+            native = getattr(win, "native", None)
             if native is not None:
                 try:
                     return int(native.Handle.ToInt64())
@@ -467,84 +452,277 @@ class MouseBatteryApp:
                         return int(native.Handle)
                     except Exception:
                         pass
-        return int(ctypes.windll.user32.FindWindowW(None, WINDOW_TITLE) or 0)
+        return int(ctypes.windll.user32.FindWindowW(None, title) or 0)
 
-    # ================= 窗口显示 / 最小化 / 隐藏到托盘 =================
-
-    def _compute_main_position(self) -> tuple[int, int, int, int]:
-        aw, ah = self._app_phys_size()
-        scale = _get_dpi_scale(self.hwnd) if self.hwnd else 1.0
-        margin = int(round(EDGE_MARGIN * scale))
-        left, top, right, bottom = _get_tray_work_area()
-
-        if not self.cfg.lock_position and self.cfg.x is not None and self.cfg.y is not None:
-            w_left, w_top, w_right, w_bottom = _get_work_area_for_window(self.hwnd)
-            x = max(w_left, min(self.cfg.x, w_right - aw))
-            y = max(w_top, min(self.cfg.y, w_bottom - ah))
-        else:
-            x = max(left, right - aw - margin)
-            y = max(top, bottom - ah - margin)
-        return x, y, aw, ah
+    # ================= 窗口控制（主窗口 & 独立设置窗口） =================
 
     def show_main_window(self) -> None:
         if self.window is None:
             return
         self._allow_show = True
-        native = getattr(self.window, "native", None)
         try:
             self.window.show()
             self.window.restore()
         except Exception:
             pass
         if self.hwnd:
-            _apply_windows_glass(self.hwnd, native)
-            x, y, aw, ah = self._compute_main_position()
-            _set_window_pos(self.hwnd, x, y, aw, ah, topmost=self.cfg.topmost)
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             user32 = ctypes.windll.user32
-            user32.ShowWindow(wintypes.HWND(self.hwnd), 9)  # SW_RESTORE
+            user32.ShowWindow(wintypes.HWND(self.hwnd), 9)
             user32.SetForegroundWindow(wintypes.HWND(self.hwnd))
         self._push_state_to_ui()
 
-    def minimize_window(self) -> None:
-        if self.window is None:
-            return
-        try:
-            self.window.minimize()
-        except Exception:
-            if self.hwnd:
-                ctypes.windll.user32.ShowWindow(wintypes.HWND(self.hwnd), 6)
-
-    def hide_to_tray(self) -> None:
-        self._allow_show = False
-        if self.window is not None:
+    def open_settings_window(self, section: str = "alerts") -> None:
+        """打开或前置独立设置窗口（820 × 560，默认展示指定分页）。"""
+        if self.settings_window is not None:
             try:
-                self.window.hide()
+                self.settings_window.show()
+                self.settings_window.restore()
+                if self.settings_hwnd:
+                    _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
+                    ctypes.windll.user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
+                    ctypes.windll.user32.SetForegroundWindow(wintypes.HWND(self.settings_hwnd))
+                self.settings_window.evaluate_js(f"window.switchSection && switchSection({json.dumps(section)});")
+                self._push_state_to_ui()
+                return
+            except Exception:
+                self.settings_window = None
+                self.settings_hwnd = 0
+
+        url = f"{UI_SETTINGS_HTML.as_uri()}#{section}"
+        win = webview.create_window(
+            title=SETTINGS_WINDOW_TITLE,
+            url=url,
+            width=SETTINGS_DEFAULT_SIZE[0],
+            height=SETTINGS_DEFAULT_SIZE[1],
+            min_size=(680, 460),
+            frameless=True,
+            easy_drag=False,
+            transparent=False,
+            resizable=True,
+            js_api=_JsApi(self, "settings"),
+        )
+        self.settings_window = win
+
+        def _on_settings_loaded():
+            for _ in range(15):
+                self.settings_hwnd = self._find_hwnd_for(win, SETTINGS_WINDOW_TITLE)
+                if self.settings_hwnd:
+                    break
+                time.sleep(0.05)
+            if self.settings_hwnd:
+                _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
+            self._push_state_to_ui()
+
+        def _on_settings_closed():
+            self.settings_window = None
+            self.settings_hwnd = 0
+            self._settings_maximized = False
+
+        win.events.loaded += _on_settings_loaded
+        win.events.closed += _on_settings_closed
+
+    def close_settings_window(self) -> None:
+        win = self.settings_window
+        if win is not None:
+            try:
+                win.destroy()
             except Exception:
                 pass
+        self.settings_window = None
+        self.settings_hwnd = 0
+        self._settings_maximized = False
 
-    # ================= JS -> Python API =================
+    def minimize_window(self, target: str = "main") -> None:
+        win = self.settings_window if target == "settings" else self.window
+        hwnd = self.settings_hwnd if target == "settings" else self.hwnd
+        if win is not None:
+            try:
+                win.minimize()
+                return
+            except Exception:
+                pass
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), 6)
 
-    def get_initial_state(self) -> dict:
+    def toggle_maximize(self, target: str = "main") -> None:
+        hwnd = self.settings_hwnd if target == "settings" else self.hwnd
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        is_max = bool(user32.IsZoomed(wintypes.HWND(hwnd)))
+        user32.ShowWindow(wintypes.HWND(hwnd), 9 if is_max else 3)  # SW_RESTORE / SW_MAXIMIZE
+        if target == "settings":
+            self._settings_maximized = not is_max
+        else:
+            self._main_maximized = not is_max
+        self._push_state_to_ui()
+
+    def close_main_window(self) -> None:
+        """按「关闭窗口时最小化至托盘」设置决定隐藏到托盘还是退出程序。"""
+        if self.cfg.close_to_tray:
+            self._allow_show = False
+            if self.window is not None:
+                try:
+                    self.window.hide()
+                except Exception:
+                    pass
+        else:
+            self.quit_app()
+
+    def begin_drag(self, target: str, _sx: int, _sy: int) -> None:
+        hwnd = self.settings_hwnd if target == "settings" else self.hwnd
+        if not hwnd:
+            return
+        if ctypes.windll.user32.IsZoomed(wintypes.HWND(hwnd)):
+            return
+        self._drag_state[target] = (_get_cursor_pos(), _get_window_rect(hwnd)[:2], _get_window_rect(hwnd)[2:])
+
+    def drag_move(self, target: str, _sx: int, _sy: int) -> None:
+        hwnd = self.settings_hwnd if target == "settings" else self.hwnd
+        state = self._drag_state.get(target)
+        if not hwnd or not state:
+            return
+        (cx0, cy0), (wx0, wy0), (ww, wh) = state
+        cx, cy = _get_cursor_pos()
+        _set_window_pos(hwnd, wx0 + (cx - cx0), wy0 + (cy - cy0), ww, wh)
+
+    def end_drag(self, target: str) -> None:
+        self._drag_state.pop(target, None)
+        if target == "main" and self.hwnd:
+            wx, wy, ww, wh = _get_window_rect(self.hwnd)
+            left, top, right, bottom = _get_work_area_for_window(self.hwnd)
+            nx = max(left - ww + 120, min(wx, right - 120))
+            ny = max(top, min(wy, bottom - 60))
+            _set_window_pos(self.hwnd, nx, ny, ww, wh)
+            self.cfg.x = nx
+            self.cfg.y = ny
+            save_config(self.cfg)
+
+    # ================= 设置更新接口（自动保存并即时生效） =================
+
+    def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        """批量更新常规/提醒/外观/悬浮窗配置，立即保存并推送给所有窗口与悬浮窗。"""
+        if not isinstance(patch, dict):
+            return self._build_state_dict()
+
+        if "autostart" in patch:
+            set_autostart(bool(patch["autostart"]), self.cfg.start_minimized_to_tray)
+
+        if "start_minimized_to_tray" in patch:
+            self.cfg.start_minimized_to_tray = bool(patch["start_minimized_to_tray"])
+            if is_autostart_enabled():
+                set_autostart(True, self.cfg.start_minimized_to_tray)
+
+        simple_bools = (
+            "close_to_tray",
+            "auto_monitor",
+            "alerts_master_enabled",
+            "custom_alerts_enabled",
+            "popup_alert_enabled",
+            "windows_notify_enabled",
+            "sound_enabled",
+            "repeat_alert_enabled",
+            "show_progress_bar",
+            "show_device_icon",
+            "topmost",
+        )
+        for key in simple_bools:
+            if key in patch:
+                setattr(self.cfg, key, bool(patch[key]))
+
+        if "poll_interval_sec" in patch:
+            self.cfg.poll_interval_sec = max(10, min(300, int(patch["poll_interval_sec"])))
+        if "repeat_interval_min" in patch:
+            self.cfg.repeat_interval_min = max(1, min(120, int(patch["repeat_interval_min"])))
+        if "ui_scale" in patch:
+            self.cfg.ui_scale = max(85, min(135, int(patch["ui_scale"])))
+
+        for key in ("theme", "color_scheme", "list_density", "sound_name"):
+            if key in patch and isinstance(patch[key], str):
+                setattr(self.cfg, key, patch[key])
+
+        if "tier_rules" in patch and isinstance(patch["tier_rules"], list):
+            cleaned_rules = []
+            for r in patch["tier_rules"][:3]:
+                if isinstance(r, dict):
+                    cleaned_rules.append(
+                        {
+                            "id": str(r.get("id", "tier")),
+                            "label": str(r.get("label", "电量提醒")),
+                            "threshold": max(1, min(95, int(r.get("threshold", 20)))),
+                            "enabled": bool(r.get("enabled", True)),
+                            "color": str(r.get("color", "yellow")),
+                        }
+                    )
+            if len(cleaned_rules) == 3:
+                self.cfg.tier_rules = cleaned_rules
+                self._alerted_tiers.clear()
+
+        if "custom_thresholds" in patch and isinstance(patch["custom_thresholds"], list):
+            self.cfg.custom_thresholds = normalize_tiers(patch["custom_thresholds"])
+            self._alerted_tiers.clear()
+
+        if "floating" in patch and isinstance(patch["floating"], dict):
+            fcfg = get_floating_config(self.cfg)
+            for fk, fv in patch["floating"].items():
+                if hasattr(fcfg, fk):
+                    if fk == "opacity":
+                        setattr(fcfg, fk, max(40, min(100, int(fv))))
+                    elif fk in ("enabled", "topmost", "locked"):
+                        setattr(fcfg, fk, bool(fv))
+                    else:
+                        setattr(fcfg, fk, fv)
+            self.cfg.floating = asdict(fcfg)
+
+        save_config(self.cfg)
+
+        # 应用窗口深浅色与置顶状态
+        is_dark = self._effective_theme() == "dark"
+        if self.hwnd:
+            _apply_window_chrome(self.hwnd, is_dark)
+            if "topmost" in patch:
+                wx, wy, ww, wh = _get_window_rect(self.hwnd)
+                _set_window_pos(self.hwnd, wx, wy, ww, wh, topmost=self.cfg.topmost)
+        if self.settings_hwnd:
+            _apply_window_chrome(self.settings_hwnd, is_dark)
+
+        self._push_state_to_ui()
+        self._update_tray_visual()
+        self._sync_floating_widget()
         return self._build_state_dict()
 
-    def select_device(self, device_id: str) -> None:
-        self.cfg.selected_device_id = str(device_id)
-        save_config(self.cfg)
-        self._push_state_to_ui()
-        self._update_tray_visual()
+    def update_device_pref(self, device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """更新单台设备独立配置（重命名、隐藏、暂停监控、排序、独立阈值）。"""
+        if device_id and isinstance(updates, dict):
+            set_device_pref(self.cfg, str(device_id), updates)
+            self._alerted_tiers.pop(str(device_id), None)
+            save_config(self.cfg)
+            self._push_state_to_ui()
+            self._update_tray_visual()
+            self._sync_floating_widget()
+        return self._build_state_dict()
 
-    def set_device_tiers(self, device_id: str, tiers: list[int]) -> None:
-        target_id = str(device_id) if device_id else (self._active_device().device_id if self._active_device() else "")
-        if not target_id:
-            return
-        set_device_tiers(self.cfg, target_id, list(tiers))
-        self._alerted_tiers.pop(target_id, None)
-        save_config(self.cfg)
-        self._push_state_to_ui()
-        self._update_tray_visual()
+    def move_device_order(self, device_id: str, direction: int) -> dict[str, Any]:
+        """上下调整设备在主列表中的显示顺序。"""
+        ordered = self._sorted_devices(include_hidden=True)
+        ids = [d["device_id"] for d in ordered]
+        if device_id not in ids:
+            return self._build_state_dict()
+        idx = ids.index(device_id)
+        target_idx = idx + (-1 if direction < 0 else 1)
+        if 0 <= target_idx < len(ids):
+            ids[idx], ids[target_idx] = ids[target_idx], ids[idx]
+            for pos, did in enumerate(ids):
+                set_device_pref(self.cfg, did, {"order": pos * 10})
+            save_config(self.cfg)
+            self._push_state_to_ui()
+        return self._build_state_dict()
 
-    def export_diagnostics(self) -> dict:
-        """导出脱敏 JSON 设备诊断报告。"""
+    def preview_sound(self, sound_name: str = "default") -> None:
+        threading.Thread(target=play_alert_sound, args=(sound_name,), daemon=True).start()
+
+    def export_diagnostics(self) -> dict[str, Any]:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"diagnostics_{ts}.json"
         report = self.manager.export_diagnostics()
@@ -556,67 +734,36 @@ class MouseBatteryApp:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             target = DATA_DIR / filename
             target.write_text(payload, encoding="utf-8")
-        self._show_ui_toast(f"诊断报告已导出：{target.name}")
         return {"ok": True, "path": str(target), "filename": target.name}
 
-    def begin_drag(self, _sx: int, _sy: int) -> None:
-        if self.cfg.lock_position or not self.hwnd:
-            return
-        self._drag_cursor_origin = _get_cursor_pos()
-        wx, wy, ww, wh = _get_window_rect(self.hwnd)
-        self._drag_win_origin = (wx, wy)
-        self._drag_win_size = (ww, wh)
+    def read_doc_file(self, doc_name: str) -> dict[str, Any]:
+        """读取项目内只读说明文档（仅限白名单 Markdown，防止路径遍历）。"""
+        allowed = {
+            "SUPPORTED_DEVICES.md": "支持设备清单",
+            "THIRD_PARTY_LICENSES.md": "第三方许可说明",
+            "CHANGELOG.md": "更新日志",
+        }
+        if doc_name not in allowed:
+            return {"ok": False, "title": "未知文档", "content": "不支持读取该文件。"}
+        for base in (APP_DIR, RESOURCE_DIR):
+            p = base / doc_name
+            if p.exists():
+                try:
+                    return {"ok": True, "title": allowed[doc_name], "content": p.read_text(encoding="utf-8")}
+                except Exception:
+                    pass
+        return {"ok": False, "title": allowed[doc_name], "content": f"未找到 {doc_name} 文件。"}
 
-    def drag_move(self, _sx: int, _sy: int) -> None:
-        if self.cfg.lock_position or not self.hwnd:
-            return
-        cx, cy = _get_cursor_pos()
-        dx = cx - self._drag_cursor_origin[0]
-        dy = cy - self._drag_cursor_origin[1]
-        _set_window_pos(
-            self.hwnd,
-            self._drag_win_origin[0] + dx,
-            self._drag_win_origin[1] + dy,
-            self._drag_win_size[0],
-            self._drag_win_size[1],
-        )
-
-    def end_drag(self) -> None:
-        if self.cfg.lock_position or not self.hwnd:
-            return
-        wx, wy, ww, wh = _get_window_rect(self.hwnd)
-        left, top, right, bottom = _get_work_area_for_window(self.hwnd)
-        nx = max(left, min(wx, right - ww))
-        ny = max(top, min(wy, bottom - wh))
-        _set_window_pos(self.hwnd, nx, ny, ww, wh)
-        self.cfg.x = nx
-        self.cfg.y = ny
-        save_config(self.cfg)
-
-    def set_lock_position(self, value: bool) -> None:
-        self.cfg.lock_position = bool(value)
-        save_config(self.cfg)
-        if self.cfg.lock_position and self.hwnd:
-            x, y, aw, ah = self._compute_main_position()
-            _set_window_pos(self.hwnd, x, y, aw, ah, topmost=self.cfg.topmost)
-        self._push_state_to_ui()
-
-    def set_topmost(self, value: bool) -> None:
-        self.cfg.topmost = bool(value)
-        save_config(self.cfg)
-        if self.hwnd:
-            wx, wy, ww, wh = _get_window_rect(self.hwnd)
-            _set_window_pos(self.hwnd, wx, wy, ww, wh, topmost=self.cfg.topmost)
-        self._push_state_to_ui()
-
-    def set_autostart(self, value: bool) -> None:
-        set_autostart(bool(value))
-        self._push_state_to_ui()
+    def open_project_folder(self) -> None:
+        try:
+            os.startfile(str(APP_DIR))
+        except Exception:
+            pass
 
     def refresh_now(self) -> None:
         threading.Thread(target=self._poll_once, daemon=True).start()
 
-    # ================= 原生 WinForms 极速最高置顶低电量迷你弹窗 =================
+    # ================= 原生 WinForms 极速最高置顶低电量迷你弹窗 & 系统通知 =================
 
     def _close_alert_window(self) -> None:
         with self._alert_lock:
@@ -668,16 +815,6 @@ class MouseBatteryApp:
         ax = max(left + margin, right - aw - margin)
         ay = max(top + margin, bottom - ah - margin)
 
-        if self.hwnd:
-            user32 = ctypes.windll.user32
-            if user32.IsWindowVisible(wintypes.HWND(self.hwnd)) and not user32.IsIconic(wintypes.HWND(self.hwnd)):
-                mx, my, mw, mh = _get_window_rect(self.hwnd)
-                gap = int(round(10 * scale))
-                candidate_y = my - ah - gap
-                if candidate_y >= top + margin:
-                    ay = candidate_y
-                    ax = max(left + margin, min(mx + mw - aw, right - aw - margin))
-
         def _create_on_ui_thread() -> None:
             try:
                 import io
@@ -691,7 +828,7 @@ class MouseBatteryApp:
                 form.ShowInTaskbar = False
                 form.TopMost = True
                 form.StartPosition = WinForms.FormStartPosition.Manual
-                form.BackColor = Color.FromArgb(24, 27, 34)  # 纯色深灰黑，无毛玻璃、无描边
+                form.BackColor = Color.FromArgb(24, 27, 34)
                 form.Size = Size(aw, ah)
                 form.Location = Point(ax, ay)
 
@@ -747,19 +884,11 @@ class MouseBatteryApp:
 
                 hwnd = int(form.Handle.ToInt64())
                 user32 = ctypes.windll.user32
-                dwmapi = ctypes.windll.dwmapi
                 GWL_EXSTYLE = -20
                 ex = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
                 ex |= 0x00000008 | 0x08000000 | 0x00000080  # TOPMOST | NOACTIVATE | TOOLWINDOW
                 user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, ex)
-
-                try:
-                    corner = ctypes.c_int(2)
-                    dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 33, ctypes.byref(corner), ctypes.sizeof(corner))
-                    no_border = ctypes.c_uint(0xFFFFFFFE)
-                    dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
-                except Exception:
-                    pass
+                _try_win11_round_corners(hwnd)
 
                 SWP_NOACTIVATE = 0x0010
                 SWP_SHOWWINDOW = 0x0040
@@ -779,6 +908,7 @@ class MouseBatteryApp:
 
         try:
             from System import Action
+
             if getattr(native_main, "InvokeRequired", False):
                 native_main.BeginInvoke(Action(_create_on_ui_thread))
             else:
@@ -786,20 +916,40 @@ class MouseBatteryApp:
         except Exception:
             pass
 
+    def _dispatch_alert(self, device_name: str, percent: int, kind: str, is_test: bool = False) -> None:
+        if self.cfg.sound_enabled:
+            threading.Thread(target=play_alert_sound, args=(self.cfg.sound_name,), daemon=True).start()
+        if self.cfg.popup_alert_enabled or is_test:
+            threading.Thread(
+                target=self._show_mini_alert,
+                args=(device_name, percent, kind, is_test),
+                daemon=True,
+            ).start()
+        if self.cfg.windows_notify_enabled and self._tray is not None:
+            try:
+                tag = "（测试）" if is_test else ""
+                self._tray.notify(f"{device_name} 剩余电量 {percent}%", f"外设电量偏低{tag}")
+            except Exception:
+                pass
+
     def test_low_battery(self) -> None:
-        """独立测试低电量通知：使用测试电量 15% + 当前选中设备真实名，不打开主窗口、不影响冷却。"""
-        active = self._active_device()
-        name = active.name if active else "VGN Dragonfly F2 Pro Max"
-        kind = active.kind if active else KIND_MOUSE
-        self._show_mini_alert(name, 15, kind=kind, is_test=True)
+        dev, name = self._pick_floating_device()
+        kind = dev.kind if dev else KIND_MOUSE
+        self._dispatch_alert(name if dev else "VGN Dragonfly F2 Pro Max", 15, kind, is_test=True)
 
     def quit_app(self) -> None:
         self._stop_event.set()
         self._close_alert_window()
+        self.floating_widget.close()
         self.manager.stop()
         if self._tray is not None:
             try:
                 self._tray.stop()
+            except Exception:
+                pass
+        if self.settings_window is not None:
+            try:
+                self.settings_window.destroy()
             except Exception:
                 pass
         if self.window is not None:
@@ -813,45 +963,50 @@ class MouseBatteryApp:
     def _poll_once(self) -> None:
         devices = self.manager.poll()
         self.devices = devices
+        for d in devices:
+            self._known_devices[d.device_id] = d
         self._last_poll_ts = time.time()
-        # 若之前选中的设备已断开，自动切回首台设备但不覆盖配置中未来重连偏好
         self._push_state_to_ui()
         self._update_tray_visual()
+        self._sync_floating_widget()
         self._check_low_batteries(devices)
 
     def _poll_loop(self) -> None:
+        # 启动后立即执行首轮扫描
+        self._poll_once()
         while not self._stop_event.is_set():
-            self._poll_once()
-            any_online = any(d.online and d.percent is not None for d in self.devices)
-            interval = max(8, self.cfg.poll_interval_sec) if any_online else 10
+            interval = max(10, int(self.cfg.poll_interval_sec))
             self._stop_event.wait(interval)
+            if self._stop_event.is_set():
+                break
+            if self.cfg.auto_monitor:
+                self._poll_once()
 
     def _wakeup_watch_loop(self) -> None:
         while not self._stop_event.is_set():
             pos = _get_cursor_pos()
             if pos != self._last_cursor:
                 self._last_cursor = pos
-                if any(d.kind == KIND_MOUSE and d.connected and (d.asleep or d.percent is None) for d in self.devices):
+                if self.cfg.auto_monitor and any(
+                    d.kind == KIND_MOUSE and d.connected and (d.asleep or d.percent is None)
+                    for d in self.devices
+                ):
                     self._poll_once()
-            self._stop_event.wait(1.5)
+            self._stop_event.wait(1.8)
 
     def _check_low_batteries(self, devices: list[DeviceBattery]) -> None:
-        triggered = evaluate_tiered_alerts(devices, self.cfg, self._alerted_tiers)
+        triggered = evaluate_tiered_alerts(devices, self.cfg, self._alerted_tiers, self._last_alert_ts)
         if not triggered:
             return
-        # 若同轮多台设备同时触发，先展示电量最紧急的一台
         dev, _tier = min(triggered, key=lambda pair: int(pair[0].percent or 100))
-        threading.Thread(
-            target=self._show_mini_alert,
-            args=(dev.name, int(dev.percent or 0), dev.kind, False),
-            daemon=True,
-        ).start()
+        pref = get_device_pref(self.cfg, dev.device_id)
+        self._dispatch_alert(pref.alias or dev.name, int(dev.percent or 0), dev.kind, is_test=False)
 
     def _update_tray_visual(self) -> None:
         if self._tray is None:
             return
         try:
-            td = self._tray_device()
+            td, _name = self._pick_floating_device()
             if td is not None:
                 self._tray.icon = draw_battery_icon(
                     size=64,
@@ -863,26 +1018,27 @@ class MouseBatteryApp:
                 self._tray.icon = draw_battery_icon(size=64, percent=None, charging=False, connected=False)
 
             if not self.devices:
-                self._tray.title = "无线外设电量监控（未检测到外设）"
+                self._tray.title = "外设电量（未检测到外设）"
             else:
                 lines = []
                 for d in self.devices[:3]:
+                    pref = get_device_pref(self.cfg, d.device_id)
+                    nm = pref.alias or d.name
                     if d.percent is not None:
                         st = "已充满" if d.full else ("充电中" if d.charging else ("休眠" if d.asleep else d.connection_mode))
-                        lines.append(f"{d.name}: {d.percent}% ({st})")
+                        lines.append(f"{nm}: {d.percent}% ({st})")
                     else:
-                        st = "休眠" if d.asleep else "未知"
-                        lines.append(f"{d.name}: {st}")
+                        lines.append(f"{nm}: {'休眠' if d.asleep else '未知'}")
                 if len(self.devices) > 3:
                     lines.append(f"…共 {len(self.devices)} 台外设")
-                tooltip = "\n".join(lines)
-                self._tray.title = tooltip[:124]
+                self._tray.title = "\n".join(lines)[:124]
         except Exception:
             pass
 
     def _start_tray(self) -> None:
         tray_menu = pystray.Menu(
             pystray.MenuItem("打开主窗口", lambda _i, _m: self.show_main_window(), default=True),
+            pystray.MenuItem("设置", lambda _i, _m: self.open_settings_window("general")),
             pystray.MenuItem("测试低电量弹窗", lambda _i, _m: self.test_low_battery()),
             pystray.MenuItem("导出设备诊断报告", lambda _i, _m: threading.Thread(target=self.export_diagnostics, daemon=True).start()),
             pystray.Menu.SEPARATOR,
@@ -891,23 +1047,20 @@ class MouseBatteryApp:
         self._tray = pystray.Icon(
             "VGNMouseBattery",
             draw_battery_icon(size=64, percent=None, charging=False, connected=False),
-            "无线外设电量监控",
+            "外设电量监控",
             tray_menu,
         )
         threading.Thread(target=self._tray.run, daemon=True).start()
 
     def _on_window_loaded(self) -> None:
-        for _ in range(12):
-            self.hwnd = self._find_hwnd()
+        for _ in range(15):
+            self.hwnd = self._find_hwnd_for(self.window, WINDOW_TITLE)
             if self.hwnd:
                 break
             time.sleep(0.05)
 
         if self.hwnd:
-            native = getattr(self.window, "native", None)
-            _apply_windows_glass(self.hwnd, native)
-            x, y, aw, ah = self._compute_main_position()
-            _set_window_pos(self.hwnd, x, y, aw, ah, topmost=self.cfg.topmost)
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             if not self._allow_show and self.window is not None:
                 try:
                     self.window.hide()
@@ -916,6 +1069,7 @@ class MouseBatteryApp:
 
         self._push_state_to_ui()
         self._start_tray()
+        self._sync_floating_widget()
         threading.Thread(target=self._poll_loop, daemon=True).start()
         threading.Thread(target=self._wakeup_watch_loop, daemon=True).start()
         threading.Thread(target=self._show_event_loop, daemon=True).start()
@@ -929,91 +1083,90 @@ class MouseBatteryApp:
             return
         try:
             while not self._stop_event.is_set():
-                res = k32.WaitForSingleObject(wintypes.HANDLE(ev), 500)
-                if res == 0:
+                if k32.WaitForSingleObject(wintypes.HANDLE(ev), 500) == 0:
                     self.show_main_window()
         finally:
             k32.CloseHandle(wintypes.HANDLE(ev))
 
     def run(self) -> None:
-        if self.start_hidden:
-            try:
-                from webview.platforms import edgechromium
-
-                _orig_nav = edgechromium.EdgeChrome.on_navigation_start
-
-                def _safe_nav(ec_self, sender, args):
-                    if ec_self.pywebview_window.transparent and getattr(ec_self.pywebview_window, "hidden", False):
-                        return
-                    return _orig_nav(ec_self, sender, args)
-
-                edgechromium.EdgeChrome.on_navigation_start = _safe_nav
-            except Exception:
-                pass
         ico_path = ensure_app_ico()
         self.window = webview.create_window(
             title=WINDOW_TITLE,
-            url=UI_HTML.as_uri(),
-            width=APP_SIZE[0],
-            height=APP_SIZE[1],
+            url=UI_MAIN_HTML.as_uri(),
+            width=max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0])),
+            height=max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])),
+            min_size=(580, 380),
             frameless=True,
             easy_drag=False,
-            transparent=True,
+            transparent=False,
             hidden=self.start_hidden,
             on_top=self.cfg.topmost,
-            resizable=False,
-            js_api=_JsApi(self),
+            resizable=True,
+            js_api=_JsApi(self, "main"),
         )
         webview.start(func=self._on_window_loaded, gui="edgechromium", icon=ico_path, debug=False)
 
 
 class _JsApi:
-    """仅暴露给前端 JS 的干净接口桥。"""
+    """暴露给前端主窗口与设置窗口的统一安全 API 桥。"""
 
-    def __init__(self, app: MouseBatteryApp) -> None:
+    def __init__(self, app: MouseBatteryApp, target: str) -> None:
         self._app = app
+        self._target = target
 
-    def get_initial_state(self) -> dict:
-        return self._app.get_initial_state()
-
-    def select_device(self, device_id: str) -> None:
-        self._app.select_device(device_id)
-
-    def set_device_tiers(self, device_id: str, tiers: list[int]) -> None:
-        self._app.set_device_tiers(device_id, tiers)
-
-    def export_diagnostics(self) -> dict:
-        return self._app.export_diagnostics()
+    def get_initial_state(self) -> dict[str, Any]:
+        return self._app._build_state_dict()
 
     def begin_drag(self, sx: int, sy: int) -> None:
-        self._app.begin_drag(sx, sy)
+        self._app.begin_drag(self._target, sx, sy)
 
     def drag_move(self, sx: int, sy: int) -> None:
-        self._app.drag_move(sx, sy)
+        self._app.drag_move(self._target, sx, sy)
 
     def end_drag(self) -> None:
-        self._app.end_drag()
+        self._app.end_drag(self._target)
 
     def minimize_window(self) -> None:
-        self._app.minimize_window()
+        self._app.minimize_window(self._target)
 
-    def hide_to_tray(self) -> None:
-        self._app.hide_to_tray()
+    def toggle_maximize(self) -> None:
+        self._app.toggle_maximize(self._target)
 
-    def set_lock_position(self, value: bool) -> None:
-        self._app.set_lock_position(value)
+    def close_window(self) -> None:
+        if self._target == "settings":
+            self._app.close_settings_window()
+        else:
+            self._app.close_main_window()
 
-    def set_topmost(self, value: bool) -> None:
-        self._app.set_topmost(value)
+    def open_settings(self, section: str = "alerts") -> None:
+        self._app.open_settings_window(section)
 
-    def set_autostart(self, value: bool) -> None:
-        self._app.set_autostart(value)
+    def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        return self._app.update_settings(patch)
+
+    def update_device_pref(self, device_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        return self._app.update_device_pref(device_id, updates)
+
+    def move_device_order(self, device_id: str, direction: int) -> dict[str, Any]:
+        return self._app.move_device_order(device_id, direction)
 
     def refresh_now(self) -> None:
         self._app.refresh_now()
 
     def test_low_battery(self) -> None:
         self._app.test_low_battery()
+
+    def preview_sound(self, sound_name: str = "default") -> None:
+        self._app.preview_sound(sound_name)
+
+    def export_diagnostics(self) -> dict[str, Any]:
+        return self._app.export_diagnostics()
+
+    def read_doc_file(self, doc_name: str) -> dict[str, Any]:
+        return self._app.read_doc_file(doc_name)
+
+    def open_project_folder(self) -> None:
+        self._app.open_project_folder()
 
     def quit_app(self) -> None:
         self._app.quit_app()
@@ -1023,8 +1176,7 @@ def _activate_existing_window() -> None:
     if sys.platform != "win32":
         return
     k32 = ctypes.windll.kernel32
-    EVENT_MODIFY_STATE = 0x0002
-    ev = k32.OpenEventW(EVENT_MODIFY_STATE, False, "Local\\VGNMouseBatteryMonitor_ShowEvent")
+    ev = k32.OpenEventW(0x0002, False, "Local\\VGNMouseBatteryMonitor_ShowEvent")
     if ev:
         k32.SetEvent(wintypes.HANDLE(ev))
         k32.CloseHandle(wintypes.HANDLE(ev))

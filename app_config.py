@@ -1,4 +1,4 @@
-"""应用配置持久化与 Windows 开机自启管理（支持多设备独立阈值，兼容源码运行与 PyInstaller EXE 打包）。"""
+"""应用配置持久化、多设备独立偏好与 Windows 开机自启管理（兼容 Win10/11 与 PyInstaller 打包）。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,10 @@ import sys
 import winreg
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+APP_VERSION = "2.1.0"
+APP_AUTHOR = "Ed"
 
 IS_FROZEN = getattr(sys, "frozen", False)
 
@@ -29,46 +32,197 @@ RUN_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE_NAME = "VGNMouseBattery"
 
 DEFAULT_ALERT_TIERS: list[int] = [30, 20, 10]
-ALLOWED_ALERT_TIERS: tuple[int, ...] = (30, 20, 10)
 
 
 def normalize_tiers(tiers: list[int] | tuple[int, ...] | None) -> list[int]:
-    """规范化三级低电量提醒档位列表（降序去重，范围 1..99）。"""
+    """规范化提醒阈值列表（降序去重，1..95）。"""
     if tiers is None:
         return list(DEFAULT_ALERT_TIERS)
-    clean = sorted({int(t) for t in tiers if isinstance(t, (int, float)) and 1 <= int(t) <= 99}, reverse=True)
+    clean = sorted({int(t) for t in tiers if isinstance(t, (int, float)) and 1 <= int(t) <= 95}, reverse=True)
     return clean
+
+
+def _default_tier_rules() -> list[dict[str, Any]]:
+    return [
+        {"id": "tier1", "label": "电量预警（一级）", "threshold": 30, "enabled": True, "color": "yellow"},
+        {"id": "tier2", "label": "电量偏低（二级）", "threshold": 20, "enabled": True, "color": "orange"},
+        {"id": "tier3", "label": "电量紧急（三级）", "threshold": 10, "enabled": True, "color": "red"},
+    ]
+
+
+@dataclass
+class DevicePreference:
+    """单台设备的独立偏好配置（优先于全局设置）。"""
+
+    alias: str = ""  # 自定义重命名，空表示使用原设备名
+    hidden: bool = False  # 是否在主列表中隐藏
+    monitor_enabled: bool = True  # 是否启用监控
+    order: int = 1000  # 显示排序权重（越小越靠前）
+    custom_tiers_enabled: bool = False  # 是否覆盖全局提醒阈值
+    custom_tiers: list[int] = field(default_factory=lambda: [30, 20, 10])
+
+
+@dataclass
+class FloatingWidgetConfig:
+    """桌面悬浮窗配置（保留原有功能并增强透明度、尺寸、位置与设备选择）。"""
+
+    enabled: bool = False
+    topmost: bool = True
+    opacity: int = 92  # 40..100
+    size: str = "medium"  # small | medium | large
+    position_preset: str = "bottom_right"  # top_left | top_right | bottom_left | bottom_right | custom
+    x: Optional[int] = None
+    y: Optional[int] = None
+    device_id: str = "auto"  # "auto" 表示跟随最优先/最低电量设备
+    locked: bool = True
 
 
 @dataclass
 class AppConfig:
+    # 窗口位置与尺寸（保留历史字段向后兼容）
     x: Optional[int] = None
     y: Optional[int] = None
-    lock_position: bool = True  # 默认固定在屏幕右下角，不允许拖动；用户可在设置中取消固定
-    topmost: bool = False  # 默认关闭窗口置顶，用户可在设置中主动开启
-    low_battery_threshold: int = 20  # 保留向后兼容字段
+    width: int = 760
+    height: int = 480
+    lock_position: bool = False
+    topmost: bool = False
+
+    # 常规设置
+    start_minimized_to_tray: bool = True
+    close_to_tray: bool = True
+    auto_monitor: bool = True
     poll_interval_sec: int = 25
+
+    # 电量提醒（全局）
+    alerts_master_enabled: bool = True
+    tier_rules: list[dict[str, Any]] = field(default_factory=_default_tier_rules)
+    custom_alerts_enabled: bool = False
+    custom_thresholds: list[int] = field(default_factory=list)
+    popup_alert_enabled: bool = True
+    windows_notify_enabled: bool = False
+    sound_enabled: bool = False
+    sound_name: str = "default"  # default | asterisk | exclamation
+    repeat_alert_enabled: bool = False
+    repeat_interval_min: int = 10
+
+    # 外观设置
+    theme: str = "system"  # light | dark | system
+    ui_scale: int = 100  # 90 | 100 | 110 | 125
+    color_scheme: str = "standard"  # standard | high_contrast | soft
+    list_density: str = "comfortable"  # compact | standard | comfortable
+    show_progress_bar: bool = True
+    show_device_icon: bool = True
+
+    # 桌面悬浮窗
+    floating: dict[str, Any] = field(default_factory=lambda: asdict(FloatingWidgetConfig()))
+
+    # 设备独立偏好（key 为 device_id）
+    device_prefs: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    # 向后兼容旧版配置字段
+    low_battery_threshold: int = 20
     selected_device_id: Optional[str] = None
-    # 按 device_id 独立存储提醒档位，例如 {"vgn:3554:fb3e": [30, 20, 10]}，空列表表示该设备关闭提醒
     device_alert_tiers: dict[str, list[int]] = field(default_factory=dict)
 
 
-def get_device_tiers(cfg: AppConfig, device_id: str) -> list[int]:
-    """获取指定设备的低电量提醒档位；未单独配置时默认使用 [30, 20, 10]。"""
-    if device_id and device_id in cfg.device_alert_tiers:
-        return normalize_tiers(cfg.device_alert_tiers[device_id])
-    if cfg.low_battery_threshold == 0 and not cfg.device_alert_tiers:
+def get_floating_config(cfg: AppConfig) -> FloatingWidgetConfig:
+    raw = cfg.floating if isinstance(cfg.floating, dict) else {}
+    valid = FloatingWidgetConfig.__dataclass_fields__.keys()
+    return FloatingWidgetConfig(**{k: v for k, v in raw.items() if k in valid})
+
+
+def get_device_pref(cfg: AppConfig, device_id: str) -> DevicePreference:
+    raw = cfg.device_prefs.get(device_id, {}) if isinstance(cfg.device_prefs, dict) else {}
+    valid = DevicePreference.__dataclass_fields__.keys()
+    pref = DevicePreference(**{k: v for k, v in raw.items() if k in valid})
+    # 向后兼容 v2.0 的 device_alert_tiers
+    if not raw and device_id in cfg.device_alert_tiers:
+        pref.custom_tiers_enabled = True
+        pref.custom_tiers = normalize_tiers(cfg.device_alert_tiers[device_id])
+    return pref
+
+
+def set_device_pref(cfg: AppConfig, device_id: str, updates: dict[str, Any]) -> DevicePreference:
+    cur = get_device_pref(cfg, device_id)
+    for k, v in updates.items():
+        if hasattr(cur, k):
+            if k == "custom_tiers":
+                setattr(cur, k, normalize_tiers(v))
+            elif k == "order":
+                setattr(cur, k, int(v))
+            elif k in ("hidden", "monitor_enabled", "custom_tiers_enabled"):
+                setattr(cur, k, bool(v))
+            elif k == "alias":
+                setattr(cur, k, str(v).strip()[:48])
+            else:
+                setattr(cur, k, v)
+    cfg.device_prefs[device_id] = asdict(cur)
+    return cur
+
+
+def get_global_active_tiers(cfg: AppConfig) -> list[int]:
+    """返回全局生效的所有低电量阈值（降序去重）。"""
+    if not cfg.alerts_master_enabled:
         return []
-    return list(DEFAULT_ALERT_TIERS)
+    vals: list[int] = []
+    for rule in cfg.tier_rules:
+        if isinstance(rule, dict) and rule.get("enabled", True):
+            t = rule.get("threshold")
+            if isinstance(t, (int, float)) and 1 <= int(t) <= 95:
+                vals.append(int(t))
+    if cfg.custom_alerts_enabled and isinstance(cfg.custom_thresholds, list):
+        for t in cfg.custom_thresholds:
+            if isinstance(t, (int, float)) and 1 <= int(t) <= 95:
+                vals.append(int(t))
+    return normalize_tiers(vals)
+
+
+def get_device_tiers(cfg: AppConfig, device_id: str) -> list[int]:
+    """获取指定设备实际生效的低电量提醒档位（设备独立设置优先于全局设置）。"""
+    if not cfg.alerts_master_enabled:
+        return []
+    if device_id:
+        pref = get_device_pref(cfg, device_id)
+        if not pref.monitor_enabled:
+            return []
+        if pref.custom_tiers_enabled:
+            return normalize_tiers(pref.custom_tiers)
+    return get_global_active_tiers(cfg)
 
 
 def set_device_tiers(cfg: AppConfig, device_id: str, tiers: list[int]) -> list[int]:
-    """设置指定设备的低电量提醒档位并返回规范化后的列表。"""
+    """设置单台设备独立提醒档位（保留向后兼容签名）。"""
     norm = normalize_tiers(tiers)
     if device_id:
+        set_device_pref(cfg, device_id, {"custom_tiers_enabled": True, "custom_tiers": norm})
         cfg.device_alert_tiers[device_id] = norm
     cfg.low_battery_threshold = max(norm) if norm else 0
     return norm
+
+
+def detect_windows_dark_mode() -> bool:
+    """检测 Windows 10/11 系统应用深色模式（AppsUseLightTheme == 0 为深色）。"""
+    if sys.platform != "win32":
+        return False
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            0,
+            winreg.KEY_READ,
+        ) as key:
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return int(val) == 0
+    except OSError:
+        return False
+
+
+def resolve_effective_theme(theme_pref: str) -> str:
+    if theme_pref == "dark":
+        return "dark"
+    if theme_pref == "light":
+        return "light"
+    return "dark" if detect_windows_dark_mode() else "light"
 
 
 def load_config() -> AppConfig:
@@ -78,15 +232,20 @@ def load_config() -> AppConfig:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         valid_fields = AppConfig.__dataclass_fields__.keys()
         filtered = {k: v for k, v in data.items() if k in valid_fields}
-        if "device_alert_tiers" in filtered and isinstance(filtered["device_alert_tiers"], dict):
-            filtered["device_alert_tiers"] = {
-                str(k): normalize_tiers(v)
-                for k, v in filtered["device_alert_tiers"].items()
-                if isinstance(v, list)
-            }
-        else:
-            filtered["device_alert_tiers"] = {}
-        return AppConfig(**filtered)
+        cfg = AppConfig(**filtered)
+        # 校验 tier_rules 完整性
+        if not isinstance(cfg.tier_rules, list) or len(cfg.tier_rules) < 3:
+            cfg.tier_rules = _default_tier_rules()
+        if not isinstance(cfg.device_prefs, dict):
+            cfg.device_prefs = {}
+        if not isinstance(cfg.floating, dict):
+            cfg.floating = asdict(FloatingWidgetConfig())
+        # 兼容极早期旧配置（若旧版将宽高写死为 356x580，不覆盖新版默认 760x480）
+        if cfg.width < 600:
+            cfg.width = 760
+        if cfg.height < 400:
+            cfg.height = 480
+        return cfg
     except Exception:
         return AppConfig()
 
@@ -102,13 +261,14 @@ def save_config(cfg: AppConfig) -> None:
         pass
 
 
-def _get_autostart_command() -> str:
+def _get_autostart_command(minimized: bool = True) -> str:
+    flag = " --background" if minimized else ""
     if IS_FROZEN:
-        return f'"{Path(sys.executable).resolve()}" --background'
+        return f'"{Path(sys.executable).resolve()}"{flag}'
     exe = Path(sys.executable)
     pythonw = exe.with_name("pythonw.exe")
     launcher = str(pythonw) if pythonw.exists() else str(exe)
-    return f'"{launcher}" "{APP_SCRIPT}" --background'
+    return f'"{launcher}" "{APP_SCRIPT}"{flag}'
 
 
 def is_autostart_enabled() -> bool:
@@ -123,12 +283,12 @@ def is_autostart_enabled() -> bool:
         return False
 
 
-def set_autostart(enabled: bool) -> bool:
-    """开启开机自启时传入 --background，确保开机后静默驻留托盘、无任何弹窗。"""
+def set_autostart(enabled: bool, start_minimized: bool = True) -> bool:
+    """配置 Windows 开机自启（默认带 --background 静默驻留托盘）。"""
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
-                winreg.SetValueEx(key, RUN_VALUE_NAME, 0, winreg.REG_SZ, _get_autostart_command())
+                winreg.SetValueEx(key, RUN_VALUE_NAME, 0, winreg.REG_SZ, _get_autostart_command(start_minimized))
             else:
                 try:
                     winreg.DeleteValue(key, RUN_VALUE_NAME)

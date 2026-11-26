@@ -17,10 +17,14 @@
 ## 二、模块架构
 
 ```text
-mouse_battery_app.py       主控制器、Win11 DWM 毛玻璃、WinForms 极速迷你弹窗、托盘、三级防抖状态机、JS 桥
-app_config.py              配置持久化（源码: config.json；打包: %LOCALAPPDATA%\VGNMouseBattery\config.json）与自启注册表
+mouse_battery_app.py       主控制器、主窗口(760x480) + 独立设置窗口(840x742)、WinForms 迷你提醒窗、托盘、状态机、JS 桥
+floating_widget.py         原生 WinForms 轻量桌面悬浮窗（零 WebView2 开销，Win10/11 通用）与系统提示音
+app_config.py              配置持久化（AppConfig / DevicePreference / FloatingWidgetConfig）与自启注册表（v2.1.0，作者 Ed）
 vgn_battery.py             已真机验证的 VGN 17 字节 HID 读取器（保持原样，不破坏）
-ui/index.html              Liquid Glass 多设备前端（多设备切换胶囊、分体耳塞 L/R/盒电量、每设备三级档位、诊断导出）
+ui/
+  ├── common.css           统一设计令牌与组件样式（浅色/深色/跟随系统、配色方案、步进器、蓝色胶囊开关）
+  ├── index.html           主窗口（设备列表、低电量高亮卡片、多电池耳塞三列组合卡片、空状态、底部刷新栏）
+  └── settings.html        设置窗口（左 6 分类导航 + 右分组设置卡片：常规/设备管理/电量提醒/外观/悬浮窗/关于）
 providers/
   ├── base.py              DeviceBattery / SubBattery / BatteryProvider + 只读 HidP_GetCaps 报表长度检测
   ├── manager.py           DeviceManager（单次 hid.enumerate 共享、异常隔离、去重、禁伪造 0%、脱敏诊断导出）
@@ -32,7 +36,8 @@ providers/
   ├── hyperx_hid.py        HyperX Cloud 耳机 & Pulsefire 鼠标
   ├── extra_brands.py      ASUS ROG/TUF 鼠键/Omni/SpeedNova/耳机 & Sony INZONE H5/H9 II/Buds
   └── bluetooth_provider.py Windows SetupAPI DEVPKEY_Device_BatteryLevel + Apple AirPods Continuity BLE 解析
-tests/test_providers.py    21 项单元测试（全协议模拟报文 + 去重 + 禁伪造 0% + 三级防抖状态机）
+tests/test_providers.py    22 项单元测试（全协议模拟报文 + 去重 + 禁伪造 0% + 三级/自定义/重复提醒状态机）
+build_release.ps1          可重复执行的一键测试 + PyInstaller 打包发布脚本
 ```
 
 ---
