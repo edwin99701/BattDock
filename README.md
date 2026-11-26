@@ -1,10 +1,11 @@
 # 外设电量监控工具（Windows 10 / 11）
 
-> **当前版本**：v2.1.0（作者：Ed）  
+> **当前版本**：v2.2.0  
 > **适用平台**：Windows 10 22H2 x64 及以上 / Windows 11 x64（不依赖 Win11 专属特效，统一架构）  
-> **硬件验证基线**：完整保留并实机回归验证 `VGN Dragonfly F2 Pro Max (3554:FB3E)`
+> **硬件验证基线**：完整保留并实机回归验证 `VGN Dragonfly F2 Pro Max (3554:FB3E)`  
+> **最新版下载**：前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases) 下载 `VGNMouseBattery-vX.Y.Z-win64.zip` 解压即用
 
-一款轻量、免安装官方驱动的 Windows 无线外设电量监控工具。采用现代化浅灰白 / 深色 / 跟随系统双窗口界面（主窗口 + 独立设置窗口）与原生轻量桌面悬浮窗，支持同时监控多台无线鼠标、无线耳机、分体式耳塞与无线键盘的实时电量与状态。
+一款轻量、免安装官方驱动的 Windows 无线外设电量监控工具。采用现代化浅灰白 / 深色 / 跟随系统双窗口界面（主窗口 + 独立设置窗口）与原生轻量桌面悬浮窗，支持同时监控多台无线鼠标、无线耳机、分体式耳塞与无线键盘的实时电量与状态，并内置 GitHub Releases 一键在线更新。
 
 ---
 
@@ -24,7 +25,8 @@
 - **每设备独立三级低电量提醒**：默认启用 **30% / 20% / 10%** 三级提醒，支持对每台设备分别开关任意档位；内置滞回防抖与充电重置，同一放电周期不重复轰炸。
 - **最高置顶极速迷你提醒弹窗**：原生 WinForms 纯色无边框迷你弹窗，0ms 即时弹出、不抢游戏或全屏应用焦点、停留 5 秒自动关闭；托盘右键支持一键「测试低电量弹窗」。
 - **设备诊断报告导出**：一键导出脱敏 JSON 诊断文件（不含隐私路径与序列号），便于排查新设备兼容问题。
-- **Windows 11 液态玻璃主界面与静默自启**：延续 Liquid Glass 视觉语言，默认固定于右下角（可自由解锁拖拽），开机自启自动以 `--background` 静默驻留系统托盘。
+- **在线检查与一键更新**：内置零依赖更新器（`updater.py`），支持启动静默检查、手动检查、实时进度条下载、ZIP 安全校验与覆盖重启升级（个人配置保存在 `%LOCALAPPDATA%\VGNMouseBattery\config.json`，升级不丢失设置）。
+- **现代化双窗口与静默自启**：支持浅色 / 深色 / 跟随系统主题与原生 WinForms 桌面悬浮窗，开机自启自动以 `--background` 静默驻留系统托盘，托盘图标随实时电量动态变化。
 
 ---
 
@@ -63,7 +65,9 @@ pythonw mouse_battery_app.py --background
 
 ```text
 vgn-mouse-battery/
-├── mouse_battery_app.py          # 主程序：窗口、DWM 玻璃、托盘、三级提醒状态机、JS 桥接
+├── mouse_battery_app.py          # 主程序：双窗口管理、托盘、三级提醒状态机、JS 桥接
+├── floating_widget.py            # 原生 WinForms 轻量桌面悬浮窗与提示音
+├── updater.py                    # GitHub Releases 在线检查与一键覆盖升级模块
 ├── app_config.py                 # 多设备独立阈值持久化与开机自启管理
 ├── vgn_battery.py                # 原版真机验证的 VGN 17 字节 HID 协议模块（保持零破坏）
 ├── providers/                    # 模块化品牌协议适配器包
@@ -78,10 +82,13 @@ vgn-mouse-battery/
 │   ├── extra_brands.py           # ASUS ROG/TUF 与 Sony INZONE 适配器
 │   └── bluetooth_provider.py     # Windows 蓝牙电量服务 + Apple AirPods Continuity 解析器
 ├── tests/
-│   └── test_providers.py         # 21 项协议解析与防抖状态机单元测试
+│   └── test_providers.py         # 26 项协议解析、防抖状态机与更新安全校验单元测试
 ├── ui/
-│   └── index.html                # Liquid Glass 多设备主界面
-├── release/VGNMouseBattery/      # PyInstaller 打包产物与卸载脚本
+│   ├── common.css                # 浅/深/跟随系统统一设计令牌与动效系统
+│   ├── index.html                # 主窗口（多设备卡片、分体耳塞卡片、更新提示胶囊）
+│   └── settings.html             # 设置窗口（6 分类配置、可折叠支持设备子页、在线更新面板）
+├── build_release.ps1             # 一键测试 + PyInstaller 打包脚本
+├── release/VGNMouseBattery/      # PyInstaller 打包产物与卸载脚本（不提交至 Git）
 ├── SUPPORTED_DEVICES.md          # 设备支持清单与验证状态说明
 ├── CHANGELOG.md                  # 版本更新日志
 └── THIRD_PARTY_LICENSES.md       # 开源协议参考与第三方许可证声明

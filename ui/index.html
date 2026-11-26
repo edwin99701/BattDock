@@ -349,6 +349,31 @@
     animation: spin 600ms linear 1;
   }
 
+  .status-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .update-pill {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 120ms var(--ease-out), transform 100ms var(--ease-out);
+  }
+  .update-pill.show { display: inline-flex; }
+  .update-pill:hover { background: rgba(59, 130, 246, 0.18); }
+  .update-pill:active { transform: scale(0.97); }
+
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
@@ -409,13 +434,19 @@
           <span id="monitorText">自动监控已开启</span>
         </span>
       </div>
-      <button id="refreshBtn" class="btn refresh-btn" onclick="refreshNow()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
-          <polyline points="21 3 21 9 15 9"/>
-        </svg>
-        <span id="refreshLabel">刷新</span>
-      </button>
+      <div class="status-right">
+        <button id="updatePill" class="update-pill" onclick="openUpdateSettings()" title="点击查看并更新软件">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><polyline points="5 12 12 5 19 12"/></svg>
+          <span id="updatePillText">发现新版本</span>
+        </button>
+        <button id="refreshBtn" class="btn refresh-btn" onclick="refreshNow()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+            <polyline points="21 3 21 9 15 9"/>
+          </svg>
+          <span id="refreshLabel">刷新</span>
+        </button>
+      </div>
     </footer>
   </div>
 
@@ -651,6 +682,21 @@
     const mText = document.getElementById("monitorText");
     dot.classList.toggle("paused", !state.auto_monitor);
     mText.textContent = state.auto_monitor ? "自动监控已开启" : "自动监控已暂停";
+
+    const upd = state.update_state || {};
+    const pill = document.getElementById("updatePill");
+    const pillText = document.getElementById("updatePillText");
+    if (pill && pillText) {
+      const showUpd = upd.status === "available" || upd.status === "downloading" || upd.status === "installing";
+      pill.classList.toggle("show", showUpd);
+      if (upd.status === "downloading") {
+        pillText.textContent = `更新中 ${upd.progress || 0}%`;
+      } else if (upd.status === "installing") {
+        pillText.textContent = "正在应用更新...";
+      } else if (upd.latest_version) {
+        pillText.textContent = `发现新版 v${upd.latest_version}`;
+      }
+    }
   }
 
   function refreshNow() {
@@ -679,6 +725,7 @@
   });
 
   function openSettings() { window.pywebview?.api?.open_settings("general"); }
+  function openUpdateSettings() { window.pywebview?.api?.open_settings("about"); }
   function minimizeWin() { window.pywebview?.api?.minimize_window(); }
   function toggleMax() { window.pywebview?.api?.toggle_maximize(); }
   function closeWin() { window.pywebview?.api?.close_window(); }

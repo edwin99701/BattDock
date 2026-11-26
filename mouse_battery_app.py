@@ -7,8 +7,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import webbrowser
 from ctypes import wintypes
 from dataclasses import asdict
 from datetime import datetime
@@ -23,6 +25,7 @@ from app_config import (
     APP_DIR,
     APP_VERSION,
     DATA_DIR,
+    IS_FROZEN,
     RESOURCE_DIR,
     AppConfig,
     FloatingWidgetConfig,
@@ -37,6 +40,14 @@ from app_config import (
     save_config,
     set_autostart,
     set_device_pref,
+)
+from updater import (
+    GITHUB_REPO_URL,
+    RELEASES_PAGE_URL,
+    check_for_update,
+    download_update_asset,
+    extract_and_verify_update,
+    launch_windows_updater,
 )
 from floating_widget import (
     DesktopFloatingWidget,
@@ -610,6 +621,27 @@ class MouseBatteryApp:
         self._last_alert_ts: dict[str, float] = {}
         self._last_cursor = _get_cursor_pos()
 
+        # 软件在线更新状态（线程安全，推送给主窗口与设置窗口）
+        self._update_lock = threading.Lock()
+        self._update_cancel = threading.Event()
+        self._update_state: dict[str, Any] = {
+            "status": "idle",  # idle | checking | up_to_date | available | downloading | installing | error
+            "current_version": APP_VERSION,
+            "latest_version": "",
+            "has_update": False,
+            "release_url": RELEASES_PAGE_URL,
+            "release_notes": "",
+            "asset_name": "",
+            "asset_url": "",
+            "asset_size": 0,
+            "progress": 0,
+            "downloaded_mb": 0.0,
+            "total_mb": 0.0,
+            "message": "",
+            "checked_at": "",
+            "can_auto_install": bool(IS_FROZEN),
+        }
+
         # 拖拽状态（按窗口名区分）
         self._drag_state: dict[str, tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = {}
 
@@ -705,6 +737,9 @@ class MouseBatteryApp:
         visible_devices = self._sorted_devices(include_hidden=False)
         all_devices = self._sorted_devices(include_hidden=True)
 
+        with self._update_lock:
+            upd_snapshot = dict(self._update_state)
+
         return {
             "app_version": APP_VERSION,
             "app_author": APP_AUTHOR,
@@ -718,6 +753,9 @@ class MouseBatteryApp:
             "auto_monitor": bool(self.cfg.auto_monitor),
             "main_maximized": self._main_maximized,
             "settings_maximized": self._settings_maximized,
+            "github_repo_url": GITHUB_REPO_URL,
+            "releases_page_url": RELEASES_PAGE_URL,
+            "update_state": upd_snapshot,
         }
 
     def _push_state_to_ui(self) -> None:
@@ -1030,6 +1068,7 @@ class MouseBatteryApp:
         simple_bools = (
             "close_to_tray",
             "auto_monitor",
+            "auto_check_updates",
             "alerts_master_enabled",
             "custom_alerts_enabled",
             "popup_alert_enabled",
@@ -1173,6 +1212,167 @@ class MouseBatteryApp:
             os.startfile(str(APP_DIR))
         except Exception:
             pass
+
+    def open_external_url(self, url: str) -> bool:
+        """安全打开白名单内的 GitHub 项目与 Release 页面。"""
+        target = (url or "").strip()
+        if not target.startswith(GITHUB_REPO_URL):
+            target = RELEASES_PAGE_URL
+        try:
+            return bool(webbrowser.open(target))
+        except Exception:
+            return False
+
+    def _set_update_state(self, **kwargs: Any) -> dict[str, Any]:
+        with self._update_lock:
+            self._update_state.update(kwargs)
+            snap = dict(self._update_state)
+        self._push_state_to_ui()
+        return snap
+
+    def check_updates(self, silent: bool = False) -> dict[str, Any]:
+        """后台异步检查 GitHub Releases 最新版本。"""
+        with self._update_lock:
+            if self._update_state["status"] in ("checking", "downloading", "installing"):
+                return dict(self._update_state)
+            if not silent:
+                self._update_state["status"] = "checking"
+                self._update_state["message"] = "正在连接 GitHub 检查最新版本..."
+                self._update_state["progress"] = 0
+        if not silent:
+            self._push_state_to_ui()
+
+        def _worker() -> None:
+            res = check_for_update(APP_VERSION)
+            now_str = datetime.now().strftime("%H:%M")
+            if not res.ok:
+                if silent:
+                    with self._update_lock:
+                        if self._update_state["status"] == "checking":
+                            self._update_state["status"] = "idle"
+                    return
+                self._set_update_state(
+                    status="error",
+                    message=res.error or "检查更新失败，请稍后重试。",
+                    checked_at=now_str,
+                )
+                return
+
+            if res.has_update:
+                self._set_update_state(
+                    status="available",
+                    latest_version=res.latest_version,
+                    has_update=True,
+                    release_url=res.release_url,
+                    release_notes=res.release_notes,
+                    asset_name=res.asset_name,
+                    asset_url=res.asset_url,
+                    asset_size=res.asset_size,
+                    progress=0,
+                    message=f"发现新版本 v{res.latest_version}",
+                    checked_at=now_str,
+                )
+            else:
+                self._set_update_state(
+                    status="up_to_date",
+                    latest_version=res.latest_version or APP_VERSION,
+                    has_update=False,
+                    release_url=res.release_url,
+                    release_notes=res.release_notes,
+                    asset_name=res.asset_name,
+                    asset_url=res.asset_url,
+                    asset_size=res.asset_size,
+                    progress=0,
+                    message=f"当前已是最新版本（v{APP_VERSION}）",
+                    checked_at=now_str,
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
+        with self._update_lock:
+            return dict(self._update_state)
+
+    def download_and_install_update(self) -> dict[str, Any]:
+        """下载最新 Release 压缩包并在打包版模式下执行安全覆盖重启更新。"""
+        with self._update_lock:
+            st = dict(self._update_state)
+            if st["status"] in ("downloading", "installing"):
+                return st
+            asset_url = str(st.get("asset_url") or "")
+            asset_size = int(st.get("asset_size") or 0)
+            release_url = str(st.get("release_url") or RELEASES_PAGE_URL)
+            latest_ver = str(st.get("latest_version") or "")
+
+        if not IS_FROZEN or not asset_url:
+            self.open_external_url(release_url)
+            return self._set_update_state(
+                message="已在浏览器打开下载页面" if not IS_FROZEN else "未找到可自动安装的更新包，已打开下载页面"
+            )
+
+        self._update_cancel.clear()
+        self._set_update_state(
+            status="downloading",
+            progress=0,
+            downloaded_mb=0.0,
+            total_mb=round(asset_size / (1024 * 1024), 2) if asset_size else 0.0,
+            message=f"正在下载 v{latest_ver} 更新包...",
+        )
+
+        def _worker() -> None:
+            work_root = Path(tempfile.gettempdir()) / f"VGNMouseBatteryUpdate_{os.getpid()}"
+            zip_path = work_root / (st.get("asset_name") or "update.zip")
+            extract_dir = work_root / "extracted"
+            last_push = [0.0, -1]
+
+            def _on_prog(done: int, total: int) -> None:
+                now = time.monotonic()
+                pct = int(min(99, round(done * 100 / total))) if total > 0 else 0
+                if pct != last_push[1] and (now - last_push[0] >= 0.22 or pct >= 99):
+                    last_push[0] = now
+                    last_push[1] = pct
+                    done_mb = round(done / (1024 * 1024), 2)
+                    tot_mb = round(total / (1024 * 1024), 2) if total > 0 else 0.0
+                    msg = f"正在下载更新包 {pct}%（{done_mb:.1f} / {tot_mb:.1f} MB）" if tot_mb > 0 else f"正在下载更新包（{done_mb:.1f} MB）"
+                    self._set_update_state(
+                        status="downloading",
+                        progress=pct,
+                        downloaded_mb=done_mb,
+                        total_mb=tot_mb,
+                        message=msg,
+                    )
+
+            try:
+                download_update_asset(
+                    asset_url=asset_url,
+                    dest_zip=zip_path,
+                    expected_size=asset_size,
+                    on_progress=_on_prog,
+                    cancel_event=self._update_cancel,
+                )
+                self._set_update_state(status="installing", progress=100, message="正在校验并解压更新包...")
+                staged_dir = extract_and_verify_update(zip_path, extract_dir)
+                self._set_update_state(status="installing", progress=100, message="校验通过，正在重启并应用更新...")
+                launch_windows_updater(
+                    staged_dir=staged_dir,
+                    target_dir=APP_DIR,
+                    pid=os.getpid(),
+                    work_root=work_root,
+                )
+                time.sleep(0.35)
+                self.quit_app()
+            except Exception as e:
+                cancelled = self._update_cancel.is_set()
+                self._set_update_state(
+                    status="available" if cancelled else "error",
+                    progress=0,
+                    message="已取消下载更新" if cancelled else f"更新失败：{e}",
+                )
+
+        threading.Thread(target=_worker, daemon=True).start()
+        with self._update_lock:
+            return dict(self._update_state)
+
+    def cancel_update_download(self) -> None:
+        self._update_cancel.set()
 
     def refresh_now(self) -> None:
         threading.Thread(target=self._poll_once, daemon=True).start()
@@ -1488,6 +1688,10 @@ class MouseBatteryApp:
         tray_menu = pystray.Menu(
             pystray.MenuItem("打开主窗口", lambda _i, _m: self.show_main_window(), default=True),
             pystray.MenuItem("设置", lambda _i, _m: self.open_settings_window("general")),
+            pystray.MenuItem(
+                "检查更新",
+                lambda _i, _m: (self.open_settings_window("about"), self.check_updates(silent=False)),
+            ),
             pystray.MenuItem("测试低电量弹窗", lambda _i, _m: self.test_low_battery()),
             pystray.MenuItem("导出设备诊断报告", lambda _i, _m: threading.Thread(target=self.export_diagnostics, daemon=True).start()),
             pystray.Menu.SEPARATOR,
@@ -1528,6 +1732,8 @@ class MouseBatteryApp:
         threading.Thread(target=self._poll_loop, daemon=True).start()
         threading.Thread(target=self._wakeup_watch_loop, daemon=True).start()
         threading.Thread(target=self._show_event_loop, daemon=True).start()
+        if self.cfg.auto_check_updates:
+            threading.Timer(12.0, lambda: self.check_updates(silent=True)).start()
 
     def _show_event_loop(self) -> None:
         if sys.platform != "win32":
@@ -1630,6 +1836,18 @@ class _JsApi:
 
     def open_project_folder(self) -> None:
         self._app.open_project_folder()
+
+    def open_external_url(self, url: str) -> bool:
+        return self._app.open_external_url(url)
+
+    def check_updates(self, silent: bool = False) -> dict[str, Any]:
+        return self._app.check_updates(silent=bool(silent))
+
+    def download_and_install_update(self) -> dict[str, Any]:
+        return self._app.download_and_install_update()
+
+    def cancel_update_download(self) -> None:
+        self._app.cancel_update_download()
 
     def quit_app(self) -> None:
         self._app.quit_app()

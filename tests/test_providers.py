@@ -433,5 +433,69 @@ class TestTieredAlertStateMachine(unittest.TestCase):
         self.assertEqual((ux, uy, uw, uh), (220, 0, 840, 680))
 
 
+class TestUpdater(unittest.TestCase):
+    def test_version_compare(self):
+        from updater import is_newer_version, parse_version
+
+        self.assertEqual(parse_version("v2.2.0"), (2, 2, 0))
+        self.assertTrue(is_newer_version("v2.2.0", "2.1.0"))
+        self.assertTrue(is_newer_version("2.10.0", "2.2.0"))
+        self.assertFalse(is_newer_version("v2.2.0", "2.2.0"))
+        self.assertFalse(is_newer_version("2.1.9", "2.2.0"))
+        self.assertFalse(is_newer_version("2.2", "2.2.0"))
+
+    def test_release_payload_and_asset_selection(self):
+        from updater import parse_github_release_payload
+
+        payload = {
+            "tag_name": "v2.3.0",
+            "html_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/tag/v2.3.0",
+            "body": "## 更新内容\n- 新增设备支持",
+            "published_at": "2026-11-26T04:00:00Z",
+            "assets": [
+                {"name": "checksums.txt", "browser_download_url": "https://example.com/checksums.txt", "size": 120},
+                {"name": "VGNMouseBattery-v2.3.0-win64.zip", "browser_download_url": "https://example.com/app.zip", "size": 37000000},
+            ],
+        }
+        res = parse_github_release_payload(payload, "2.2.0")
+        self.assertTrue(res.ok)
+        self.assertTrue(res.has_update)
+        self.assertEqual(res.latest_version, "2.3.0")
+        self.assertEqual(res.asset_name, "VGNMouseBattery-v2.3.0-win64.zip")
+        self.assertEqual(res.asset_size, 37000000)
+
+        same = parse_github_release_payload(payload, "2.3.0")
+        self.assertFalse(same.has_update)
+
+    def test_extract_and_verify_zip_security(self):
+        import tempfile
+        import zipfile
+        from updater import extract_and_verify_update
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tpath = Path(tmp)
+            # 1. 合法嵌套目录 ZIP
+            good_zip = tpath / "good.zip"
+            with zipfile.ZipFile(good_zip, "w") as zf:
+                zf.writestr("VGNMouseBattery/VGNMouseBattery.exe", b"MZ-test")
+                zf.writestr("VGNMouseBattery/_internal/dummy.txt", b"ok")
+            staged = extract_and_verify_update(good_zip, tpath / "out_good")
+            self.assertTrue((staged / "VGNMouseBattery.exe").is_file())
+
+            # 2. 路径遍历攻击包必须被拦截
+            evil_zip = tpath / "evil.zip"
+            with zipfile.ZipFile(evil_zip, "w") as zf:
+                zf.writestr("../escape.txt", b"bad")
+            with self.assertRaises(ValueError):
+                extract_and_verify_update(evil_zip, tpath / "out_evil")
+
+            # 3. 缺少主程序 EXE 的包必须报错
+            missing_zip = tpath / "missing.zip"
+            with zipfile.ZipFile(missing_zip, "w") as zf:
+                zf.writestr("readme.txt", b"hello")
+            with self.assertRaises(FileNotFoundError):
+                extract_and_verify_update(missing_zip, tpath / "out_missing")
+
+
 if __name__ == "__main__":
     unittest.main()

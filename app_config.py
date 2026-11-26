@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 APP_AUTHOR = "Ed"
 
 IS_FROZEN = getattr(sys, "frozen", False)
@@ -92,6 +92,7 @@ class AppConfig:
     close_to_tray: bool = True
     auto_monitor: bool = True
     poll_interval_sec: int = 25
+    auto_check_updates: bool = True
 
     # 电量提醒（全局）
     alerts_master_enabled: bool = True
