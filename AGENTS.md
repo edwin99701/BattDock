@@ -27,7 +27,9 @@
    - **三级与自定义低电量提醒**：每个设备独立配置（优先于全局），默认 `30% / 20% / 10%` 三级，带滞回防抖、可选重复提醒间隔、提示音及 Windows 系统通知。
 3. **交付物与发布规范**：软件正式品牌名为 `BattDock`（集中定义于 `brand.py`，主程序 `BattDock.exe`）；修改核心功能后使用 `build_release.ps1` 构建 `release\BattDock\BattDock.exe`、便携 ZIP 与 `SHA256SUMS.txt`；GitHub 仓库 `edwin99701/wireless-peripheral-battery-monitor` 已公开，保留原仓库路径以确保旧版在线更新兼容，禁止上传任何 Token、隐私路径或敏感日志。
 4. **软件内更新摘要编写规范（长期约束）**：
-   - 每次发布新版本必须区分两套更新说明：GitHub Release 提供完整详细日志，软件内部通过 `<!-- BATTDOCK_SUMMARY_START {"summary":[...],"important_notice":"..."} BATTDOCK_SUMMARY_END -->` 或随附 `update-summary.json` 提供简明摘要；
+   - 每次发布新版本必须区分两套更新说明，同时兼顾旧版客户端纯文本展示：
+     - **软件内简明摘要**：通过随附 Release 资产 `update-summary.json` 提供结构化摘要（**不要**在 Release 正文顶部插入 `<!-- BATTDOCK_SUMMARY_START ... -->` HTML 注释，以免旧版客户端直接把注释和 JSON 当作纯文本展示成乱码）；
+     - **GitHub Release 正文**：同样保持简洁大方，顶部直接以纯净的 `•` 列表列出 3–5 条核心更新，避免原始 Markdown 符号、HTML 标签或冗长源码技术细节；
    - 软件内摘要保持 **3–5 条**核心更新内容，每条尽量控制在 **25 个汉字以内**，仅写用户可直接感知的功能、体验与修复；
    - 严禁在软件内展示源码文件名、函数名、模块路径、Git 提交号、原始 Markdown 标记、代码块或 HTML 标签；
    - 涉及手动升级、配置迁移或重大兼容性变化时，必须在 `important_notice` 中明确告知，不得省略。
