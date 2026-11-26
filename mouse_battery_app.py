@@ -90,41 +90,126 @@ class MONITORINFO(ctypes.Structure):
     ]
 
 
+def _get_dpi_scale_for_monitor(hmon: int) -> float:
+    """获取指定显示器的 DPI 缩放比例（支持 Win10/11 多显示器不同 DPI）。"""
+    if sys.platform != "win32" or not hmon:
+        return 1.0
+    try:
+        dpi_x = ctypes.c_uint(96)
+        dpi_y = ctypes.c_uint(96)
+        res = ctypes.windll.shcore.GetDpiForMonitor(
+            wintypes.HMONITOR(hmon), 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)
+        )
+        if res == 0 and dpi_x.value > 0:
+            return dpi_x.value / 96.0
+    except Exception:
+        pass
+    try:
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        if dpi > 0:
+            return dpi / 96.0
+    except Exception:
+        pass
+    return 1.0
+
+
+def _get_monitor_work_area_and_scale(hmon: int) -> tuple[tuple[int, int, int, int], float]:
+    """获取指定显示器的可用工作区 (left, top, right, bottom) 与 DPI 缩放比。"""
+    user32 = ctypes.windll.user32
+    if hmon:
+        try:
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if user32.GetMonitorInfoW(wintypes.HMONITOR(hmon), ctypes.byref(info)):
+                r = info.rcWork
+                return (r.left, r.top, r.right, r.bottom), _get_dpi_scale_for_monitor(hmon)
+        except Exception:
+            pass
+    rect = wintypes.RECT()
+    if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+        return (rect.left, rect.top, rect.right, rect.bottom), _get_dpi_scale_for_monitor(0)
+    return (0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1) - 48), 1.0
+
+
+def _get_current_monitor_work_area_and_scale() -> tuple[tuple[int, int, int, int], float]:
+    """获取当前显示器（优先当前鼠标指针所在屏幕，其次托盘屏幕）的工作区与缩放比。"""
+    user32 = ctypes.windll.user32
+    try:
+        pt = wintypes.POINT()
+        if user32.GetCursorPos(ctypes.byref(pt)):
+            hmon = user32.MonitorFromPoint(pt, 2)  # MONITOR_DEFAULTTONEAREST
+            if hmon:
+                return _get_monitor_work_area_and_scale(hmon)
+    except Exception:
+        pass
+    try:
+        tray_hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+        if tray_hwnd:
+            hmon = user32.MonitorFromWindow(wintypes.HWND(tray_hwnd), 2)
+            if hmon:
+                return _get_monitor_work_area_and_scale(hmon)
+    except Exception:
+        pass
+    return _get_monitor_work_area_and_scale(0)
+
+
+def _get_window_monitor_work_area_and_scale(hwnd: int) -> tuple[tuple[int, int, int, int], float]:
+    """获取指定窗口所在显示器的可用工作区与缩放比。"""
+    if hwnd:
+        try:
+            hmon = ctypes.windll.user32.MonitorFromWindow(wintypes.HWND(hwnd), 2)
+            if hmon:
+                return _get_monitor_work_area_and_scale(hmon)
+        except Exception:
+            pass
+    return _get_current_monitor_work_area_and_scale()
+
+
+def _compute_centered_rect(
+    work_area: tuple[int, int, int, int],
+    win_w: int,
+    win_h: int,
+    anchor_rect: Optional[tuple[int, int, int, int]] = None,
+) -> tuple[int, int, int, int]:
+    """计算严格居中且不超出工作区、不被任务栏遮挡的物理坐标 (x, y, w, h)。"""
+    wl, wt, wr, wb = work_area
+    avail_w = max(320, wr - wl)
+    avail_h = max(240, wb - wt)
+    eff_w = min(int(win_w), avail_w)
+    eff_h = min(int(win_h), avail_h)
+
+    if anchor_rect is not None:
+        ax, ay, aw, ah = anchor_rect
+        x = ax + (aw - eff_w) // 2
+        y = ay + (ah - eff_h) // 2
+    else:
+        x = wl + (avail_w - eff_w) // 2
+        y = wt + (avail_h - eff_h) // 2
+
+    x = max(wl, min(x, wr - eff_w))
+    y = max(wt, min(y, wb - eff_h))
+    return int(x), int(y), int(eff_w), int(eff_h)
+
+
 def _get_tray_work_area() -> tuple[int, int, int, int]:
-    """获取系统托盘所在显示器的工作区 (left, top, right, bottom)，适配多显示器与不同 DPI。"""
+    """获取系统托盘所在显示器的工作区 (left, top, right, bottom)，供悬浮窗与低电量迷你弹窗使用。"""
     user32 = ctypes.windll.user32
     try:
         tray_hwnd = user32.FindWindowW("Shell_TrayWnd", None)
         if tray_hwnd:
             hmon = user32.MonitorFromWindow(wintypes.HWND(tray_hwnd), 2)
             if hmon:
-                info = MONITORINFO()
-                info.cbSize = ctypes.sizeof(MONITORINFO)
-                if user32.GetMonitorInfoW(wintypes.HMONITOR(hmon), ctypes.byref(info)):
-                    r = info.rcWork
-                    return r.left, r.top, r.right, r.bottom
+                work, _ = _get_monitor_work_area_and_scale(hmon)
+                return work
     except Exception:
         pass
-    rect = wintypes.RECT()
-    if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
-        return rect.left, rect.top, rect.right, rect.bottom
-    return 0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1) - 48
+    work, _ = _get_monitor_work_area_and_scale(0)
+    return work
 
 
 def _get_work_area_for_window(hwnd: int) -> tuple[int, int, int, int]:
-    if hwnd:
-        user32 = ctypes.windll.user32
-        try:
-            hmon = user32.MonitorFromWindow(wintypes.HWND(hwnd), 2)
-            if hmon:
-                info = MONITORINFO()
-                info.cbSize = ctypes.sizeof(MONITORINFO)
-                if user32.GetMonitorInfoW(wintypes.HMONITOR(hmon), ctypes.byref(info)):
-                    r = info.rcWork
-                    return r.left, r.top, r.right, r.bottom
-        except Exception:
-            pass
-    return _get_tray_work_area()
+    work, _ = _get_window_monitor_work_area_and_scale(hwnd)
+    return work
 
 
 def _get_cursor_pos() -> tuple[int, int]:
@@ -456,45 +541,108 @@ class MouseBatteryApp:
 
     # ================= 窗口控制（主窗口 & 独立设置窗口） =================
 
+    def _compute_main_initial_logical_bounds(self) -> tuple[int, int, int, int]:
+        """计算主窗口首次创建时的逻辑坐标与尺寸 (log_x, log_y, log_w, log_h)，首帧直接居中无闪烁。"""
+        work, scale = _get_current_monitor_work_area_and_scale()
+        log_w = max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0]))
+        log_h = max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1]))
+        phys_w = int(round(log_w * scale))
+        phys_h = int(round(log_h * scale))
+        px, py, pw, ph = _compute_centered_rect(work, phys_w, phys_h)
+        return (
+            int(round(px / scale)),
+            int(round(py / scale)),
+            max(580, int(round(pw / scale))),
+            max(380, int(round(ph / scale))),
+        )
+
+    def _center_main_hwnd(self) -> None:
+        """将主窗口无闪烁居中对齐到当前显示器可用工作区。"""
+        if not self.hwnd:
+            return
+        user32 = ctypes.windll.user32
+        work, scale = _get_current_monitor_work_area_and_scale()
+        if user32.IsZoomed(wintypes.HWND(self.hwnd)):
+            user32.ShowWindow(wintypes.HWND(self.hwnd), 9)
+            self._main_maximized = False
+        _wx, _wy, ww, wh = _get_window_rect(self.hwnd)
+        if ww < 300 or wh < 200:
+            ww = int(round(max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0])) * scale))
+            wh = int(round(max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])) * scale))
+        px, py, pw, ph = _compute_centered_rect(work, ww, wh)
+        _set_window_pos(self.hwnd, px, py, pw, ph, topmost=self.cfg.topmost)
+
+    def _compute_settings_target_phys_rect(self) -> tuple[int, int, int, int, float]:
+        """计算设置窗口的目标物理矩形 (px, py, pw, ph, scale)：以主窗口为基准居中且严格限在工作区内。"""
+        user32 = ctypes.windll.user32
+        anchor: Optional[tuple[int, int, int, int]] = None
+        if self.hwnd and user32.IsWindowVisible(wintypes.HWND(self.hwnd)) and not user32.IsIconic(wintypes.HWND(self.hwnd)):
+            anchor = _get_window_rect(self.hwnd)
+            work, scale = _get_window_monitor_work_area_and_scale(self.hwnd)
+        else:
+            work, scale = _get_current_monitor_work_area_and_scale()
+
+        phys_w = int(round(SETTINGS_DEFAULT_SIZE[0] * scale))
+        phys_h = int(round(SETTINGS_DEFAULT_SIZE[1] * scale))
+        px, py, pw, ph = _compute_centered_rect(work, phys_w, phys_h, anchor_rect=anchor)
+        return px, py, pw, ph, scale
+
     def show_main_window(self) -> None:
+        """从系统托盘重新打开主窗口：先在隐藏态居中定位，再显示激活，避免先偏后跳的闪烁。"""
         if self.window is None:
             return
         self._allow_show = True
+        if self.hwnd:
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            # 先定位到当前显示器居中位置，再显示，彻底消除跳动闪烁
+            self._center_main_hwnd()
         try:
             self.window.show()
             self.window.restore()
         except Exception:
             pass
         if self.hwnd:
-            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            self._center_main_hwnd()
             user32 = ctypes.windll.user32
             user32.ShowWindow(wintypes.HWND(self.hwnd), 9)
             user32.SetForegroundWindow(wintypes.HWND(self.hwnd))
         self._push_state_to_ui()
 
-    def open_settings_window(self, section: str = "alerts") -> None:
-        """打开或前置独立设置窗口（820 × 560，默认展示指定分页）。"""
+    def open_settings_window(self, section: str = "general") -> None:
+        """打开或前置独立设置窗口：默认进入“常规设置”，以主窗口为基准居中显示且避免闪烁。"""
+        target_sec = section or "general"
+        px, py, pw, ph, scale = self._compute_settings_target_phys_rect()
+
         if self.settings_window is not None:
             try:
+                if self.settings_hwnd:
+                    _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
+                    _set_window_pos(self.settings_hwnd, px, py, pw, ph)
                 self.settings_window.show()
                 self.settings_window.restore()
                 if self.settings_hwnd:
-                    _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
                     ctypes.windll.user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
                     ctypes.windll.user32.SetForegroundWindow(wintypes.HWND(self.settings_hwnd))
-                self.settings_window.evaluate_js(f"window.switchSection && switchSection({json.dumps(section)});")
+                self.settings_window.evaluate_js(f"window.switchSection && switchSection({json.dumps(target_sec)});")
                 self._push_state_to_ui()
                 return
             except Exception:
                 self.settings_window = None
                 self.settings_hwnd = 0
 
-        url = f"{UI_SETTINGS_HTML.as_uri()}#{section}"
+        log_x = int(round(px / scale))
+        log_y = int(round(py / scale))
+        log_w = max(680, int(round(pw / scale)))
+        log_h = max(460, int(round(ph / scale)))
+
+        url = f"{UI_SETTINGS_HTML.as_uri()}#{target_sec}"
         win = webview.create_window(
             title=SETTINGS_WINDOW_TITLE,
             url=url,
-            width=SETTINGS_DEFAULT_SIZE[0],
-            height=SETTINGS_DEFAULT_SIZE[1],
+            width=log_w,
+            height=log_h,
+            x=log_x,
+            y=log_y,
             min_size=(680, 460),
             frameless=True,
             easy_drag=False,
@@ -512,6 +660,11 @@ class MouseBatteryApp:
                 time.sleep(0.05)
             if self.settings_hwnd:
                 _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
+                # 校验实际物理位置，如因系统 DPI 舍入有偏差 >2px 则静默微调对齐
+                tpx, tpy, tpw, tph, _ = self._compute_settings_target_phys_rect()
+                cx, cy, cw, ch = _get_window_rect(self.settings_hwnd)
+                if abs(cx - tpx) > 2 or abs(cy - tpy) > 2 or abs(cw - tpw) > 2 or abs(ch - tph) > 2:
+                    _set_window_pos(self.settings_hwnd, tpx, tpy, tpw, tph)
             self._push_state_to_ui()
 
         def _on_settings_closed():
@@ -1061,6 +1214,12 @@ class MouseBatteryApp:
 
         if self.hwnd:
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            # WinForms frameless 模式初始化时会裁掉非客户区尺寸，此处恢复精确目标尺寸并校准工作区居中（左上角不变，无跳动）
+            work, scale = _get_window_monitor_work_area_and_scale(self.hwnd)
+            target_w = int(round(max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0])) * scale))
+            target_h = int(round(max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])) * scale))
+            tpx, tpy, tpw, tph = _compute_centered_rect(work, target_w, target_h)
+            _set_window_pos(self.hwnd, tpx, tpy, tpw, tph, topmost=self.cfg.topmost)
             if not self._allow_show and self.window is not None:
                 try:
                     self.window.hide()
@@ -1090,11 +1249,14 @@ class MouseBatteryApp:
 
     def run(self) -> None:
         ico_path = ensure_app_ico()
+        log_x, log_y, log_w, log_h = self._compute_main_initial_logical_bounds()
         self.window = webview.create_window(
             title=WINDOW_TITLE,
             url=UI_MAIN_HTML.as_uri(),
-            width=max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0])),
-            height=max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])),
+            width=log_w,
+            height=log_h,
+            x=log_x,
+            y=log_y,
             min_size=(580, 380),
             frameless=True,
             easy_drag=False,
@@ -1138,8 +1300,8 @@ class _JsApi:
         else:
             self._app.close_main_window()
 
-    def open_settings(self, section: str = "alerts") -> None:
-        self._app.open_settings_window(section)
+    def open_settings(self, section: str = "general") -> None:
+        self._app.open_settings_window(section or "general")
 
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         return self._app.update_settings(patch)

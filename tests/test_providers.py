@@ -407,6 +407,31 @@ class TestTieredAlertStateMachine(unittest.TestCase):
         set_device_pref(cfg, "dev:r", {"monitor_enabled": False})
         self.assertEqual(evaluate_tiered_alerts([dev], cfg, alerted, last_ts, now_ts=3000.0), [])
 
+    def test_window_centering_and_work_area_clamping(self) -> None:
+        from mouse_battery_app import _compute_centered_rect
+
+        # 1. 1920x1040（扣除 40px 任务栏）主窗口居中
+        work = (0, 0, 1920, 1040)
+        x, y, w, h = _compute_centered_rect(work, 760, 480)
+        self.assertEqual((x, y, w, h), (580, 280, 760, 480))
+
+        # 2. 设置窗口以主窗口为基准居中
+        sx, sy, sw, sh = _compute_centered_rect(work, 840, 742, anchor_rect=(580, 280, 760, 480))
+        self.assertEqual((sx, sy, sw, sh), (540, 149, 840, 742))
+
+        # 3. 副屏负坐标 + 主窗口靠近边缘时，设置窗口必须钳制在工作区内不得越界
+        left_mon = (-1920, 0, 0, 1040)
+        cx, cy, cw, ch = _compute_centered_rect(left_mon, 840, 742, anchor_rect=(-1910, 800, 760, 480))
+        self.assertGreaterEqual(cx, -1920)
+        self.assertLessEqual(cx + cw, 0)
+        self.assertGreaterEqual(cy, 0)
+        self.assertLessEqual(cy + ch, 1040)
+
+        # 4. 超高 DPI / 小屏工作区高度小于窗口高度时自动收缩不遮挡任务栏
+        small_work = (0, 0, 1280, 680)
+        ux, uy, uw, uh = _compute_centered_rect(small_work, 840, 742)
+        self.assertEqual((ux, uy, uw, uh), (220, 0, 840, 680))
+
 
 if __name__ == "__main__":
     unittest.main()
