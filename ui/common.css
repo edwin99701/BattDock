@@ -141,6 +141,11 @@
   }
 }
 
+/* 窗口隐藏或重新唤出瞬间临时清除 Chromium 残留的 :hover / :active 伪类状态，不影响键盘导航 */
+:root.ui-reset-hover * {
+  pointer-events: none !important;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

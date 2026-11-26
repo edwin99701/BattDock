@@ -107,6 +107,7 @@ class AppConfig:
     auto_monitor: bool = True
     poll_interval_sec: int = 25
     auto_check_updates: bool = True
+    debug_logging: bool = False
 
     # 电量提醒（全局）
     alerts_master_enabled: bool = True

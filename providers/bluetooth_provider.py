@@ -403,6 +403,7 @@ class BluetoothBatteryProvider(BatteryProvider):
         self._ble_stale_sec = 40.0
         self._ble_watcher = None
         self._ble_available = False
+        self._ble_init_attempted = False
 
     def ingest_airpods_advertisement(self, address: int, manufacturer_data: bytes) -> Optional[DeviceBattery]:
         """供可选 BLE 监听器或单元测试注入 Apple Continuity 广播报文。"""
@@ -414,9 +415,10 @@ class BluetoothBatteryProvider(BatteryProvider):
         return dev
 
     def _try_start_optional_ble_watcher(self) -> None:
-        """若本机安装了 WinRT BLE 绑定且蓝牙适配器可用，被动监听 Apple 广播；否则静默跳过。"""
-        if self._ble_watcher is not None:
+        """若本机安装了 WinRT BLE 绑定且蓝牙适配器可用，被动监听 Apple 广播；否则仅检查一次后静默跳过。"""
+        if self._ble_watcher is not None or self._ble_init_attempted:
             return
+        self._ble_init_attempted = True
         try:
             from winrt.windows.devices.bluetooth.advertisement import (  # type: ignore
                 BluetoothLEAdvertisementWatcher,

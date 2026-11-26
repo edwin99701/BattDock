@@ -473,13 +473,21 @@
     return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  let _dragResetFn = null;
   (function attachWindowDrag() {
     const bar = document.getElementById("titlebar");
     let dragging = false, moved = false, sx = 0, sy = 0;
+    _dragResetFn = () => { dragging = false; moved = false; };
     bar.addEventListener("mousedown", (e) => {
       if (e.button !== 0 || e.target.closest("button")) return;
       dragging = true; moved = false; sx = e.screenX; sy = e.screenY;
       window.pywebview?.api?.begin_drag(sx, sy);
+    });
+    // 鼠标点击标题栏按钮时不驻留键盘焦点框，仍完整保留 Tab 键盘导航与 :focus-visible 无障碍支持
+    bar.querySelectorAll("button.win-btn").forEach((btn) => {
+      btn.addEventListener("mousedown", (e) => {
+        if (e.button === 0) e.preventDefault();
+      });
     });
     bar.addEventListener("dblclick", (e) => { if (!e.target.closest("button")) toggleMax(); });
     window.addEventListener("mousemove", (e) => {
@@ -741,21 +749,68 @@
     }, 620);
   }
 
-  // 窗口最小化或隐藏至托盘后停止任何进行中的前端动画
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
+  let _hoverReleaseRaf = 0;
+  function _releaseHoverReset() {
+    if (_hoverReleaseRaf) {
+      cancelAnimationFrame(_hoverReleaseRaf);
+      _hoverReleaseRaf = 0;
+    }
+    document.documentElement.classList.remove("ui-reset-hover");
+  }
+
+  function resetInteractionState(isHiding) {
+    if (_dragResetFn) _dragResetFn();
+    const active = document.activeElement;
+    if (active && active !== document.body && typeof active.blur === "function") {
+      active.blur();
+    }
+    try {
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.rangeCount > 0) sel.removeAllRanges();
+    } catch (_) {}
+
+    if (isHiding) {
       clearTimeout(refreshTimer);
       const btn = document.getElementById("refreshBtn");
-      btn.classList.remove("spinning");
-      document.getElementById("refreshLabel").textContent = "刷新";
+      if (btn) btn.classList.remove("spinning");
+      const lbl = document.getElementById("refreshLabel");
+      if (lbl) lbl.textContent = "刷新";
+    }
+
+    document.documentElement.classList.add("ui-reset-hover");
+    void document.documentElement.offsetHeight;
+    if (_hoverReleaseRaf) {
+      cancelAnimationFrame(_hoverReleaseRaf);
+      _hoverReleaseRaf = 0;
+    }
+    if (!isHiding) {
+      _hoverReleaseRaf = requestAnimationFrame(() => {
+        _hoverReleaseRaf = requestAnimationFrame(() => {
+          _hoverReleaseRaf = 0;
+          document.documentElement.classList.remove("ui-reset-hover");
+        });
+      });
+    }
+  }
+  window.resetInteractionState = resetInteractionState;
+
+  window.addEventListener("pointermove", _releaseHoverReset, { passive: true });
+  window.addEventListener("blur", () => resetInteractionState(false));
+
+  // 窗口最小化或隐藏至托盘后停止任何进行中的前端动画并清除残留选中/悬停状态
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      resetInteractionState(true);
+    } else {
+      resetInteractionState(false);
     }
   });
 
   function openSettings() { window.pywebview?.api?.open_settings("general"); }
   function openUpdateSettings() { window.pywebview?.api?.open_settings("about"); }
-  function minimizeWin() { window.pywebview?.api?.minimize_window(); }
+  function minimizeWin() { resetInteractionState(false); window.pywebview?.api?.minimize_window(); }
   function toggleMax() { window.pywebview?.api?.toggle_maximize(); }
-  function closeWin() { window.pywebview?.api?.close_window(); }
+  function closeWin() { resetInteractionState(true); window.pywebview?.api?.close_window(); }
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "F5" || (e.ctrlKey && e.key.toLowerCase() === "r")) {

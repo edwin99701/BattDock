@@ -146,16 +146,20 @@ class _HidppLink:
     def __init__(self, short_path: Optional[bytes], long_path: Optional[bytes]) -> None:
         self.short_dev: Optional[hid.device] = None
         self.long_dev: Optional[hid.device] = None
-        if short_path:
-            d = hid.device()
-            d.open_path(short_path)
-            hid_drain(d, 7, 4, 5)
-            self.short_dev = d
-        if long_path:
-            d = hid.device()
-            d.open_path(long_path)
-            hid_drain(d, 20, 4, 5)
-            self.long_dev = d
+        try:
+            if short_path:
+                d = hid.device()
+                d.open_path(short_path)
+                hid_drain(d, 7, 4, 5)
+                self.short_dev = d
+            if long_path:
+                d = hid.device()
+                d.open_path(long_path)
+                hid_drain(d, 20, 4, 5)
+                self.long_dev = d
+        except Exception:
+            self.close()
+            raise
 
     def close(self) -> None:
         for d in (self.short_dev, self.long_dev):

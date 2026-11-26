@@ -103,8 +103,12 @@ class VgnCompxProvider(BatteryProvider):
     def __init__(self) -> None:
         self._vgn_reader = VgnBatteryReader()
         self._mchose_cache: dict[str, DeviceBattery] = {}
+        self._last_query_stats: dict[str, object] = {}
 
-    def _poll_primary_vgn(self, hid_snapshot: list[dict]) -> Optional[DeviceBattery]:
+    def get_last_query_stats(self) -> dict[str, object]:
+        return dict(self._last_query_stats)
+
+    def _poll_primary_vgn(self, hid_snapshot: list[dict], force: bool = False) -> Optional[DeviceBattery]:
         # 快速判断当前是否存在 CompX/VGN/ATK 的 FF02:0002 设备
         has_vgn = any(
             d.get("vendor_id") in (0x3554, 0x373B)
@@ -113,9 +117,11 @@ class VgnCompxProvider(BatteryProvider):
             for d in hid_snapshot
         )
         if not has_vgn:
+            self._last_query_stats = {}
             return None
 
-        r = self._vgn_reader.read()
+        r = self._vgn_reader.read(hid_snapshot=hid_snapshot, force=force)
+        self._last_query_stats = self._vgn_reader.get_last_query_stats()
         if not r.connected:
             return None
 
@@ -300,9 +306,9 @@ class VgnCompxProvider(BatteryProvider):
             )
         return results
 
-    def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
+    def poll(self, hid_snapshot: list[dict], force: bool = False) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        primary = self._poll_primary_vgn(hid_snapshot)
+        primary = self._poll_primary_vgn(hid_snapshot, force=force)
         if primary is not None:
             out.append(primary)
         out.extend(self._poll_mchose(hid_snapshot))

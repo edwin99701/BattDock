@@ -555,6 +555,112 @@ def _set_form_visibility(
         pass
 
 
+def _is_window_alive(win: Optional[webview.Window], hwnd: int = 0) -> bool:
+    """检查 pywebview 窗口与底层 WinForms / Win32 句柄是否仍然有效未销毁。"""
+    if win is None:
+        return False
+    native = getattr(win, "native", None)
+    if native is None:
+        return False
+    try:
+        if getattr(native, "IsDisposed", True):
+            return False
+        h = 0
+        try:
+            h = int(native.Handle.ToInt64())
+        except Exception:
+            try:
+                h = int(native.Handle)
+            except Exception:
+                h = int(hwnd or 0)
+        if not h:
+            return False
+        if sys.platform == "win32" and not ctypes.windll.user32.IsWindow(wintypes.HWND(h)):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _clear_native_pointer_state(win: Optional[webview.Window]) -> None:
+    """向 WinForms 窗口及其 WebView2 子窗口投递取消捕获与鼠标离开消息，防止隐藏/重开后残留悬停态。"""
+    if win is None or sys.platform != "win32":
+        return
+    native = getattr(win, "native", None)
+    if native is None:
+        return
+    try:
+        if getattr(native, "IsDisposed", True):
+            return
+        hwnd = int(native.Handle.ToInt64())
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        WM_CANCELMODE = 0x001F
+        WM_MOUSELEAVE = 0x02A3
+        user32.PostMessageW(wintypes.HWND(hwnd), WM_CANCELMODE, 0, 0)
+        user32.PostMessageW(wintypes.HWND(hwnd), WM_MOUSELEAVE, 0, 0)
+
+        # 同时通知 WebView2 子窗口释放悬停与按下捕获（仅投递异步消息，绝不阻塞 UI 线程）
+        child = user32.GetWindow(wintypes.HWND(hwnd), 5)  # GW_CHILD
+        seen = 0
+        while child and seen < 16:
+            user32.PostMessageW(wintypes.HWND(child), WM_CANCELMODE, 0, 0)
+            user32.PostMessageW(wintypes.HWND(child), WM_MOUSELEAVE, 0, 0)
+            child = user32.GetWindow(wintypes.HWND(child), 2)  # GW_HWNDNEXT
+            seen += 1
+    except Exception:
+        pass
+
+
+def _bring_hwnd_to_foreground(hwnd: int, keep_topmost: bool = False) -> None:
+    """将主窗口可靠置于前台（兼容从系统托盘或重复运行 EXE 唤出，避免 Windows 前台锁阻拦）。"""
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        user32 = ctypes.windll.user32
+        hw = wintypes.HWND(hwnd)
+        if not user32.IsWindow(hw):
+            return
+        if user32.IsIconic(hw):
+            user32.ShowWindow(hw, 9)  # SW_RESTORE
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_SHOWWINDOW = 0x0040
+        if not keep_topmost:
+            # 轻触 TOPMOST 再立即恢复 NOTOPMOST，稳定唤醒前台 Z 序且不改变用户置顶设置
+            user32.SetWindowPos(hw, wintypes.HWND(-1), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+            user32.SetWindowPos(hw, wintypes.HWND(-2), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+        else:
+            user32.SetWindowPos(hw, wintypes.HWND(-1), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+        user32.SetForegroundWindow(hw)
+    except Exception:
+        pass
+
+
+def _safe_eval_js(win: Optional[webview.Window], script: str) -> None:
+    """线程安全地执行前端 JS：若当前已在 WinForms UI 线程则转后台线程调用，彻底避免 pywebview 信号量死锁。"""
+    if not _is_window_alive(win):
+        return
+    native = getattr(win, "native", None)
+
+    def _run() -> None:
+        try:
+            if _is_window_alive(win):
+                win.evaluate_js(script)
+        except Exception:
+            pass
+
+    try:
+        # InvokeRequired 为 False 说明当前正处于 WinForms UI 线程，绝不可同步阻塞等待 WebView2 回调
+        if native is not None and not getattr(native, "InvokeRequired", True):
+            threading.Thread(target=_run, daemon=True).start()
+            return
+    except Exception:
+        pass
+    _run()
+
+
 def _run_on_form_ui(win: Optional[webview.Window], fn) -> None:
     if win is None:
         return
@@ -675,7 +781,8 @@ class MouseBatteryApp:
         self.cfg: AppConfig = load_config()
         self.start_hidden = start_hidden
         self._allow_show = not start_hidden
-        self.manager = DeviceManager()
+        self.manager = DeviceManager(debug_log_path=DATA_DIR / "hid_diagnostics.log")
+        self.manager.set_debug_logging(self.cfg.debug_logging, DATA_DIR / "hid_diagnostics.log")
         self.devices: list[DeviceBattery] = []
         self._known_devices: dict[str, DeviceBattery] = {}
         self._last_poll_ts: float = 0.0
@@ -690,6 +797,23 @@ class MouseBatteryApp:
         self._settings_ready = False
         self._settings_pending_reveal = False
         self._reveal_lock = threading.Lock()
+        self._window_lock = threading.Lock()
+        self._recreating_main = False
+        self._quitting = False
+        self._os_shutting_down = False
+        self._quit_lock = threading.Lock()
+
+        # 后台监控与防并发轮询控制
+        self._bg_started = False
+        self._bg_lock = threading.Lock()
+        self._active_bg_threads: set[str] = set()
+        self._poll_lock = threading.Lock()
+        self._poll_running = threading.Event()
+        self._last_manual_refresh_mono: float = 0.0
+        self._last_wakeup_poll_mono: float = 0.0
+        self._device_change_hwnd: int = 0
+        self._device_change_timer: Optional[threading.Timer] = None
+        self._session_hooked = False
 
         self._alert_window = None
         self._alert_timer: Optional[threading.Timer] = None
@@ -731,14 +855,20 @@ class MouseBatteryApp:
         # 拖拽状态（按窗口名区分）
         self._drag_state: dict[str, tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = {}
 
-        # 桌面悬浮窗管理器
+        # 桌面悬浮窗管理器（仅使用有效未销毁的 WinForms 宿主）
         self.floating_widget = DesktopFloatingWidget(
-            get_native_host=lambda: getattr(self.window, "native", None) if self.window is not None else None,
+            get_native_host=self._get_alive_native_host,
             get_work_area=_get_tray_work_area,
             get_dpi_scale=lambda: _get_dpi_scale(self.hwnd) if self.hwnd else 1.0,
             on_position_saved=self._on_floating_position_saved,
             on_double_click=self.show_main_window,
         )
+
+    def _get_alive_native_host(self):
+        for win, h in ((self.window, self.hwnd), (self.settings_window, self.settings_hwnd)):
+            if _is_window_alive(win, h):
+                return getattr(win, "native", None)
+        return None
 
     def _effective_theme(self) -> str:
         return resolve_effective_theme(self.cfg.theme)
@@ -865,12 +995,10 @@ class MouseBatteryApp:
 
     def _push_state_to_ui(self) -> None:
         payload = json.dumps(self._build_state_dict(), ensure_ascii=False)
+        script = f"window.applyState && applyState({payload});"
         for win in (self.window, self.settings_window):
-            if win is not None:
-                try:
-                    win.evaluate_js(f"window.applyState && applyState({payload});")
-                except Exception:
-                    pass
+            if _is_window_alive(win):
+                _safe_eval_js(win, script)
 
     def _get_active_tier_thresholds(self, device_id: Optional[str] = None) -> tuple[int, int, int]:
         """读取当前生效的三级低电量阈值（支持单设备覆盖与用户自定义阈值）。"""
@@ -1008,19 +1136,22 @@ class MouseBatteryApp:
     def _reveal_main_if_needed(self) -> None:
         """在主窗口完成精确居中与首帧渲染后，播放 180ms 轻量淡入（关闭动画时瞬显）。"""
         with self._reveal_lock:
-            if self._main_revealed or not self._allow_show or self.window is None:
+            if self._main_revealed or not self._allow_show or not _is_window_alive(self.window, self.hwnd):
                 return
             self._main_revealed = True
         if self.hwnd:
             self._center_main_hwnd()
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+        self._reset_window_interaction_state(self.window, hiding=False)
         fade = 180 if self._effective_animations() else 0
         _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True, fade_ms=fade)
+        if self.hwnd:
+            _bring_hwnd_to_foreground(self.hwnd, keep_topmost=self.cfg.topmost)
 
     def _reveal_settings_if_needed(self) -> None:
         """在设置窗口完成定位与常规设置页渲染后，播放 220ms 淡入 + 8px 内容轻位移。"""
         with self._reveal_lock:
-            if not self._settings_pending_reveal or self.settings_window is None:
+            if not self._settings_pending_reveal or not _is_window_alive(self.settings_window, self.settings_hwnd):
                 return
             self._settings_pending_reveal = False
             self._settings_ready = True
@@ -1029,11 +1160,8 @@ class MouseBatteryApp:
             _set_window_pos(self.settings_hwnd, px, py, pw, ph)
             _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
         anim = self._effective_animations()
-        if anim and self.settings_window is not None:
-            try:
-                self.settings_window.evaluate_js("window.playWindowEnter && playWindowEnter();")
-            except Exception:
-                pass
+        if anim and _is_window_alive(self.settings_window, self.settings_hwnd):
+            _safe_eval_js(self.settings_window, "window.playWindowEnter && playWindowEnter();")
         _set_form_visibility(self.settings_window, visible=True, opacity=1.0, activate=True, fade_ms=220 if anim else 0)
 
     def on_ui_ready(self, target: str) -> None:
@@ -1043,52 +1171,233 @@ class MouseBatteryApp:
         else:
             self._reveal_main_if_needed()
 
-    def show_main_window(self) -> None:
-        """从系统托盘重新打开主窗口：隐藏态先对齐精确居中坐标，再 180ms 淡入显现。"""
-        if self.window is None:
+    def _reset_window_interaction_state(self, win: Optional[webview.Window], hiding: bool = False) -> None:
+        """清除窗口残留焦点、悬停、按下与文本选中状态，保持键盘导航与数据完整。"""
+        if not _is_window_alive(win):
             return
+        _clear_native_pointer_state(win)
+        flag = "true" if hiding else "false"
+        _safe_eval_js(win, f"window.resetInteractionState && resetInteractionState({flag});")
+
+    def _hook_os_session_ending(self) -> None:
+        if self._session_hooked or sys.platform != "win32":
+            return
+        try:
+            from Microsoft.Win32 import SystemEvents
+
+            def _on_session_ending(_sender, _args) -> None:
+                self._os_shutting_down = True
+
+            SystemEvents.SessionEnding += _on_session_ending
+            self._session_hooked = True
+        except Exception:
+            pass
+
+    def _hide_main_window(self) -> None:
+        """统一隐藏主窗口至托盘（不销毁窗口实例，同时彻底清除交互残留状态）。"""
+        self._allow_show = False
+        self._drag_state.pop("main", None)
+        if _is_window_alive(self.window, self.hwnd):
+            self._reset_window_interaction_state(self.window, hiding=True)
+            _set_form_visibility(self.window, visible=False, opacity=0.0)
+
+    def _on_main_window_closing(self) -> bool:
+        """拦截任务栏右键关闭、Alt+F4 与系统 WM_CLOSE，统一遵循 close_to_tray 设置。"""
+        if self._quitting or self._os_shutting_down:
+            return True
+        if self.cfg.close_to_tray:
+            self._hide_main_window()
+            return False  # 取消原生销毁，保留有效主窗口实例并常驻托盘
+        # 用户关闭“最小化至托盘”：走完整退出链路释放 HID/托盘/设置窗资源，不残留后台进程
+        threading.Thread(target=self.quit_app, daemon=True).start()
+        return False
+
+    def _on_main_window_closed(self) -> None:
+        with self._window_lock:
+            self.window = None
+            self.hwnd = 0
+            self._main_maximized = False
+            self._main_revealed = False
+            self._recreating_main = False
+        if not self._quitting and not self._os_shutting_down and not self.cfg.close_to_tray:
+            threading.Thread(target=self.quit_app, daemon=True).start()
+
+    def _on_settings_window_closing(self) -> bool:
+        """设置窗口响应任务栏右键关闭或 Alt+F4 时同样隐藏复用，仅退出应用时销毁。"""
+        if self._quitting or self._os_shutting_down:
+            return True
+        self.close_settings_window()
+        return False
+
+    def _setup_main_window_visuals(self, win: webview.Window) -> None:
+        """主窗口加载完成后的定位、Win10/11 圆角及显现处理（与后台监控服务启动解耦）。"""
+        for _ in range(20):
+            hwnd = self._find_hwnd_for(win, WINDOW_TITLE)
+            if hwnd:
+                self.hwnd = hwnd
+                break
+            time.sleep(0.04)
+
+        if self.hwnd:
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            work, scale = _get_window_monitor_work_area_and_scale(self.hwnd)
+            target_w = int(round(max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0])) * scale))
+            target_h = int(round(max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])) * scale))
+            tpx, tpy, tpw, tph = _compute_centered_rect(work, target_w, target_h)
+            _set_window_pos(self.hwnd, tpx, tpy, tpw, tph, topmost=self.cfg.topmost)
+            apply_window_rounded_corners(self.hwnd, radius_dip=10, scale=scale)
+            _attach_rounded_resize_hook(win, radius_dip=10)
+            if not self._allow_show:
+                _set_form_visibility(win, visible=False, opacity=0.0)
+
+        self._push_state_to_ui()
+        if self._allow_show:
+            # 兜底定时器：确保最迟 0.8s 显现，正常情况下由前端 ui_ready() 在首帧就绪时立刻显现
+            threading.Timer(0.8, self._reveal_main_if_needed).start()
+
+    def _attach_main_window_events(self, win: webview.Window, is_recreate: bool = False) -> None:
+        win.events.closing += self._on_main_window_closing
+        win.events.closed += self._on_main_window_closed
+        if is_recreate:
+            def _on_recreated_loaded() -> None:
+                with self._window_lock:
+                    self._recreating_main = False
+                self._setup_main_window_visuals(win)
+            win.events.loaded += _on_recreated_loaded
+
+    def _recreate_main_window(self) -> bool:
+        """若主窗口意外被系统销毁，安全重建主窗口且绝不重复创建窗口或重复启动后台监控。"""
+        if self._quitting:
+            return False
+        with self._window_lock:
+            if _is_window_alive(self.window, self.hwnd) or self._recreating_main:
+                return False
+            self._recreating_main = True
+            self._allow_show = True
+            self._main_maximized = False
+            with self._reveal_lock:
+                self._main_revealed = False
+            self.window = None
+            self.hwnd = 0
+
+        try:
+            log_x, log_y, log_w, log_h = self._compute_main_initial_logical_bounds()
+            win = webview.create_window(
+                title=WINDOW_TITLE,
+                url=UI_MAIN_HTML.as_uri(),
+                width=log_w,
+                height=log_h,
+                x=log_x,
+                y=log_y,
+                min_size=(580, 380),
+                frameless=True,
+                easy_drag=False,
+                shadow=is_windows_11(),
+                transparent=False,
+                background_color=self._theme_bg_hex(),
+                hidden=False,
+                on_top=self.cfg.topmost,
+                resizable=True,
+                js_api=_JsApi(self, "main"),
+            )
+            with self._window_lock:
+                self.window = win
+            self._attach_main_window_events(win, is_recreate=True)
+            return True
+        except Exception:
+            with self._window_lock:
+                self._recreating_main = False
+            return False
+
+    def show_main_window(self) -> None:
+        """从系统托盘、悬浮窗双击或重复运行 EXE 唤出主窗口：检测实例有效性、自动恢复/重建并清除残留状态。"""
+        if self._quitting:
+            return
+
+        if not _is_window_alive(self.window, self.hwnd):
+            self._recreate_main_window()
+            return
+
+        win = self.window
+        hwnd = self._find_hwnd_for(win, WINDOW_TITLE)
+        if hwnd:
+            self.hwnd = hwnd
+
+        user32 = ctypes.windll.user32
+        was_visible = bool(self.hwnd and user32.IsWindowVisible(wintypes.HWND(self.hwnd)))
+        was_minimized = bool(self.hwnd and user32.IsIconic(wintypes.HWND(self.hwnd)))
+
         self._allow_show = True
         with self._reveal_lock:
             self._main_revealed = True
-        if self.hwnd:
-            self._center_main_hwnd()
+
+        # 唤出前清除可能残留的关闭按钮焦点/悬停/文本选中状态（Opacity=0 时完成，零闪烁）
+        self._reset_window_interaction_state(win, hiding=False)
+
+        if was_minimized and self.hwnd:
+            user32.ShowWindow(wintypes.HWND(self.hwnd), 9)  # SW_RESTORE
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
-        self._push_state_to_ui()
-        fade = 180 if self._effective_animations() else 0
-        _set_form_visibility(self.window, visible=True, opacity=1.0, activate=True, fade_ms=fade)
+            self._push_state_to_ui()
+            _set_form_visibility(win, visible=True, opacity=1.0, activate=True, fade_ms=0)
+            _bring_hwnd_to_foreground(self.hwnd, keep_topmost=self.cfg.topmost)
+            return
+
+        if not was_visible:
+            if self.hwnd:
+                self._center_main_hwnd()
+                _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            self._push_state_to_ui()
+            fade = 180 if self._effective_animations() else 0
+            _set_form_visibility(win, visible=True, opacity=1.0, activate=True, fade_ms=fade)
+            if self.hwnd:
+                _bring_hwnd_to_foreground(self.hwnd, keep_topmost=self.cfg.topmost)
+            return
+
+        # 窗口已处于可见态：前置并同步最新状态
         if self.hwnd:
-            ctypes.windll.user32.SetForegroundWindow(wintypes.HWND(self.hwnd))
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            _bring_hwnd_to_foreground(self.hwnd, keep_topmost=self.cfg.topmost)
+        self._push_state_to_ui()
 
     def open_settings_window(self, section: str = "general") -> None:
         """打开或前置独立设置窗口：默认进入“常规设置”，以主窗口为基准居中显示且零闪烁。"""
+        if self._quitting:
+            return
         target_sec = section or "general"
         px, py, pw, ph, scale = self._compute_settings_target_phys_rect()
 
-        # 若设置窗口实例已存在（隐藏复用），先保持 Opacity=0 完成切页、同步状态与精准居中，再一次性显现
-        if self.settings_window is not None:
+        # 若设置窗口实例已存在（隐藏复用），先保持 Opacity=0 完成切页、清理残留状态、同步数据与精准居中，再一次性显现
+        if _is_window_alive(self.settings_window, self.settings_hwnd):
             try:
-                native = getattr(self.settings_window, "native", None)
-                if native is not None and not native.IsDisposed:
-                    _set_form_visibility(self.settings_window, visible=True, opacity=0.0, activate=False)
-                    if self.settings_hwnd:
-                        if ctypes.windll.user32.IsZoomed(wintypes.HWND(self.settings_hwnd)):
-                            ctypes.windll.user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
-                            self._settings_maximized = False
-                        _set_window_pos(self.settings_hwnd, px, py, pw, ph)
-                        _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
-                    payload = json.dumps(self._build_state_dict(), ensure_ascii=False)
-                    with self._reveal_lock:
-                        self._settings_pending_reveal = True
-                    self.settings_window.evaluate_js(
-                        f"window.switchSection && switchSection({json.dumps(target_sec)}, true);"
-                        f"window.applyState && applyState({payload});"
-                        f"requestAnimationFrame(()=>requestAnimationFrame(()=>window.pywebview?.api?.ui_ready()));"
-                    )
-                    threading.Timer(0.15, self._reveal_settings_if_needed).start()
-                    return
+                _set_form_visibility(self.settings_window, visible=True, opacity=0.0, activate=False)
+                if self.settings_hwnd:
+                    user32 = ctypes.windll.user32
+                    if user32.IsIconic(wintypes.HWND(self.settings_hwnd)):
+                        user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
+                    if user32.IsZoomed(wintypes.HWND(self.settings_hwnd)):
+                        user32.ShowWindow(wintypes.HWND(self.settings_hwnd), 9)
+                        self._settings_maximized = False
+                    _set_window_pos(self.settings_hwnd, px, py, pw, ph)
+                    _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
+                _clear_native_pointer_state(self.settings_window)
+                payload = json.dumps(self._build_state_dict(), ensure_ascii=False)
+                with self._reveal_lock:
+                    self._settings_pending_reveal = True
+                _safe_eval_js(
+                    self.settings_window,
+                    f"window.resetInteractionState && resetInteractionState(false);"
+                    f"window.switchSection && switchSection({json.dumps(target_sec)}, true);"
+                    f"window.applyState && applyState({payload});"
+                    f"requestAnimationFrame(()=>requestAnimationFrame(()=>window.pywebview?.api?.ui_ready()));",
+                )
+                threading.Timer(0.15, self._reveal_settings_if_needed).start()
+                return
             except Exception:
                 self.settings_window = None
                 self.settings_hwnd = 0
+        else:
+            self.settings_window = None
+            self.settings_hwnd = 0
 
         # 首次创建设置窗口：通过 Opacity=0 预渲染，等首帧就绪后再一次性显现
         log_x = int(round(px / scale))
@@ -1142,11 +1451,14 @@ class MouseBatteryApp:
             self._settings_ready = False
 
         win.events.loaded += _on_settings_loaded
+        win.events.closing += self._on_settings_window_closing
         win.events.closed += _on_settings_closed
 
     def close_settings_window(self) -> None:
         """140ms 平滑淡出后隐藏并复用设置窗口实例（快速重开时自动取消淡出并无缝衔接）。"""
-        if self.settings_window is not None:
+        self._drag_state.pop("settings", None)
+        if _is_window_alive(self.settings_window, self.settings_hwnd):
+            self._reset_window_interaction_state(self.settings_window, hiding=True)
             fade = 140 if self._effective_animations() else 0
             _set_form_visibility(self.settings_window, visible=False, opacity=0.0, fade_ms=fade)
             self._settings_maximized = False
@@ -1154,18 +1466,19 @@ class MouseBatteryApp:
     def minimize_window(self, target: str = "main") -> None:
         win = self.settings_window if target == "settings" else self.window
         hwnd = self.settings_hwnd if target == "settings" else self.hwnd
-        if win is not None:
+        if _is_window_alive(win, hwnd):
+            self._reset_window_interaction_state(win, hiding=False)
             try:
                 win.minimize()
                 return
             except Exception:
                 pass
-        if hwnd:
+        if hwnd and ctypes.windll.user32.IsWindow(wintypes.HWND(hwnd)):
             ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), 6)
 
     def toggle_maximize(self, target: str = "main") -> None:
         hwnd = self.settings_hwnd if target == "settings" else self.hwnd
-        if not hwnd:
+        if not hwnd or not ctypes.windll.user32.IsWindow(wintypes.HWND(hwnd)):
             return
         user32 = ctypes.windll.user32
         is_max = bool(user32.IsZoomed(wintypes.HWND(hwnd)))
@@ -1178,12 +1491,11 @@ class MouseBatteryApp:
         self._push_state_to_ui()
 
     def close_main_window(self) -> None:
-        """按「关闭窗口时最小化至托盘」设置决定隐藏到托盘还是退出程序。"""
+        """按「关闭窗口时最小化至托盘」设置决定隐藏到托盘还是完整退出程序。"""
         if self.cfg.close_to_tray:
-            self._allow_show = False
-            _set_form_visibility(self.window, visible=False, opacity=0.0)
+            self._hide_main_window()
         else:
-            self.quit_app()
+            threading.Thread(target=self.quit_app, daemon=True).start()
 
     def begin_drag(self, target: str, _sx: int, _sy: int) -> None:
         hwnd = self.settings_hwnd if target == "settings" else self.hwnd
@@ -1233,6 +1545,7 @@ class MouseBatteryApp:
             "close_to_tray",
             "auto_monitor",
             "auto_check_updates",
+            "debug_logging",
             "alerts_master_enabled",
             "custom_alerts_enabled",
             "popup_alert_enabled",
@@ -1293,6 +1606,7 @@ class MouseBatteryApp:
             self.cfg.floating = asdict(fcfg)
 
         save_config(self.cfg)
+        self.manager.set_debug_logging(self.cfg.debug_logging, DATA_DIR / "hid_diagnostics.log")
 
         # 应用窗口深浅色与置顶状态
         is_dark = self._effective_theme() == "dark"
@@ -1370,7 +1684,10 @@ class MouseBatteryApp:
     def export_diagnostics(self) -> dict[str, Any]:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"diagnostics_{ts}.json"
-        report = self.manager.export_diagnostics()
+        with self._poll_lock:
+            report = self.manager.export_diagnostics(
+                active_monitor_tasks=len(self._active_bg_threads),
+            )
         payload = json.dumps(report, ensure_ascii=False, indent=2)
         target = APP_DIR / filename
         try:
@@ -1604,7 +1921,16 @@ class MouseBatteryApp:
         self._update_cancel.set()
 
     def refresh_now(self) -> None:
-        threading.Thread(target=self._poll_once, daemon=True).start()
+        """手动刷新电量：防连点防并发重复请求，并与自动轮询串行执行。"""
+        now = time.monotonic()
+        if self._poll_running.is_set() or (now - self._last_manual_refresh_mono) < 1.0:
+            return
+        self._last_manual_refresh_mono = now
+        threading.Thread(
+            target=self._poll_once,
+            kwargs={"reason": "manual_refresh", "force_rescan": True, "force_query": True},
+            daemon=True,
+        ).start()
 
     # ================= 原生 WinForms 极速最高置顶低电量迷你弹窗 & 系统通知 =================
 
@@ -1664,7 +1990,7 @@ class MouseBatteryApp:
         anim_on = self._effective_animations()
         full_name = (full_device_name or device_label or "").strip() or "未知外设"
 
-        native_main = getattr(self.window, "native", None) if self.window is not None else None
+        native_main = self._get_alive_native_host()
         if native_main is None:
             return
 
@@ -1890,8 +2216,24 @@ class MouseBatteryApp:
         )
 
     def quit_app(self) -> None:
-        self._stop_event.set()
-        self._close_alert_window()
+        with self._quit_lock:
+            if self._quitting:
+                return
+            self._quitting = True
+            self._stop_event.set()
+            if self._device_change_timer is not None:
+                try:
+                    self._device_change_timer.cancel()
+                except Exception:
+                    pass
+                self._device_change_timer = None
+            if self._device_change_hwnd and sys.platform == "win32":
+                try:
+                    ctypes.windll.user32.PostMessageW(wintypes.HWND(self._device_change_hwnd), 0x0012, 0, 0)
+                except Exception:
+                    pass
+
+        self._close_alert_window(instant=True)
         self.floating_widget.close()
         self.manager.stop()
         if self._tray is not None:
@@ -1899,52 +2241,215 @@ class MouseBatteryApp:
                 self._tray.stop()
             except Exception:
                 pass
-        if self.settings_window is not None:
+            self._tray = None
+        if _is_window_alive(self.settings_window, self.settings_hwnd):
             try:
                 self.settings_window.destroy()
             except Exception:
                 pass
-        if self.window is not None:
+        if _is_window_alive(self.window, self.hwnd):
             try:
                 self.window.destroy()
             except Exception:
                 pass
 
-    # ================= 后台轮询与唤醒监测 =================
+    # ================= 后台轮询、唤醒监测与硬件热插拔监听 =================
 
-    def _poll_once(self) -> None:
-        devices = self.manager.poll()
-        self.devices = devices
-        for d in devices:
-            self._known_devices[d.device_id] = d
-        self._last_poll_ts = time.time()
-        self._push_state_to_ui()
-        self._update_tray_visual()
-        self._sync_floating_widget()
-        self._check_low_batteries(devices)
+    def _poll_once(
+        self,
+        reason: str = "scheduled",
+        force_rescan: bool = False,
+        force_query: bool = False,
+    ) -> bool:
+        """串行执行单次设备电量轮询，自动合并并发请求并避免重复访问同一 HID 设备。"""
+        if self._stop_event.is_set():
+            return False
+        blocking = reason in ("startup", "manual_refresh")
+        acquired = self._poll_lock.acquire(blocking=blocking, timeout=2.0 if blocking else -1) if blocking else self._poll_lock.acquire(blocking=False)
+        if not acquired:
+            return False
+        self._poll_running.set()
+        try:
+            if self._stop_event.is_set():
+                return False
+            devices = self.manager.poll(
+                reason=reason,
+                force_rescan=force_rescan,
+                force_query=force_query,
+                active_monitor_tasks=len(self._active_bg_threads),
+            )
+            self.devices = devices
+            for d in devices:
+                self._known_devices[d.device_id] = d
+            self._last_poll_ts = time.time()
+            self._push_state_to_ui()
+            self._update_tray_visual()
+            self._sync_floating_widget()
+            self._check_low_batteries(devices)
+            return True
+        finally:
+            self._poll_running.clear()
+            self._poll_lock.release()
 
     def _poll_loop(self) -> None:
-        # 启动后立即执行首轮扫描
-        self._poll_once()
-        while not self._stop_event.is_set():
-            interval = max(10, int(self.cfg.poll_interval_sec))
-            self._stop_event.wait(interval)
-            if self._stop_event.is_set():
-                break
-            if self.cfg.auto_monitor:
-                self._poll_once()
+        self._active_bg_threads.add("poll_loop")
+        try:
+            # 启动后立即执行首轮扫描
+            self._poll_once(reason="startup", force_rescan=True, force_query=True)
+            while not self._stop_event.is_set():
+                interval = max(10, int(self.cfg.poll_interval_sec))
+                self._stop_event.wait(interval)
+                if self._stop_event.is_set():
+                    break
+                if self.cfg.auto_monitor:
+                    self._poll_once(reason="scheduled", force_rescan=False, force_query=False)
+        finally:
+            self._active_bg_threads.discard("poll_loop")
 
     def _wakeup_watch_loop(self) -> None:
-        while not self._stop_event.is_set():
-            pos = _get_cursor_pos()
-            if pos != self._last_cursor:
-                self._last_cursor = pos
-                if self.cfg.auto_monitor and any(
-                    d.kind == KIND_MOUSE and d.connected and (d.asleep or d.percent is None)
-                    for d in self.devices
-                ):
-                    self._poll_once()
-            self._stop_event.wait(1.8)
+        self._active_bg_threads.add("wakeup_watch")
+        try:
+            while not self._stop_event.is_set():
+                pos = _get_cursor_pos()
+                if pos != self._last_cursor:
+                    self._last_cursor = pos
+                    now_mono = time.monotonic()
+                    # 仅在存在休眠/未知鼠标且距上次唤醒探测 >= 15s 且当前无轮询进行时触发，杜绝高频打扰鼠标
+                    if (
+                        self.cfg.auto_monitor
+                        and not self._poll_running.is_set()
+                        and (now_mono - self._last_wakeup_poll_mono) >= 15.0
+                        and any(
+                            d.kind == KIND_MOUSE and d.connected and (d.asleep or d.percent is None)
+                            for d in self.devices
+                        )
+                    ):
+                        self._last_wakeup_poll_mono = now_mono
+                        self._poll_once(reason="wakeup", force_rescan=False, force_query=True)
+                self._stop_event.wait(2.0)
+        finally:
+            self._active_bg_threads.discard("wakeup_watch")
+
+    def _on_hardware_device_change(self) -> None:
+        """USB/HID 设备插拔防抖回调：标记 HID 缓存失效并在 1.2s 后按需执行单次同步。"""
+        if self._stop_event.is_set():
+            return
+        self.manager.mark_hid_dirty("device_change")
+        if not self.cfg.auto_monitor:
+            return
+        if self._device_change_timer is not None:
+            try:
+                self._device_change_timer.cancel()
+            except Exception:
+                pass
+        timer = threading.Timer(
+            1.2,
+            lambda: self._poll_once(reason="device_change", force_rescan=True, force_query=True),
+        )
+        timer.daemon = True
+        self._device_change_timer = timer
+        timer.start()
+
+    def _device_change_watch_loop(self) -> None:
+        """轻量级 Win32 WM_DEVICECHANGE 监听窗口：仅在 HID 硬件插拔时刷新拓扑缓存，平时零总线扫描。"""
+        if sys.platform != "win32":
+            return
+        self._active_bg_threads.add("device_change_watch")
+        hwnd = 0
+        hdev_notify = None
+        try:
+            user32 = ctypes.windll.user32
+            k32 = ctypes.windll.kernel32
+            user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.DefWindowProcW.restype = ctypes.c_ssize_t
+
+            WM_DEVICECHANGE = 0x0219
+            DBT_DEVICEARRIVAL = 0x8000
+            DBT_DEVICEREMOVECOMPLETE = 0x8004
+            DBT_DEVNODES_CHANGED = 0x0007
+            DBT_DEVTYP_DEVICEINTERFACE = 0x00000005
+
+            class _GUID(ctypes.Structure):
+                _fields_ = [
+                    ("Data1", wintypes.DWORD),
+                    ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD),
+                    ("Data4", ctypes.c_ubyte * 8),
+                ]
+
+            class _DEV_BROADCAST_DEVICEINTERFACE(ctypes.Structure):
+                _fields_ = [
+                    ("dbcc_size", wintypes.DWORD),
+                    ("dbcc_devicetype", wintypes.DWORD),
+                    ("dbcc_reserved", wintypes.DWORD),
+                    ("dbcc_classguid", _GUID),
+                    ("dbcc_name", ctypes.c_wchar * 1),
+                ]
+
+            WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+
+            class _WNDCLASSW(ctypes.Structure):
+                _fields_ = [
+                    ("style", wintypes.UINT),
+                    ("lpfnWndProc", WNDPROC),
+                    ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HICON),
+                    ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HBRUSH),
+                    ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR),
+                ]
+
+            def _wnd_proc(h, msg, wp, lp):
+                if msg == WM_DEVICECHANGE and wp in (DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVNODES_CHANGED):
+                    self._on_hardware_device_change()
+                return user32.DefWindowProcW(h, msg, wp, lp)
+
+            cb = WNDPROC(_wnd_proc)
+            hinst = k32.GetModuleHandleW(None)
+            cls_name = f"BattDockDevChange_{os.getpid()}"
+            wc = _WNDCLASSW()
+            wc.lpfnWndProc = cb
+            wc.hInstance = hinst
+            wc.lpszClassName = cls_name
+            user32.RegisterClassW(ctypes.byref(wc))
+
+            hwnd = int(user32.CreateWindowExW(0, cls_name, "", 0, 0, 0, 0, 0, None, None, hinst, None) or 0)
+            self._device_change_hwnd = hwnd
+            if hwnd:
+                # 注册 GUID_DEVINTERFACE_HID = {4D1E55B2-F16F-11CF-88CB-001111000030}
+                hid_guid = _GUID(0x4D1E55B2, 0xF16F, 0x11CF, (ctypes.c_ubyte * 8)(0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30))
+                flt = _DEV_BROADCAST_DEVICEINTERFACE()
+                flt.dbcc_size = ctypes.sizeof(_DEV_BROADCAST_DEVICEINTERFACE)
+                flt.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE
+                flt.dbcc_classguid = hid_guid
+                user32.RegisterDeviceNotificationW.restype = ctypes.c_void_p
+                hdev_notify = user32.RegisterDeviceNotificationW(wintypes.HWND(hwnd), ctypes.byref(flt), 0)
+
+                msg = wintypes.MSG()
+                while not self._stop_event.is_set():
+                    res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                    if res <= 0:
+                        break
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+        except Exception:
+            pass
+        finally:
+            try:
+                if hdev_notify:
+                    ctypes.windll.user32.UnregisterDeviceNotification(ctypes.c_void_p(hdev_notify))
+            except Exception:
+                pass
+            try:
+                if hwnd:
+                    ctypes.windll.user32.DestroyWindow(wintypes.HWND(hwnd))
+            except Exception:
+                pass
+            self._device_change_hwnd = 0
+            self._active_bg_threads.discard("device_change_watch")
 
     def _check_low_batteries(self, devices: list[DeviceBattery]) -> None:
         triggered = evaluate_tiered_alerts(devices, self.cfg, self._alerted_tiers, self._last_alert_ts)
@@ -2034,46 +2539,37 @@ class MouseBatteryApp:
         )
         threading.Thread(target=self._tray.run, daemon=True).start()
 
-    def _on_window_loaded(self) -> None:
-        for _ in range(15):
-            self.hwnd = self._find_hwnd_for(self.window, WINDOW_TITLE)
-            if self.hwnd:
-                break
-            time.sleep(0.05)
-
-        if self.hwnd:
-            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
-            # WinForms frameless 模式初始化时会裁掉非客户区尺寸，此时窗口 Opacity=0，恢复精确目标尺寸并校准居中完全不可见
-            work, scale = _get_window_monitor_work_area_and_scale(self.hwnd)
-            target_w = int(round(max(580, int(self.cfg.width or MAIN_DEFAULT_SIZE[0])) * scale))
-            target_h = int(round(max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])) * scale))
-            tpx, tpy, tpw, tph = _compute_centered_rect(work, target_w, target_h)
-            _set_window_pos(self.hwnd, tpx, tpy, tpw, tph, topmost=self.cfg.topmost)
-            apply_window_rounded_corners(self.hwnd, radius_dip=10, scale=scale)
-            _attach_rounded_resize_hook(self.window, radius_dip=10)
-            if not self._allow_show:
-                _set_form_visibility(self.window, visible=False, opacity=0.0)
-
-        self._push_state_to_ui()
-        if self._allow_show:
-            # 兜底定时器：确保最迟 0.8s 显现，正常情况下由前端 ui_ready() 在首帧就绪时立刻显现
-            threading.Timer(0.8, self._reveal_main_if_needed).start()
+    def _start_background_services_once(self) -> None:
+        """保证托盘、轮询、唤醒监听、单实例唤出监听与热插拔监听仅启动一次，窗口重建时不重复创建后台任务。"""
+        with self._bg_lock:
+            if self._bg_started:
+                return
+            self._bg_started = True
+        self._hook_os_session_ending()
         self._start_tray()
         self._sync_floating_widget()
-        threading.Thread(target=self._poll_loop, daemon=True).start()
-        threading.Thread(target=self._wakeup_watch_loop, daemon=True).start()
-        threading.Thread(target=self._show_event_loop, daemon=True).start()
+        threading.Thread(target=self._poll_loop, name="BattDock-Poll", daemon=True).start()
+        threading.Thread(target=self._wakeup_watch_loop, name="BattDock-Wakeup", daemon=True).start()
+        threading.Thread(target=self._show_event_loop, name="BattDock-ShowEvent", daemon=True).start()
+        threading.Thread(target=self._device_change_watch_loop, name="BattDock-DevChange", daemon=True).start()
         if self.cfg.auto_check_updates:
             threading.Timer(12.0, lambda: self.check_updates(silent=True)).start()
+
+    def _on_window_loaded(self) -> None:
+        if self.window is not None:
+            self._setup_main_window_visuals(self.window)
+        self._start_background_services_once()
 
     def _show_event_loop(self) -> None:
         if sys.platform != "win32":
             return
+        self._active_bg_threads.add("show_event")
         k32 = ctypes.windll.kernel32
         ev_new = k32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
         ev_old = k32.CreateEventW(None, False, False, LEGACY_SHOW_EVENT_NAME)
         handles = [h for h in (ev_new, ev_old) if h]
         if not handles:
+            self._active_bg_threads.discard("show_event")
             return
         arr = (wintypes.HANDLE * len(handles))(*handles)
         try:
@@ -2084,6 +2580,7 @@ class MouseBatteryApp:
         finally:
             for h in handles:
                 k32.CloseHandle(wintypes.HANDLE(h))
+            self._active_bg_threads.discard("show_event")
 
     def run(self) -> None:
         _install_flicker_free_patch()
@@ -2107,7 +2604,11 @@ class MouseBatteryApp:
             resizable=True,
             js_api=_JsApi(self, "main"),
         )
-        webview.start(func=self._on_window_loaded, gui="edgechromium", icon=ico_path, debug=False)
+        self._attach_main_window_events(self.window, is_recreate=False)
+        try:
+            webview.start(func=self._on_window_loaded, gui="edgechromium", icon=ico_path, debug=False)
+        finally:
+            self.quit_app()
 
 
 class _JsApi:

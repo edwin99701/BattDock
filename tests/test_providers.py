@@ -667,5 +667,145 @@ class TestBrandAndDeviceNaming(unittest.TestCase):
         self.assertIn("DwmExtendFrameIntoClientArea", flt_py)
 
 
+class TestV252StabilityAndLifecycle(unittest.TestCase):
+    def test_device_manager_caches_hid_snapshot_and_records_diagnostics(self):
+        from unittest.mock import patch
+        from brand import APP_VERSION
+
+        fake_hid = [
+            {
+                "vendor_id": 0x3554,
+                "product_id": 0xFB3E,
+                "usage_page": 0xFF02,
+                "usage": 0x0002,
+                "interface_number": 1,
+                "path": b"fake-path",
+                "product_string": "VGN DragonFly F2 Pro Max",
+            }
+        ]
+        dummy_dev = DeviceBattery("vgn:3554:fb3e", "VGN Dragonfly F2 Pro Max", "VGN", KIND_MOUSE, online=True, percent=88)
+        mgr = DeviceManager(providers=[_DummyProvider([dummy_dev])])
+
+        with patch("providers.manager.hid.enumerate", return_value=fake_hid) as mock_enum:
+            # 1. 首轮启动扫描必须枚举一次
+            r1 = mgr.poll(reason="startup")
+            self.assertEqual(len(r1), 1)
+            self.assertEqual(mock_enum.call_count, 1)
+
+            # 2. 常规周期轮询必须复用缓存，不再重复触发 hid.enumerate(0, 0)
+            r2 = mgr.poll(reason="scheduled")
+            self.assertEqual(len(r2), 1)
+            self.assertEqual(mock_enum.call_count, 1)
+
+            # 3. 硬件插拔标记脏位后，下轮才重新扫描
+            mgr.mark_hid_dirty("device_change")
+            mgr.poll(reason="scheduled")
+            self.assertEqual(mock_enum.call_count, 2)
+
+            # 4. 手动刷新强制重新扫描
+            mgr.poll(reason="manual_refresh", force_rescan=True, force_query=True)
+            self.assertEqual(mock_enum.call_count, 3)
+
+            diag = mgr.export_diagnostics(hid_snapshot=fake_hid, active_monitor_tasks=4)
+            self.assertEqual(diag["app_version"], APP_VERSION)
+            pd = diag["poll_diagnostics"]
+            self.assertEqual(pd["total_polls"], 5)
+            self.assertEqual(pd["total_full_hid_scans"], 3)
+            self.assertEqual(pd["recent_polls"][-1]["active_monitor_tasks"], 4)
+            self.assertEqual(pd["recent_polls"][1]["scan_reason"], "cached")
+            self.assertFalse(pd["recent_polls"][1]["hid_scanned"])
+
+    def test_vgn_reader_reuses_snapshot_and_applies_sleep_backoff(self):
+        from unittest.mock import patch
+        from vgn_battery import VgnBatteryReader
+
+        snap = [
+            {
+                "vendor_id": 0x3554,
+                "product_id": 0xFB3E,
+                "usage_page": 0xFF02,
+                "usage": 0x0002,
+                "path": b"vgn-fake-path",
+                "product_string": "VGN DragonFly F2 Pro Max",
+            }
+        ]
+        reader = VgnBatteryReader()
+        query_calls = []
+
+        def fake_query(path, max_attempts=2):
+            query_calls.append((path, max_attempts))
+            return None, {
+                "ok": False,
+                "duration_ms": 10.0,
+                "timeouts": 1,
+                "retries": max(0, max_attempts - 1),
+                "io_error": False,
+                "skipped_backoff": False,
+            }
+
+        with patch("vgn_battery.hid.enumerate") as mock_enum, patch.object(reader, "_query_once", side_effect=fake_query):
+            # 连续 3 次无应答进入休眠态，且全程不调用 hid.enumerate
+            for _ in range(3):
+                res = reader.read(hid_snapshot=snap, force=False)
+            self.assertEqual(mock_enum.call_count, 0)
+            self.assertTrue(res.asleep)
+            self.assertEqual(len(query_calls), 3)
+
+            # 第 4 次常规轮询在退避窗口内应直接跳过 HID 访问，不反复唤醒休眠鼠标
+            res_backoff = reader.read(hid_snapshot=snap, force=False)
+            self.assertTrue(res_backoff.asleep)
+            self.assertEqual(len(query_calls), 3)
+            self.assertTrue(reader.get_last_query_stats()["skipped_backoff"])
+
+            # 手动强制刷新或唤醒必须穿透退避立即查询
+            reader.read(hid_snapshot=snap, force=True)
+            self.assertEqual(len(query_calls), 4)
+
+    def test_window_lifecycle_closing_recovery_and_ui_reset_invariants(self):
+        from unittest.mock import MagicMock, patch
+        from mouse_battery_app import MouseBatteryApp
+
+        app = MouseBatteryApp(start_hidden=False)
+        app.cfg.close_to_tray = True
+        app._hide_main_window = MagicMock()
+        app.quit_app = MagicMock()
+
+        # 1. 开启最小化至托盘：任务栏右键关闭 / Alt+F4 必须取消原生销毁并隐藏窗口
+        self.assertFalse(app._on_main_window_closing())
+        app._hide_main_window.assert_called_once()
+        app.quit_app.assert_not_called()
+
+        # 2. 关闭最小化至托盘：任务栏关闭 / Alt+F4 必须触发完整退出
+        app.cfg.close_to_tray = False
+        app._hide_main_window.reset_mock()
+        with patch("mouse_battery_app.threading.Thread") as mock_thr:
+            self.assertFalse(app._on_main_window_closing())
+            mock_thr.assert_called_once()
+            self.assertEqual(mock_thr.call_args.kwargs.get("target"), app.quit_app)
+
+        # 3. 正式退出或系统关机时允许原生窗口关闭
+        app._quitting = True
+        self.assertTrue(app._on_main_window_closing())
+        self.assertTrue(app._on_settings_window_closing())
+
+        # 4. 若主窗口已失效/销毁，show_main_window 必须触发安全重建而非继续操作死句柄
+        app._quitting = False
+        app.window = None
+        app.hwnd = 0
+        app._recreate_main_window = MagicMock(return_value=True)
+        app.show_main_window()
+        app._recreate_main_window.assert_called_once()
+
+        # 5. 前端交互状态重置与防残留不变量校验
+        root = Path(__file__).resolve().parent.parent
+        idx_html = (root / "ui" / "index.html").read_text(encoding="utf-8")
+        set_html = (root / "ui" / "settings.html").read_text(encoding="utf-8")
+        common_css = (root / "ui" / "common.css").read_text(encoding="utf-8")
+        self.assertIn("function resetInteractionState", idx_html)
+        self.assertIn("ui-reset-hover", idx_html)
+        self.assertIn("function resetInteractionState", set_html)
+        self.assertIn(":root.ui-reset-hover *", common_css)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2449,9 +2449,55 @@
   function doCancelUpdate() { window.pywebview?.api?.cancel_update_download(); }
   function openRepoUrl() { window.pywebview?.api?.open_external_url(appState?.github_repo_url || ""); }
   function openReleaseUrl() { window.pywebview?.api?.open_external_url(appState?.update_state?.release_url || appState?.releases_page_url || ""); }
-  function minimizeWin() { window.pywebview?.api?.minimize_window(); }
+  function minimizeWin() { resetInteractionState(false); window.pywebview?.api?.minimize_window(); }
   function toggleMax() { window.pywebview?.api?.toggle_maximize(); }
-  function closeWin() { window.pywebview?.api?.close_window(); }
+  function closeWin() { resetInteractionState(true); window.pywebview?.api?.close_window(); }
+
+  let _settingsHoverRaf = 0;
+  function _releaseSettingsHoverReset() {
+    if (_settingsHoverRaf) {
+      cancelAnimationFrame(_settingsHoverRaf);
+      _settingsHoverRaf = 0;
+    }
+    document.documentElement.classList.remove("ui-reset-hover");
+  }
+  function resetInteractionState(isHiding) {
+    const active = document.activeElement;
+    if (active && active !== document.body && typeof active.blur === "function") {
+      active.blur();
+    }
+    try {
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.rangeCount > 0) sel.removeAllRanges();
+    } catch (_) {}
+    if (typeof closeCustomSelect === "function" && activeCSelectId) {
+      closeCustomSelect();
+    }
+    document.documentElement.classList.add("ui-reset-hover");
+    void document.documentElement.offsetHeight;
+    if (_settingsHoverRaf) {
+      cancelAnimationFrame(_settingsHoverRaf);
+      _settingsHoverRaf = 0;
+    }
+    if (!isHiding) {
+      _settingsHoverRaf = requestAnimationFrame(() => {
+        _settingsHoverRaf = requestAnimationFrame(() => {
+          _settingsHoverRaf = 0;
+          document.documentElement.classList.remove("ui-reset-hover");
+        });
+      });
+    }
+  }
+  window.resetInteractionState = resetInteractionState;
+  window.addEventListener("pointermove", _releaseSettingsHoverReset, { passive: true });
+  document.addEventListener("visibilitychange", () => {
+    resetInteractionState(document.hidden);
+  });
+  document.querySelectorAll("#titlebar button.win-btn").forEach((btn) => {
+    btn.addEventListener("mousedown", (e) => {
+      if (e.button === 0) e.preventDefault();
+    });
+  });
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
