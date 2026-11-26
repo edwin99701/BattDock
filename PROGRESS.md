@@ -1,74 +1,58 @@
-# PROGRESS.md — 项目真实开发进度看板
+# PROGRESS.md — BattDock 项目真实开发进度看板
 
 > 最后更新：2026-11-26  
-> 当前版本：BattDock v2.5.1 ｜ 升级前单设备基线：`8075917` ｜ v2.0 底层多品牌基线：`45e9cd4`
+> 当前最新正式版本：**BattDock v2.5.1**（Git 提交 `4e7df67`）  
+> 关键历史基线：v1 单设备基线 `8075917` ｜ v2.0 多品牌底层基线 `45e9cd4` ｜ v2.3.0 品牌升级 `7a3bb61` ｜ v2.4.0 图标与更新重构 `7efafee` ｜ v2.5.0 体验升级 `448cd83`
 
 ---
 
 ## 一、已完成里程碑（切勿重复开发）
 
-### 第三阶段：现代化双窗口 UI 重构、悬浮窗与 Win10/11 兼容升级（v2.1.0）
-- [x] `app_config.py` 扩展：完整常规/提醒/外观/桌面悬浮窗/单设备独立偏好持久化（兼容旧配置，作者 `Ed`）
-- [x] `floating_widget.py`：原生 WinForms 轻量桌面悬浮窗（零 WebView2 额外开销，Win10/11 通用）与系统提示音
-- [x] `mouse_battery_app.py`：主窗口（`760×480`）+ 独立设置窗口（`840×742`）双窗口管理、单设备独立配置优先、自定义提醒与重复提醒冷却、Windows 系统通知与悬浮窗联动、去除 Win11 专属 Acrylic 硬依赖
-- [x] `ui/common.css`、`ui/index.html`、`ui/settings.html`：高度还原两张设计参考图，实现浅/深/跟随系统主题、动态多设备卡片、多电池耳塞三列组合卡片、6 分类完整设置页与内嵌文档预览
-- [x] 22 项自动化单元测试全部通过（`tests/test_providers.py`）+ 本机 VGN 真机回归通过
-- [x] 实际运行主窗口与设置窗口截取实测图并通过视觉对比验收（已修复「休眠·休眠中」重复文案、步进器紧凑排版与设置窗首屏完整展示）
-- [x] 新增可重复打包脚本 `build_release.ps1` 并重新生成 `release\VGNMouseBattery\VGNMouseBattery.exe`
-- [x] UI 细节优化与交互修复：主窗口启动/托盘恢复精确工作区居中（误差 `0,0`）、设置窗口以主窗口为基准居中且默认进入「常规设置」、关于页面精简为图标+名称+动态版本号（浅/深双主题验证通过）、23/23 单元测试通过
-- [x] 启动与设置窗口零闪烁修复：引入 WinForms `Opacity=0` 预渲染、前端双 `rAF` 就绪后原子显现及设置窗口隐藏复用（15ms 逐帧实测主窗口启动与设置窗口首次/二次打开跳变均为 `0` 次，二次打开 `23ms`）
-- [x] 第二轮 UI 细节与全局动效优化：支持设备清单改为设置内独立子页面（14 个独立可折叠中性色品牌、类型筛选与搜索自动展开、面向用户隐藏测试状态词）；落地全套轻量非阻塞 Ease-Out 交互动效、自绘深浅一致下拉菜单、主界面增量复用进度条动画及「界面动画」开关（遵循 Windows 系统偏好）
-- [x] 品牌图标升级、设置页去右侧大图标与 GitHub 仓库发布：移除设置各页右侧标题大图标（仅保留左侧小图标），换用全新蓝牙耳机+鼠标圆角品牌图标至 EXE/文件夹、主窗口标题栏及「关于软件」页，托盘保留随电量动态变化的矢量电池样式；完成文档/脚本本地路径脱敏并发布至 GitHub
-- [x] **v2.2.0 公开开源与在线自动更新**：经用户确认将 GitHub 仓库 `edwin99701/wireless-peripheral-battery-monitor` 转为公开；新增 `updater.py` 零依赖在线检查更新与 Windows 一键下载/校验/覆盖重启升级，接入主窗口新版本提示胶囊、设置关于页更新面板、托盘右键检查更新及 26 项全通过单元测试
-- [x] **BattDock v2.3.0 品牌升级与正式发布**：集中定义 `brand.py` 完成全链路更名至 `BattDock`（含 `BattDock.exe`、Windows 文件属性、`BattDock.App` 标识与新旧单实例/配置/自启无缝迁移）；换用纯黑白圆角品牌 Logo（透明 PNG + 9 规格 ICO），系统托盘保留动态矢量电池并仅状态变更时重绘；新增 `providers/device_naming.py` 规范设备显示名与中文连接副标题/状态（`—` 替代未知，不重复状态文案）；强化 `updater.py`（仅稳定版、HTTPS、SHA-256 校验、失败回滚与 `v2.2.0` 升级桥接包）；通过 28/28 单元测试、实机截图、旧版升级桥接校验并全面升级 GitHub 仓库主页与中英双语 README
-- [x] **BattDock v2.4.0 图标统一、悬浮窗精简、Win10 圆角与自动更新全链路修复**：建立 `device_icons.py` 与 `assets/icons/*.svg` 全局统一黑白实心设备图标库并同步应用至全部 5 大界面（严格保留设置左导航、主 Logo 与动态电池托盘）；悬浮窗精简为品牌名 + 悬停完整详情 + 同品牌多设备区分 + 自定义名；低电量提醒切换为统一实心设备图标与动态三级黄/橙/红配色文案；新增 Win10 `CreateRoundRectRgn + SetWindowRgn` 跨版本外轮廓圆角；彻底修复跨盘 `Move-Item` 导致自动更新无法覆盖重启的根因，并重构软件内简明更新摘要面板
-- [x] **BattDock v2.5.0 设备管理重构、Win10 四角零残留修复、紧凑自适应提醒弹窗与标准安装程序**：重构设备管理为可折叠行式设置卡片 + 左侧六点拖拽排序（单设备隐藏手柄、独立三级数值步进器、移除底层协议名）；修复 Win10 四角像素残留与全窗口 `SizeChanged/Resize/VisibleChanged/DpiChanged` 同步裁剪；优化设置窗口最大化自适应居中与移除顶部标题栏齿轮图标；重构低电量提醒弹窗为 250–360×56 自适应紧凑布局并展示完整标准设备名；接入 Inno Setup 6 标准中文安装程序 `BattDock-v2.5.0-Setup.exe`
-- [x] **BattDock v2.5.1 Windows 10 1px 白色直角外框根治**：在 Win10 下对主窗口与设置窗口禁用 `pywebview` 默认的 `shadow=True`（`DwmExtendFrameIntoClientArea(1,1,1,1)` + `DWMNCRP_ENABLED`），并在 `apply_window_rounded_corners()` 中显式设置 `DWMNCRP_DISABLED` 与零扩展边距，彻底消除圆角外 1px 白色直角框
+### 阶段 1–2：VGN 真机协议与多品牌只读架构（v1.x – v2.0.0）
+- [x] `vgn_battery.py`：`VGN Dragonfly F2 Pro Max (3554:FB3E / FB3D)` 17 字节 HID 协议实现与真机回归验证。
+- [x] `providers/` 8 大模块化只读适配器 + `DeviceManager`（单次 HID 快照共享、异常隔离、去重、禁止伪造 `0%`、脱敏 JSON 诊断导出）：覆盖 VGN/VXE/ATK/MCHOSE/LAMZU/CompX、Logitech HID++ 2.0 & G 耳机、Razer 91B、SteelSeries、Corsair Bragi/Void、HyperX、ASUS ROG/TUF、Sony INZONE、Windows 标准蓝牙与 Apple AirPods Continuity BLE 解析。
+- [x] 开源许可证合规审计记录（`THIRD_PARTY_LICENSES.md`）与 MIT 许可证（`LICENSE`）。
 
-### 第一阶段：VGN 单设备监控工具（基线 `8075917`）
-- [x] VGN Dragonfly F2 Pro Max（`3554:FB3E`）17 字节 HID 协议实现与真机验证（`vgn_battery.py`）
-- [x] Windows 11 原生 DWM Acrylic 液态玻璃主窗口与透明矢量电池托盘图标
-- [x] 右下角固定定位（可解锁拖拽）、多显示器与 DPI 缩放适配、单实例唤醒事件
-- [x] 开机 `--background` 静默驻留托盘（已修复 pywebview 6.2.1 透明隐藏弹窗 Bug）
-- [x] 原生 WinForms 极速纯色无边框最高置顶低电量迷你弹窗（5 秒自动关闭、不抢游戏焦点）+ 托盘右键测试
-- [x] 独立 PyInstaller 打包（`release\VGNMouseBattery\VGNMouseBattery.exe`）与 `卸载程序.bat`
+### 阶段 3：现代化双窗口 UI、桌面悬浮窗与零闪烁动效（v2.1.0 – v2.2.0）
+- [x] 浅/深/跟随系统双主题双窗口架构（主窗口 `760×480` + 独立设置窗口 `840×742`），脱离 Win11 Acrylic 硬依赖；开机 `--background` 静默驻留托盘。
+- [x] 启动与设置窗口零闪烁居中定位（`Opacity=0` 预渲染 + 前端双 `rAF` 显现 + 设置窗口隐藏复用，每次打开默认进入「常规设置」）。
+- [x] 支持设备清单重构为设置内独立子页面（14 个独立可折叠中性色品牌列表，面向用户隐藏测试状态词）与全局轻量 Ease-Out 非阻塞动效。
+- [x] 原生 WinForms 轻量桌面悬浮窗（`floating_widget.py`）与基于 GitHub Releases 的零依赖在线检查更新（`updater.py`）；仓库 `edwin99701/wireless-peripheral-battery-monitor` 正式公开。
 
-### 第二阶段：通用多品牌无线外设电量监控升级（v2.0，`45e9cd4`）
-- [x] 开源参考仓库 LICENSE 合规审查与协议调研（结果记录于 `THIRD_PARTY_LICENSES.md`）
-- [x] 模块化适配器基类与 8 大 Provider 实现（`providers/`）：
-  - VGN / VXE / ATK / CompX / MCHOSE / Rapoo
-  - Logitech HID++ 2.0 & G 耳机
-  - Razer 91 字节 Feature Report 鼠键
-  - SteelSeries 鼠标 & Arctis / Nova / GameBuds 耳机
-  - Corsair SLIPSTREAM Bragi & Void / HS70 耳机
-  - HyperX Cloud 耳机 & Pulsefire 鼠标
-  - ASUS ROG / TUF 鼠键 / Omni / SpeedNova / 耳机 & Sony INZONE H5 / H9 II / Buds
-  - Windows SetupAPI 标准蓝牙电量服务 + Apple AirPods / Beats Continuity BLE 解析
-- [x] `DeviceManager` 统一管理层（单次 HID 快照共享、异常隔离、去重、禁伪造 0%、脱敏 JSON 诊断导出）
-- [x] 多设备持久化配置（`app_config.py`）与每设备独立三级低电量提醒状态机（`30% / 20% / 10%` 滞回防抖）
-- [x] Liquid Glass 主界面升级（`ui/index.html`：多设备切换胶囊、分体耳塞 L/R/盒独立电量、三级档位多选、导出诊断）
-- [x] 21 项自动化单元测试全部通过（`tests/test_providers.py`）
-- [x] 本机 VGN Dragonfly F2 Pro Max 真实硬件回归验证通过
-- [x] 重建 `release\VGNMouseBattery\VGNMouseBattery.exe` 并完成 `--background` 静默启动冒烟验证（`IsWindowVisible=False`）
-- [x] 文档体系建立：`README.md`、`CHANGELOG.md`、`SUPPORTED_DEVICES.md`、`THIRD_PARTY_LICENSES.md`、`AGENTS.md`、`PROJECT_CONTEXT.md`、`PROGRESS.md`
+### 阶段 4：BattDock 品牌升级、黑白图标统一与自动更新根治（v2.3.0 – v2.4.0）
+- [x] `brand.py` 集中品牌常量，全链路更名至 **BattDock**（`BattDock.exe`、`BattDock.App`、Windows 文件版本属性、新旧配置/自启/互斥量无缝迁移与 `v2.2.0` 升级桥接包）。
+- [x] 全新纯黑白圆角主 Logo（`512×512` 透明 PNG + 9 规格 ICO），系统托盘保留状态缓存式动态矢量电池图标。
+- [x] `providers/device_naming.py` 官方标准设备名称映射层与简洁中文连接副标题（未知/休眠统一显示 `—`）。
+- [x] `device_icons.py` + `assets/icons/*.svg` 全局统一 24×24 黑白实心设备类型图标库（鼠标/耳机/键盘，浅黑深白），覆盖全部 5 大展示位置并保留设置左侧导航图标与主 Logo。
+- [x] 桌面悬浮窗精简为「图标 + 品牌名 + 百分比 + 平滑电量条」（支持自定义名、同品牌多设备自动区分与悬停完整详情）。
+- [x] 彻底修复跨盘符自动覆盖更新与自动重启（同盘回滚目录 + `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` + `os._exit(0)`，已在 C→E 盘真实冻结版 `BattDock.exe` 上端到端实测通过）；软件内「关于软件」升级为分层简明更新摘要面板（读取 `update-summary.json`，避免在 Release 正文插入 HTML 注释）。
+
+### 阶段 5：设备管理重构、紧凑提醒弹窗、标准安装程序与 Win10 圆角根治（v2.5.0 – v2.5.1）
+- [x] **设备管理重构**：可独立展开/折叠的行式设置卡片 + 左侧六点拖拽手柄（仅多设备显示，单设备隐藏，FLIP 平滑交换并自动同步主窗口与悬浮窗）+ 独立三级数值步进器（黄/橙/红严格递减校验）+ 移除底层协议名显示。
+- [x] **设置窗口优化**：最大化/宽屏（`>= 1040px`）内容居中自适应（最大 `860px`），移除设置标题栏「设置」左侧齿轮图标（保留返回箭头与左侧 6 导航图标）。
+- [x] **低电量提醒弹窗紧凑化**：按实际字体与文本宽度动态自适应（`250–360 × 56` 逻辑像素，圆角 `8px`），展示完整标准设备名（超长仅裁尾部营销修饰词，支持悬停完整名）与浅/深高对比三级色。
+- [x] **Inno Setup 6 标准中文安装程序**：新增 `installer/BattDock.iss`、`installer/ChineseSimplified.isl` 并接入 `build_release.ps1`，支持任意盘符管理员安装 + 目录 `users-modify` 权限授权（保障软件内一键自动更新免 UAC）+ 快捷方式与标准卸载，已实测 `E:\` 顶层目录安装、授权与卸载全链路通过。
+- [x] **Windows 10 窗口圆角与 1px 白框根治（v2.5.1）**：禁用 Win10 下 `pywebview` 默认 `shadow=True`（`ExtendFrameIntoClientArea(1,1,1,1)`），显式设置 `DWMNCRP_DISABLED` + 零扩展边距 + 64 位 `HRGN` `SetWindowRgn` + `SizeChanged/Resize/VisibleChanged/DpiChanged` 同步 + Win10 CSS 边框对齐。
+- [x] 30/30 单元测试全部通过，全部 5 个 GitHub Release `v2.5.1` 产物上传并完成线上更新与直链 HTTP 200 校验。
 
 ---
 
-## 二、正在进行
+## 二、当前状态
 
-- 当前第二阶段核心开发、测试、打包与持久化上下文管理机制已全部收尾，等待用户下一阶段真实外设实测反馈或新需求指示。
-
----
-
-## 三、尚未完成 / 已知待验证项
-
-1. **非 VGN 品牌真实硬件实测**：当前测试机仅物理连接了 VGN Dragonfly F2 Pro Max 且无蓝牙适配器，其余品牌（Logitech / Razer / SteelSeries / Corsair / HyperX / ASUS ROG / Sony INZONE / AirPods / 标准蓝牙）均处于「协议已实现待实测」状态，需接入对应实机或收集用户导出的 `diagnostics_*.json` 后逐项晋升为「已真实设备验证」。
-2. **可选 BLE 广播实时监听依赖**：`BluetoothBatteryProvider` 的 Windows 标准 PnP 蓝牙电量已零依赖内置；如需在带蓝牙适配器的电脑上实时被动监听 Apple AirPods Continuity BLE 广播，可选安装 WinRT Python 绑定（`winrt-Windows.Devices.Bluetooth.Advertisement` 与 `winrt-Windows.Storage.Streams`）或后续打包进独立版本。
-3. **雷柏（Rapoo）多代私有协议细化**：待收集真实雷柏 2.4G 设备诊断报告后再补充只读查询协议（严格禁止盲写）。
+- **BattDock v2.5.1** 已正式发布至 GitHub Releases（Latest），源码、文档、自动化测试与发布产物全部保持同步。
 
 ---
 
-## 四、下一步建议操作
+## 三、待真机验证项与已知边界（诚实记录）
 
-1. 在用户机器上实际运行新版 `release\VGNMouseBattery\VGNMouseBattery.exe`，体验多设备界面、三级提醒档位与「导出诊断」功能；
-2. 若接入了罗技、雷蛇、赛睿、海盗船、HyperX、ROG、索尼或蓝牙耳机等其他无线外设，直接运行测试或导出 `diagnostics_*.json`，据此逐台做真机适配微调并更新 `SUPPORTED_DEVICES.md`。
+1. **Windows 10 22H2 实体机目视复核（v2.5.1）**：本机为 Windows 11 x64，v2.5.1 已通过源码核查 `pywebview` 根因修复 `shadow=is_windows_11()` + `DWMNCRP_DISABLED` + 零扩展边距并通过单元测试与 Win10 模式裁剪验证，仍待用户在 Windows 10 实体机上升级至 `v2.5.1` 后目视确认 1px 白框已彻底消失。
+2. **非 VGN 品牌真实硬件实测**：本机仅物理连接 `VGN Dragonfly F2 Pro Max` 且无蓝牙适配器，其余品牌（Logitech / Razer / SteelSeries / Corsair / HyperX / ASUS ROG / Sony INZONE / Apple AirPods / 标准蓝牙）均处于「协议已实现待实测」状态，后续需结合真实硬件或用户导出的脱敏 `diagnostics_*.json` 逐项验证晋升。
+3. **可选 BLE 广播被动监听依赖**：Windows 标准 PnP 蓝牙电量已零依赖内置；如需实时被动监听 Apple AirPods Continuity BLE 广播，需在含蓝牙适配器的机器上额外集成 WinRT BLE 依赖（`winrt-Windows.Devices.Bluetooth.Advertisement`、`winrt-Windows.Storage.Streams`）。
+4. **雷柏（Rapoo）多代私有协议**：待收集真实 2.4G 设备诊断报文后再补充安全只读实现（严禁盲写）。
+
+---
+
+## 四、后续迭代入口建议
+
+1. 收集用户在 Windows 10 22H2 上升级至 `v2.5.1` 后的窗口四角实测反馈；
+2. 结合用户提交的新品牌无线外设 `diagnostics_*.json`，逐步扩充并实机验证 `SUPPORTED_DEVICES.md` 中的设备列表。

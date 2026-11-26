@@ -2,8 +2,9 @@
 
 ## BattDock v2.5.1（2026-11-26）— 彻底消除 Windows 10 窗口圆角外 1px 白色直角框残留
 
-### Bug 修复
+### Bug 修复与交付
 - **根治 Windows 10 圆角外 1px 白色直角边框**：排查定位 `pywebview` 在默认 `shadow=True` 下调用 `DwmExtendFrameIntoClientArea(1,1,1,1)` 与 `DWMWA_NCRENDERING_POLICY = DWMNCRP_ENABLED` 导致 Windows 10 DWM 仍在 `SetWindowRgn` 圆角外绘制矩形 1px 白边的问题；现已对 Win10 主窗口与设置窗口关闭 `shadow=is_windows_11()` 并在 `apply_window_rounded_corners()` 中显式关闭 `DWMNCRP_DISABLED` 且清零扩展边距，Windows 11 原生圆角与阴影保持完全不变。
+- **同步打包发布**：构建并发布 `BattDock-v2.5.1-Setup.exe`、`BattDock-v2.5.1-Windows-x64-Portable.zip`、`VGNMouseBattery-v2.5.1-win64-UpgradeBridge.zip`、`SHA256SUMS.txt` 与 `update-summary.json`。
 
 ---
 
