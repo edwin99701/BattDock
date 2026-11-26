@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>VGN 鼠标电量</title>
+<title>无线外设电量监控</title>
 <style>
   :root {
     --spring: cubic-bezier(0.28, 1.24, 0.42, 1);
@@ -16,7 +16,6 @@
     --text-secondary: rgba(232, 238, 248, 0.64);
     --text-muted: rgba(220, 228, 242, 0.44);
 
-    /* 极薄冷白/银灰微染色玻璃层（底层由 Windows 11 原生 Acrylic 提供真实背景模糊） */
     --surface-tint: rgba(228, 236, 248, 0.05);
     --surface-subtle: rgba(255, 255, 255, 0.055);
     --hairline: rgba(255, 255, 255, 0.14);
@@ -45,7 +44,6 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* 单层圆角液态玻璃主窗口（与 Win11 原生 DWM 圆角一致，避免双层圆角边框） */
   .glass-window {
     position: relative;
     width: 100%;
@@ -62,16 +60,17 @@
       inset 0 -0.5px 0 rgba(255, 255, 255, 0.06);
     display: flex;
     flex-direction: column;
-    padding: 16px 20px 14px;
-    gap: 12px;
+    padding: 15px 19px 13px;
+    gap: 10px;
   }
 
   .glass-window.low-battery {
     border-color: rgba(248, 113, 113, 0.38);
   }
 
-  /* 1. 顶部设备信息栏（固定位置时禁用拖拽手势） */
+  /* 1. 顶部设备信息栏 */
   .top-bar {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -79,13 +78,8 @@
     cursor: default;
   }
 
-  .top-bar.draggable {
-    cursor: grab;
-  }
-
-  .top-bar.draggable:active {
-    cursor: grabbing;
-  }
+  .top-bar.draggable { cursor: grab; }
+  .top-bar.draggable:active { cursor: grabbing; }
 
   .device-meta {
     display: flex;
@@ -120,6 +114,16 @@
     flex-shrink: 0;
   }
 
+  .brand-pill {
+    font-size: 9.5px;
+    color: rgba(226, 232, 240, 0.72);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 999px;
+    padding: 0 6px;
+    line-height: 15px;
+  }
+
   .top-actions {
     display: flex;
     align-items: center;
@@ -142,45 +146,84 @@
     transition: background 0.18s var(--ease), transform 0.22s var(--spring), color 0.18s ease;
   }
 
-  .circle-glass-btn:hover {
-    background: rgba(255, 255, 255, 0.14);
-    color: #FFFFFF;
-  }
-
-  .circle-glass-btn:active {
-    transform: scale(0.91);
-  }
-
-  .circle-glass-btn.spinning svg {
-    animation: spin 0.72s linear infinite;
-  }
+  .circle-glass-btn:hover { background: rgba(255, 255, 255, 0.14); color: #FFFFFF; }
+  .circle-glass-btn:active { transform: scale(0.91); }
+  .circle-glass-btn.spinning svg { animation: spin 0.72s linear infinite; }
 
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
   }
 
-  /* 2. 电量展示区域（核心视觉中心，直接浮于玻璃上） */
+  /* 多设备切换胶囊条（仅检测到 >= 2 台设备时显示） */
+  .device-tabs {
+    flex-shrink: 0;
+    display: none;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 1px 0 2px;
+    scrollbar-width: none;
+  }
+
+  .device-tabs::-webkit-scrollbar { display: none; }
+  .device-tabs.visible { display: flex; }
+
+  .device-tab {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  }
+
+  .device-tab:hover {
+    background: rgba(255, 255, 255, 0.11);
+    color: var(--text-primary);
+  }
+
+  .device-tab.active {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.30);
+    color: #FFFFFF;
+  }
+
+  .tab-pct {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 10.5px;
+    opacity: 0.9;
+  }
+
+  /* 2. 核心电量圆环 */
   .battery-hero {
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 4px 0 2px;
+    padding: 2px 0;
   }
 
   .ring-box {
     position: relative;
-    width: 146px;
-    height: 146px;
+    width: 142px;
+    height: 142px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
   .ring-svg {
-    width: 146px;
-    height: 146px;
+    width: 142px;
+    height: 142px;
     transform: rotate(-90deg);
     overflow: visible;
   }
@@ -213,7 +256,7 @@
   }
 
   .hero-pct {
-    font-size: 35px;
+    font-size: 34px;
     font-weight: 600;
     letter-spacing: -0.03em;
     line-height: 1.06;
@@ -227,7 +270,47 @@
     color: var(--text-secondary);
   }
 
-  /* 3. 轻量化半透明信息条（电芯电压 + 连接方式，禁止被 flex 压缩为空条） */
+  /* 分体式耳机（AirPods / Sony INZONE Buds 等）左/右/盒独立电量 */
+  .sub-battery-strip {
+    flex-shrink: 0;
+    display: none;
+    grid-template-columns: repeat(3, 1fr);
+    border-radius: 14px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--hairline-soft);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+  }
+
+  .sub-battery-strip.visible { display: grid; }
+
+  .sub-cell {
+    height: 46px;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+  }
+
+  .sub-cell + .sub-cell {
+    border-left: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .sub-label {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .sub-val {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 3. 轻量化半透明信息条 */
   .metrics-strip {
     flex-shrink: 0;
     display: grid;
@@ -240,8 +323,8 @@
   }
 
   .metric-cell {
-    height: 52px;
-    padding: 8px 14px;
+    height: 50px;
+    padding: 7px 14px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -258,13 +341,16 @@
   }
 
   .metric-value {
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 500;
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  /* 4. 设置分组（无迷你悬浮窗相关项） */
+  /* 4. 设置分组 */
   .settings-group {
     flex-shrink: 0;
     border-radius: 16px;
@@ -277,7 +363,7 @@
   }
 
   .setting-item {
-    min-height: 40px;
+    min-height: 38px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -285,14 +371,8 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .setting-item:last-child {
-    border-bottom: none;
-  }
-
-  .setting-item.threshold-row.disabled {
-    opacity: 0.40;
-    pointer-events: none;
-  }
+  .setting-item:last-child { border-bottom: none; }
+  .setting-item.threshold-row.disabled { opacity: 0.40; pointer-events: none; }
 
   .item-label-wrap {
     display: flex;
@@ -316,10 +396,7 @@
     transition: background 0.18s ease, color 0.18s ease;
   }
 
-  .subtle-action:hover {
-    background: rgba(147, 197, 253, 0.20);
-    color: #FFFFFF;
-  }
+  .subtle-action:hover { background: rgba(147, 197, 253, 0.20); color: #FFFFFF; }
 
   /* 胶囊开关 */
   .ios-toggle {
@@ -333,9 +410,7 @@
     transition: background 0.24s var(--ease);
   }
 
-  .ios-toggle.on {
-    background: #34C759;
-  }
+  .ios-toggle.on { background: #34C759; }
 
   .ios-toggle-knob {
     position: absolute;
@@ -349,63 +424,57 @@
     transition: transform 0.28s var(--spring), width 0.15s ease;
   }
 
-  .ios-toggle:active .ios-toggle-knob {
-    width: 21px;
+  .ios-toggle:active .ios-toggle-knob { width: 21px; }
+  .ios-toggle.on .ios-toggle-knob { transform: translateX(18px); }
+  .ios-toggle.on:active .ios-toggle-knob { transform: translateX(15px); }
+
+  /* 三级低电量提醒多选胶囊（30% / 20% / 10%） */
+  .tier-pills {
+    display: flex;
+    align-items: center;
+    gap: 5px;
   }
 
-  .ios-toggle.on .ios-toggle-knob {
-    transform: translateX(18px);
-  }
-
-  .ios-toggle.on:active .ios-toggle-knob {
-    transform: translateX(15px);
-  }
-
-  /* 细腻分段胶囊选择器 */
-  .seg-capsule {
-    position: relative;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    width: 176px;
-    background: rgba(255, 255, 255, 0.07);
-    border-radius: 999px;
-    padding: 2px;
-    overflow: hidden;
-  }
-
-  .seg-thumb {
-    position: absolute;
-    top: 2px;
-    bottom: 2px;
-    left: 2px;
-    width: calc(25% - 1px);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.22);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30);
-    transition: transform 0.30s var(--spring-soft);
-    pointer-events: none;
-  }
-
-  .seg-opt {
-    position: relative;
-    z-index: 1;
-    border: none;
-    background: transparent;
+  .tier-pill {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
     color: var(--text-secondary);
     font-family: inherit;
     font-size: 11px;
     font-weight: 500;
-    padding: 4px 0;
+    padding: 3px 10px;
+    border-radius: 999px;
     cursor: pointer;
-    transition: color 0.18s ease;
+    font-variant-numeric: tabular-nums;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
   }
 
-  .seg-opt.active {
+  .tier-pill:hover {
+    background: rgba(255, 255, 255, 0.12);
     color: #FFFFFF;
+  }
+
+  .tier-pill.active {
+    background: rgba(52, 211, 153, 0.22);
+    border-color: rgba(52, 211, 153, 0.50);
+    color: #ECFDF5;
+  }
+
+  .tier-pill[data-val="20"].active {
+    background: rgba(245, 158, 11, 0.24);
+    border-color: rgba(245, 158, 11, 0.52);
+    color: #FEF3C7;
+  }
+
+  .tier-pill[data-val="10"].active {
+    background: rgba(239, 68, 68, 0.26);
+    border-color: rgba(248, 113, 113, 0.56);
+    color: #FEE2E2;
   }
 
   /* 底部极简状态栏 */
   .bottom-bar {
+    flex-shrink: 0;
     margin-top: auto;
     display: flex;
     align-items: center;
@@ -419,6 +488,12 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .bottom-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
   .text-btn {
     border: none;
     background: transparent;
@@ -429,30 +504,29 @@
     transition: color 0.18s ease;
   }
 
-  .text-btn:hover {
-    color: #FCA5A5;
-  }
+  .text-btn:hover { color: #FFFFFF; }
+  .text-btn.danger:hover { color: #FCA5A5; }
 
-  /* 低电量悬浮提醒条 */
+  /* 顶部悬浮反馈条（用于诊断导出成功提示等） */
   .alert-banner {
     position: absolute;
     top: 12px;
     left: 16px;
     right: 16px;
     z-index: 20;
-    padding: 10px 13px;
-    border-radius: 15px;
-    background: rgba(220, 56, 56, 0.84);
-    border: 1px solid rgba(255, 215, 215, 0.30);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    padding: 9px 12px;
+    border-radius: 14px;
+    background: rgba(30, 41, 59, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.30);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    transform: translateY(-140%);
+    transform: translateY(-150%);
     opacity: 0;
     pointer-events: none;
-    transition: transform 0.36s var(--spring-soft), opacity 0.22s ease;
+    transition: transform 0.34s var(--spring-soft), opacity 0.22s ease;
   }
 
   .alert-banner.show {
@@ -465,17 +539,17 @@
     font-size: 11.5px;
     font-weight: 500;
     line-height: 1.35;
-    color: #FFFFFF;
+    color: #F8FAFC;
+    word-break: break-all;
   }
 
   .alert-dismiss {
     border: none;
-    background: rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.16);
     color: #FFFFFF;
     font-family: inherit;
     font-size: 11px;
-    font-weight: 500;
-    padding: 4px 10px;
+    padding: 3px 9px;
     border-radius: 999px;
     cursor: pointer;
     flex-shrink: 0;
@@ -484,19 +558,19 @@
 </head>
 <body>
   <div id="root" class="glass-window">
-    <!-- 低电量提示条 -->
     <div id="alertBanner" class="alert-banner">
-      <div id="alertMsg" class="alert-msg">鼠标电量低，请及时充电</div>
-      <button class="alert-dismiss" onclick="hideToast()">知道了</button>
+      <div id="alertMsg" class="alert-msg"></div>
+      <button class="alert-dismiss" onclick="hideToast()">关闭</button>
     </div>
 
     <!-- 1. 顶部设备信息 -->
     <div id="topBar" class="top-bar">
       <div class="device-meta">
-        <div id="deviceName" class="device-title">VGN Dragonfly F2 Pro Max</div>
+        <div id="deviceName" class="device-title">正在检测无线外设...</div>
         <div class="online-row">
           <span class="online-dot"></span>
-          <span id="onlineText">正在连接...</span>
+          <span id="onlineText">检测中</span>
+          <span id="brandPill" class="brand-pill" style="display:none"></span>
         </div>
       </div>
       <div class="top-actions">
@@ -519,6 +593,9 @@
         </button>
       </div>
     </div>
+
+    <!-- 多设备切换条（检测到 >= 2 台设备时自动显示） -->
+    <div id="deviceTabs" class="device-tabs"></div>
 
     <!-- 2. 核心电量圆环 -->
     <div class="battery-hero">
@@ -557,11 +634,27 @@
       </div>
     </div>
 
+    <!-- 分体式耳塞独立电量（AirPods / Sony INZONE Buds / ROG Cetra） -->
+    <div id="subStrip" class="sub-battery-strip">
+      <div class="sub-cell">
+        <div class="sub-label">左耳</div>
+        <div id="subLeft" class="sub-val">--%</div>
+      </div>
+      <div class="sub-cell">
+        <div class="sub-label">右耳</div>
+        <div id="subRight" class="sub-val">--%</div>
+      </div>
+      <div class="sub-cell">
+        <div class="sub-label">充电盒</div>
+        <div id="subCase" class="sub-val">--%</div>
+      </div>
+    </div>
+
     <!-- 3. 轻量化半透明信息条 -->
     <div class="metrics-strip">
       <div class="metric-cell">
-        <div class="metric-label">电芯电压</div>
-        <div id="voltVal" class="metric-value">-- V</div>
+        <div id="metric1Label" class="metric-label">电芯电压</div>
+        <div id="metric1Val" class="metric-value">-- V</div>
       </div>
       <div class="metric-cell">
         <div class="metric-label">连接方式</div>
@@ -603,13 +696,11 @@
       </div>
 
       <div id="threshRow" class="setting-item threshold-row">
-        <span class="item-label">提醒阈值</span>
-        <div class="seg-capsule" id="threshSeg">
-          <div class="seg-thumb" id="threshThumb"></div>
-          <button class="seg-opt" data-val="10" onclick="setThreshold(10)">10%</button>
-          <button class="seg-opt" data-val="15" onclick="setThreshold(15)">15%</button>
-          <button class="seg-opt" data-val="20" onclick="setThreshold(20)">20%</button>
-          <button class="seg-opt" data-val="30" onclick="setThreshold(30)">30%</button>
+        <span class="item-label">三级提醒档位</span>
+        <div class="tier-pills" id="tierPills">
+          <button class="tier-pill" data-val="30" onclick="toggleTier(30)">30%</button>
+          <button class="tier-pill" data-val="20" onclick="toggleTier(20)">20%</button>
+          <button class="tier-pill" data-val="10" onclick="toggleTier(10)">10%</button>
         </div>
       </div>
     </div>
@@ -617,28 +708,27 @@
     <!-- 底部栏 -->
     <div class="bottom-bar">
       <div id="syncTime" class="sync-time">等待读取...</div>
-      <button class="text-btn" onclick="quitApp()">退出程序</button>
+      <div class="bottom-actions">
+        <button class="text-btn" onclick="exportDiag()">导出诊断</button>
+        <button class="text-btn danger" onclick="quitApp()">退出程序</button>
+      </div>
     </div>
   </div>
 
 <script>
   const RING_CIRC = 2 * Math.PI * 62;
-  const THRESH_LIST = [10, 15, 20, 30];
-  let lastNonZeroThresh = 20;
+  const DEFAULT_TIERS = [30, 20, 10];
+  let lastNonEmptyTiers = [30, 20, 10];
   let toastTimer = null;
 
   let appState = {
     lock_position: true,
     topmost: false,
     autostart: false,
-    low_battery_threshold: 20,
-    percent: null,
-    connected: false,
-    asleep: false,
-    charging: false,
-    voltage_mv: null,
-    device_name: "VGN Dragonfly F2 Pro Max",
-    connection_mode: "检测中",
+    selected_device_id: "",
+    devices: [],
+    active_device: null,
+    active_alert_tiers: [30, 20, 10],
     updated_str: ""
   };
 
@@ -651,20 +741,14 @@
     }
   });
 
-  // 顶部栏拖拽移动主窗口
   (function attachTopDrag() {
     const el = document.getElementById("topBar");
-    let dragging = false;
-    let moved = false;
-    let sx = 0, sy = 0;
+    let dragging = false, moved = false, sx = 0, sy = 0;
 
     el.addEventListener("mousedown", (e) => {
       if (appState.lock_position) return;
       if (e.button !== 0 || e.target.closest("button")) return;
-      dragging = true;
-      moved = false;
-      sx = e.screenX;
-      sy = e.screenY;
+      dragging = true; moved = false; sx = e.screenX; sy = e.screenY;
       window.pywebview?.api?.begin_drag(sx, sy);
     });
 
@@ -681,78 +765,144 @@
     });
   })();
 
-  function resolveTheme(s) {
-    if (!s.connected || s.percent === null || s.percent === undefined) {
+  function kindBadge(kind) {
+    return { mouse: "鼠标", headset: "耳机", earbuds: "耳塞", keyboard: "键盘" }[kind] || "外设";
+  }
+
+  function resolveTheme(dev, tiers) {
+    if (!dev || !dev.connected || dev.percent === null || dev.percent === undefined) {
       return { accent: "#94A3B8", soft: "rgba(148,163,184,0.16)", grad: "url(#batGradOffline)", low: false };
     }
-    if (s.charging) {
+    if (dev.charging || dev.full) {
       return { accent: "#38BDF8", soft: "rgba(56,189,248,0.22)", grad: "url(#batGradCharge)", low: false };
     }
-    if (s.low_battery_threshold > 0 && s.percent <= s.low_battery_threshold) {
+    const maxTier = tiers && tiers.length ? Math.max(...tiers) : 20;
+    if (dev.percent <= Math.min(20, maxTier)) {
       return { accent: "#F87171", soft: "rgba(248,113,113,0.22)", grad: "url(#batGradLow)", low: true };
     }
-    if (s.percent <= 50) {
+    if (dev.percent <= 50) {
       return { accent: "#FBBF24", soft: "rgba(251,191,36,0.20)", grad: "url(#batGradMed)", low: false };
     }
     return { accent: "#34D399", soft: "rgba(52,211,153,0.20)", grad: "url(#batGradNormal)", low: false };
   }
 
+  function renderTabs(devices, selectedId) {
+    const container = document.getElementById("deviceTabs");
+    if (!devices || devices.length <= 1) {
+      container.classList.remove("visible");
+      container.innerHTML = "";
+      return;
+    }
+    container.classList.add("visible");
+    container.innerHTML = "";
+    devices.forEach((d) => {
+      const btn = document.createElement("button");
+      btn.className = "device-tab" + (d.device_id === selectedId ? " active" : "");
+      const pctStr = (d.percent !== null && d.percent !== undefined) ? `${d.percent}%` : "--";
+      const shortName = d.name.length > 14 ? d.name.slice(0, 14) + "…" : d.name;
+      btn.innerHTML = `<span>${shortName}</span><span class="tab-pct">${pctStr}</span>`;
+      btn.onclick = () => selectDevice(d.device_id);
+      container.appendChild(btn);
+    });
+  }
+
+  function fmtSub(pct, chg) {
+    if (pct === null || pct === undefined) return "--%";
+    return chg ? `${pct}% ⚡` : `${pct}%`;
+  }
+
   function applyState(next) {
     appState = { ...appState, ...next };
     const s = appState;
-    if (s.low_battery_threshold > 0) lastNonZeroThresh = Number(s.low_battery_threshold);
+    const dev = s.active_device;
+    const tiers = Array.isArray(s.active_alert_tiers) ? s.active_alert_tiers : DEFAULT_TIERS;
+    if (tiers.length > 0) lastNonEmptyTiers = [...tiers];
 
-    const theme = resolveTheme(s);
+    const theme = resolveTheme(dev, tiers);
     document.documentElement.style.setProperty("--accent", theme.accent);
     document.documentElement.style.setProperty("--accent-soft", theme.soft);
     root.classList.toggle("low-battery", theme.low);
 
-    const pctText = (s.connected && s.percent !== null) ? `${s.percent}%` : "--%";
-    document.getElementById("deviceName").textContent = (s.device_name || "VGN Dragonfly F2 Pro Max").replace("DragonFly", "Dragonfly");
-    document.getElementById("heroPct").textContent = pctText;
+    renderTabs(s.devices || [], s.selected_device_id);
 
-    let statusText = "未连接";
-    let modeText = "未连接";
-    if (s.connected) {
-      if (s.charging) {
+    const brandPill = document.getElementById("brandPill");
+    if (dev) {
+      document.getElementById("deviceName").textContent = dev.name || "无线外设";
+      brandPill.style.display = "inline-block";
+      brandPill.textContent = `${dev.brand} · ${kindBadge(dev.kind)}`;
+
+      const hasPct = dev.percent !== null && dev.percent !== undefined;
+      document.getElementById("heroPct").textContent = hasPct ? `${dev.percent}%` : "--%";
+
+      let statusText = "未知 / 未响应";
+      let subText = dev.status_detail || "等待设备响应";
+      if (dev.full) {
+        statusText = "已充满";
+        subText = "电量已满 100%";
+      } else if (dev.charging) {
         statusText = "充电中";
-        modeText = "有线充电";
-      } else if (s.asleep) {
+        subText = hasPct ? "正在充电" : "充电中（电量读取中）";
+      } else if (dev.asleep) {
         statusText = "休眠中";
-        modeText = "2.4G 休眠";
-      } else {
+        subText = hasPct ? "保留上次读数" : "设备休眠中";
+      } else if (dev.online) {
         statusText = "在线";
-        modeText = "2.4G 无线";
+        subText = !hasPct ? "电量未知" : (theme.low ? "电量偏低，建议充电" : "电量状态良好");
       }
+      document.getElementById("onlineText").textContent = statusText;
+      document.getElementById("heroSub").textContent = subText;
+
+      // 分体式耳塞独立电量条
+      const subStrip = document.getElementById("subStrip");
+      if (dev.sub_batteries) {
+        subStrip.classList.add("visible");
+        document.getElementById("subLeft").textContent = fmtSub(dev.sub_batteries.left_percent, dev.sub_batteries.left_charging);
+        document.getElementById("subRight").textContent = fmtSub(dev.sub_batteries.right_percent, dev.sub_batteries.right_charging);
+        document.getElementById("subCase").textContent = fmtSub(dev.sub_batteries.case_percent, dev.sub_batteries.case_charging);
+      } else {
+        subStrip.classList.remove("visible");
+      }
+
+      // 指标 1：有电压时显示电芯电压，否则显示设备品牌/状态
+      if (dev.voltage_mv) {
+        document.getElementById("metric1Label").textContent = "电芯电压";
+        document.getElementById("metric1Val").textContent = `${(dev.voltage_mv / 1000).toFixed(2)} V`;
+      } else {
+        document.getElementById("metric1Label").textContent = "设备品牌";
+        document.getElementById("metric1Val").textContent = dev.brand || "通用外设";
+      }
+      document.getElementById("modeVal").textContent = dev.charging ? "有线充电" : (dev.connection_mode || "无线");
+
+      const arc = document.getElementById("ringArc");
+      arc.style.stroke = theme.grad;
+      const pctNum = hasPct ? Math.max(0, Math.min(100, dev.percent)) : 0;
+      arc.style.strokeDashoffset = (RING_CIRC * (1 - pctNum / 100)).toFixed(2);
+    } else {
+      document.getElementById("deviceName").textContent = "未检测到支持的无线外设";
+      brandPill.style.display = "none";
+      document.getElementById("onlineText").textContent = "等待接入";
+      document.getElementById("heroPct").textContent = "--%";
+      document.getElementById("heroSub").textContent = "请检查接收器或蓝牙";
+      document.getElementById("subStrip").classList.remove("visible");
+      document.getElementById("metric1Label").textContent = "电芯电压";
+      document.getElementById("metric1Val").textContent = "-- V";
+      document.getElementById("modeVal").textContent = "未连接";
+      const arc = document.getElementById("ringArc");
+      arc.style.stroke = "url(#batGradOffline)";
+      arc.style.strokeDashoffset = RING_CIRC.toFixed(2);
     }
-    document.getElementById("onlineText").textContent = statusText;
-    document.getElementById("heroSub").textContent = s.connected
-      ? (s.charging ? "正在充电" : (s.asleep ? "保留上次读数" : (theme.low ? "电量偏低，建议充电" : "电量状态良好")))
-      : "请检查接收器";
 
-    document.getElementById("voltVal").textContent = s.voltage_mv ? `${(s.voltage_mv / 1000).toFixed(2)} V` : "-- V";
-    document.getElementById("modeVal").textContent = modeText;
     document.getElementById("syncTime").textContent = s.updated_str ? `更新于 ${s.updated_str}` : "等待读取...";
-
-    const arc = document.getElementById("ringArc");
-    arc.style.stroke = theme.grad;
-    const pctNum = (s.connected && s.percent !== null) ? Math.max(0, Math.min(100, s.percent)) : 0;
-    arc.style.strokeDashoffset = (RING_CIRC * (1 - pctNum / 100)).toFixed(2);
-
     document.getElementById("swLockPos").classList.toggle("on", Boolean(s.lock_position));
     document.getElementById("topBar").classList.toggle("draggable", !Boolean(s.lock_position));
     document.getElementById("swTopmost").classList.toggle("on", Boolean(s.topmost));
     document.getElementById("swAutostart").classList.toggle("on", Boolean(s.autostart));
 
-    const alertOn = Number(s.low_battery_threshold) > 0;
+    const alertOn = tiers.length > 0;
     document.getElementById("swLowAlert").classList.toggle("on", alertOn);
     document.getElementById("threshRow").classList.toggle("disabled", !alertOn);
-
-    const activeThresh = alertOn ? Number(s.low_battery_threshold) : lastNonZeroThresh;
-    const tIdx = Math.max(0, THRESH_LIST.indexOf(activeThresh));
-    document.getElementById("threshThumb").style.transform = `translateX(${tIdx * 100}%)`;
-    document.querySelectorAll("#threshSeg .seg-opt").forEach((b) => {
-      b.classList.toggle("active", Number(b.dataset.val) === activeThresh);
+    document.querySelectorAll("#tierPills .tier-pill").forEach((b) => {
+      b.classList.toggle("active", tiers.includes(Number(b.dataset.val)));
     });
   }
 
@@ -761,7 +911,7 @@
     const el = document.getElementById("alertBanner");
     el.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove("show"), 9000);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 6000);
   }
 
   function hideToast() {
@@ -776,22 +926,38 @@
     window.pywebview?.api?.refresh_now();
   }
 
+  function selectDevice(id) {
+    window.pywebview?.api?.select_device(id);
+  }
+
   function minimizeWin() { window.pywebview?.api?.minimize_window(); }
   function hideToTray() { window.pywebview?.api?.hide_to_tray(); }
   function toggleLockPos() { const n = !appState.lock_position; applyState({ lock_position: n }); window.pywebview?.api?.set_lock_position(n); }
   function toggleTopmost() { const n = !appState.topmost; applyState({ topmost: n }); window.pywebview?.api?.set_topmost(n); }
   function toggleAutostart() { const n = !appState.autostart; applyState({ autostart: n }); window.pywebview?.api?.set_autostart(n); }
+
   function toggleLowAlert() {
-    const nextVal = Number(appState.low_battery_threshold) > 0 ? 0 : lastNonZeroThresh;
-    applyState({ low_battery_threshold: nextVal });
-    window.pywebview?.api?.set_threshold(nextVal);
+    const cur = appState.active_alert_tiers || [];
+    const next = cur.length > 0 ? [] : (lastNonEmptyTiers.length ? lastNonEmptyTiers : DEFAULT_TIERS);
+    applyState({ active_alert_tiers: next });
+    window.pywebview?.api?.set_device_tiers(appState.selected_device_id || "", next);
   }
-  function setThreshold(val) {
-    lastNonZeroThresh = val;
-    applyState({ low_battery_threshold: val });
-    window.pywebview?.api?.set_threshold(val);
+
+  function toggleTier(val) {
+    const cur = new Set(appState.active_alert_tiers || []);
+    if (cur.has(val)) {
+      cur.delete(val);
+    } else {
+      cur.add(val);
+    }
+    const next = Array.from(cur).sort((a, b) => b - a);
+    if (next.length > 0) lastNonEmptyTiers = [...next];
+    applyState({ active_alert_tiers: next });
+    window.pywebview?.api?.set_device_tiers(appState.selected_device_id || "", next);
   }
+
   function testToast() { window.pywebview?.api?.test_low_battery(); }
+  function exportDiag() { window.pywebview?.api?.export_diagnostics(); }
   function quitApp() { window.pywebview?.api?.quit_app(); }
 
   window.addEventListener("pywebviewready", () => {

@@ -1,52 +1,61 @@
-# VGN 鼠标电量显示工具
+# 通用 Windows 无线外设电量监控工具
 
-> **项目状态**：活跃开发中（可正常运行）  
-> **当前版本**：v6（基于源码 `mouse_battery_app.py` 与已打包 `VGNMouseBattery.exe`）  
-> **适用平台**：Windows 10 / Windows 11（推荐 Windows 11 原生 Acrylic 毛玻璃效果）
+> **当前版本**：v2.0（第二阶段：多品牌、多设备统一电量监控）  
+> **适用平台**：Windows 10 / Windows 11（x64，推荐 Windows 11 原生 Acrylic 毛玻璃效果）  
+> **硬件验证基线**：完整保留并实机回归验证 `VGN Dragonfly F2 Pro Max (3554:FB3E)`
 
-一款无需安装官方驱动的 VGN / VXE 系列鼠标实时电量监控工具，通过 USB HID 协议直接读取鼠标电量、充电状态与电压，提供 Windows 11 原生毛玻璃主窗口、系统托盘实时数字图标、低电量提醒弹窗及开机自启动功能。
+一款轻量、免安装官方驱动的 Windows 无线外设电量监控工具。在原有 VGN 鼠标电量监控工具基础上平滑扩展为**模块化多品牌适配器架构**，支持同时监控多台无线鼠标、无线耳机、分体式耳塞与无线键盘的电量、充电状态与连接状态。
 
 ---
 
-## 核心功能
+## 核心特性
 
-- **免驱动 HID 电量读取**：直接通过 CompX / ATK HID 接口通信（`Usage Page 0xFF02`），内置自动重试、连续 3 次无应答休眠防抖与热插拔容错。
-- **多型号兼容**：支持 VGN DragonFly F2 Pro Max / F2 Master+ / F1 Pro / F1 MOBA / Dragonfly 4K、VXE R1 Pro Max / R1 SE+ 等有线与 2.4G 模式（有线直连优先于 2.4G 接收器）。
-- **原生毛玻璃主窗口**：基于 `pywebview`（Edge WebView2）与 Windows 11 DWM Acrylic 实现液态玻璃界面，支持位置固定/拖拽、置顶切换与多显示器工作区适配。
-- **托盘常驻与静默自启**：支持系统托盘图标显示与快捷菜单，开启开机自启后以 `--background` 参数静默驻留托盘。
-- **低电量提醒与单实例保护**：支持自定义低电量阈值（默认 `20%`，`0` 为关闭）弹窗提醒；内置命名互斥量单实例保护，重复启动自动唤起已有窗口。
+- **原版 VGN 协议 100% 兼容**：完整保留 `vgn_battery.py` 中经过真机验证的 17 字节 HID 查询协议（VID `0x3554`, PID `0xFB3E` / `0xFB3D`，Interface 1，Usage Page `0xFF02`，Usage `0x0002`）。
+- **模块化多品牌适配器架构（8 大 Provider）**：
+  - `VgnCompxProvider`：VGN / VXE / ATK / CompX / MCHOSE / Rapoo / LAMZU / Zaopin / Scyrox
+  - `LogitechHidppProvider`：Logitech 罗技 HID++ 2.0（Unifying / Bolt / Lightspeed 接收器及有线）+ G 系列无线耳机
+  - `RazerHidProvider`：Razer 雷蛇 91 字节 Feature Report 无线鼠标与键盘
+  - `SteelSeriesHidProvider`：SteelSeries 赛睿 Aerox / Prime / Rival 鼠标 + Arctis / Nova / GameBuds 耳机
+  - `CorsairHidProvider`：Corsair 海盗船 SLIPSTREAM Bragi 鼠键 + Void / HS70 无线耳机
+  - `HyperXHidProvider`：HyperX Cloud Alpha / II / III / Core / Stinger 耳机 + Pulsefire Haste 2 / Haste / Dart 鼠标
+  - `ExtraBrandsProvider`：ASUS ROG / TUF 鼠键与 Omni 接收器、ROG 耳机 + Sony INZONE H5 / H9 II / Buds
+  - `BluetoothBatteryProvider`：标准 Windows 蓝牙电量服务（SetupAPI `DEVPKEY_Device_BatteryLevel`）+ Apple AirPods / Beats Continuity BLE 广播解析（支持左耳 / 右耳 / 充电盒独立电量）
+- **多设备同时监控与热插拔**：单次共享 HID 快照轮询，异常隔离、智能去重；离线或未响应设备绝不伪造 `0%`，准确显示「休眠中」或「未知 / 未响应」。
+- **每设备独立三级低电量提醒**：默认启用 **30% / 20% / 10%** 三级提醒，支持对每台设备分别开关任意档位；内置滞回防抖与充电重置，同一放电周期不重复轰炸。
+- **最高置顶极速迷你提醒弹窗**：原生 WinForms 纯色无边框迷你弹窗，0ms 即时弹出、不抢游戏或全屏应用焦点、停留 5 秒自动关闭；托盘右键支持一键「测试低电量弹窗」。
+- **设备诊断报告导出**：一键导出脱敏 JSON 诊断文件（不含隐私路径与序列号），便于排查新设备兼容问题。
+- **Windows 11 液态玻璃主界面与静默自启**：延续 Liquid Glass 视觉语言，默认固定于右下角（可自由解锁拖拽），开机自启自动以 `--background` 静默驻留系统托盘。
 
 ---
 
 ## 运行方式
 
-### 方式一：直接运行已打包版本（推荐日常使用）
+### 方式一：直接运行已打包程序（推荐）
 
-双击运行独立打包程序（无需配置 Python 环境）：
+双击运行独立打包程序（无需安装 Python）：
 
 ```text
 release\VGNMouseBattery\VGNMouseBattery.exe
 ```
 
-- 打包版配置文件保存在：`%LOCALAPPDATA%\VGNMouseBattery\config.json`
-- 如需彻底卸载，可运行 `release\VGNMouseBattery\卸载程序.bat`。
+- 配置文件保存位置：`%LOCALAPPDATA%\VGNMouseBattery\config.json`
+- 如需彻底卸载（含清理自启项与配置）：运行 `release\VGNMouseBattery\卸载程序.bat`。
 
-### 方式二：通过 Python 源码运行（开发调试）
+### 方式二：源码运行与自动化测试
 
-1. 确认已安装 Python 3.12+ 并安装依赖：
-   ```powershell
-   pip install -r requirements.txt
-   ```
-2. 启动应用：
-   - **有控制台调试**：
-     ```powershell
-     python mouse_battery_app.py
-     ```
-   - **无黑框静默启动**：双击项目根目录下的 `启动鼠标电量监控.vbs`。
-   - **静默驻留托盘**：
-     ```powershell
-     pythonw mouse_battery_app.py --background
-     ```
+```powershell
+# 安装依赖
+pip install -r requirements.txt
+
+# 运行全部协议与状态机单元测试
+python -m unittest discover -s tests -v
+
+# 启动主程序（显示窗口）
+python mouse_battery_app.py
+
+# 静默驻留系统托盘（无启动弹窗）
+pythonw mouse_battery_app.py --background
+```
 
 ---
 
@@ -54,31 +63,34 @@ release\VGNMouseBattery\VGNMouseBattery.exe
 
 ```text
 vgn-mouse-battery/
-├── mouse_battery_app.py       # 主程序入口：窗口管理、DWM 毛玻璃、托盘、JS 桥接
-├── vgn_battery.py             # HID 协议电量读取模块（重试、休眠防抖、型号映射）
-├── app_config.py              # 配置持久化与 Windows 开机自启注册表管理
-├── config.json                # 源码运行模式下的本地配置文件
-├── requirements.txt           # Python 第三方依赖清单
-├── 启动鼠标电量监控.vbs        # 无控制台窗口快速启动脚本
-├── assets/
-│   └── app_icon.ico           # 应用与托盘图标资源
+├── mouse_battery_app.py          # 主程序：窗口、DWM 玻璃、托盘、三级提醒状态机、JS 桥接
+├── app_config.py                 # 多设备独立阈值持久化与开机自启管理
+├── vgn_battery.py                # 原版真机验证的 VGN 17 字节 HID 协议模块（保持零破坏）
+├── providers/                    # 模块化品牌协议适配器包
+│   ├── base.py                   # DeviceBattery / SubBattery / BatteryProvider 基类与只读 HID 工具
+│   ├── manager.py                # DeviceManager 统一设备管理层与诊断导出
+│   ├── vgn_provider.py           # VGN / VXE / ATK / CompX / MCHOSE / Rapoo 适配器
+│   ├── logitech_hidpp.py         # Logitech HID++ 2.0 & G 耳机适配器
+│   ├── razer_hid.py              # Razer 91 字节 Feature Report 适配器
+│   ├── steelseries_hid.py        # SteelSeries 鼠标与 Arctis/Nova 耳机适配器
+│   ├── corsair_hid.py            # Corsair Bragi 与 Void/HS70 适配器
+│   ├── hyperx_hid.py             # HyperX Cloud 耳机与 Pulsefire 鼠标适配器
+│   ├── extra_brands.py           # ASUS ROG/TUF 与 Sony INZONE 适配器
+│   └── bluetooth_provider.py     # Windows 蓝牙电量服务 + Apple AirPods Continuity 解析器
+├── tests/
+│   └── test_providers.py         # 21 项协议解析与防抖状态机单元测试
 ├── ui/
-│   ├── index.html             # 主界面前端页面
-│   └── alert.html             # 低电量提醒弹窗页面
-├── release/
-│   └── VGNMouseBattery/       # PyInstaller 打包发布产物与卸载脚本
-├── archive/
-│   ├── history-backups/       # 历史版本源码/页面备份（.bak）
-│   ├── unused-assets/         # 设计对比图等非运行时素材
-│   └── temp-cache/            # 历史 __pycache__ 缓存归档
-├── README.md                  # 项目说明文档
-└── PROJECT.md                 # 项目架构与维护档案
+│   └── index.html                # Liquid Glass 多设备主界面
+├── release/VGNMouseBattery/      # PyInstaller 打包产物与卸载脚本
+├── SUPPORTED_DEVICES.md          # 设备支持清单与验证状态说明
+├── CHANGELOG.md                  # 版本更新日志
+└── THIRD_PARTY_LICENSES.md       # 开源协议参考与第三方许可证声明
 ```
 
 ---
 
-## 已知问题与注意事项
+## 文档导航
 
-1. **目录迁移后的开机自启路径**：若此前在旧目录（`e:\反重力\release\...`）开启过「开机自启」，迁移至本目录后请在程序内关闭再重新开启「开机自启」，使注册表项 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\VGNMouseBattery` 更新为新路径。
-2. **源码启动脚本 Python 路径**：`启动鼠标电量监控.vbs` 优先查找本机 `Python312\pythonw.exe`，若未找到则回退到系统 PATH 中的 `pythonw.exe`。
-3. **尚未初始化 Git 仓库**：当前项目历史版本以 `archive/history-backups/*.bak` 方式保留，建议后续在独立工作区中执行 `git init` 纳入 Git 版本管理。
+- 完整支持设备列表与验证等级（已真机验证 / 协议已实现待实测 / 暂不支持）：见 [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md)
+- 开源协议合规与许可证声明：见 [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md)
+- 变更记录：见 [`CHANGELOG.md`](./CHANGELOG.md)

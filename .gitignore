@@ -9,7 +9,14 @@ venv/
 # PyInstaller build artifacts
 build/
 dist/
+build_tmp/
+build_dist/
+release/
 *.spec
+
+# Runtime user config & exported diagnostics
+config.json
+diagnostics_*.json
 
 # Local archive & backups
 archive/
