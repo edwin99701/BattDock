@@ -22,6 +22,8 @@ from .manager import DeviceManager, sanitize_device_reading
 from .razer_hid import RazerHidProvider
 from .steelseries_hid import SteelSeriesHidProvider
 from .vgn_provider import VgnCompxProvider
+from .wireless_headsets import WirelessHeadsetsProvider
+from .wireless_keyboards import WirelessKeyboardsProvider
 
 __all__ = [
     "BatteryProvider",
@@ -36,6 +38,8 @@ __all__ = [
     "CorsairHidProvider",
     "HyperXHidProvider",
     "ExtraBrandsProvider",
+    "WirelessHeadsetsProvider",
+    "WirelessKeyboardsProvider",
     "BluetoothBatteryProvider",
     "parse_airpods_continuity",
     "KIND_MOUSE",

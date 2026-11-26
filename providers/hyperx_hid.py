@@ -21,6 +21,7 @@ from .base import (
     KIND_HEADSET,
     KIND_MOUSE,
     STATUS_PROTOCOL,
+    get_hid_report_lengths,
     hid_drain,
     pad_report,
 )
@@ -33,11 +34,24 @@ HYPERX_DEVICES: dict[tuple[int, int], tuple[str, str, str, str, int, int]] = {
     (HP_VID, 0x098D): ("cloud-alpha", "HyperX Cloud Alpha Wireless", KIND_HEADSET, "alpha", 0, 0),
     (HP_VID, 0x1743): ("cloud-alpha", "HyperX Cloud Alpha Wireless", KIND_HEADSET, "alpha", 0, 0),
     (HP_VID, 0x1765): ("cloud-alpha", "HyperX Cloud Alpha Wireless", KIND_HEADSET, "alpha", 0, 0),
+    (HP_VID, 0x08BE): ("cloud-alpha-2", "HyperX Cloud Alpha 2 Wireless", KIND_HEADSET, "universal", 0xFF13, 0xFF00),
     (HP_VID, 0x0696): ("cloud-ii", "HyperX Cloud II Wireless", KIND_HEADSET, "cloud2_hp", 0xFF90, 0x0303),
     (HP_VID, 0x018B): ("cloud-ii", "HyperX Cloud II Wireless", KIND_HEADSET, "cloud2_hp", 0xFF90, 0x0303),
+    (KINGSTON_VID, 0x1718): ("cloud-ii", "HyperX Cloud II Wireless", KIND_HEADSET, "cloud2_kingston", 0, 0),
+    (KINGSTON_VID, 0x16EA): ("cloud-flight-s", "HyperX Cloud Flight S", KIND_HEADSET, "cloud2_kingston", 0, 0),
+    (KINGSTON_VID, 0x16EB): ("cloud-flight-s", "HyperX Cloud Flight S", KIND_HEADSET, "cloud2_kingston", 0, 0),
+    (KINGSTON_VID, 0x16C4): ("cloud-flight", "HyperX Cloud Flight", KIND_HEADSET, "cloud_flight", 0, 0),
+    (KINGSTON_VID, 0x1723): ("cloud-flight", "HyperX Cloud Flight", KIND_HEADSET, "cloud_flight", 0, 0),
+    (KINGSTON_VID, 0x1749): ("cloud-flight", "HyperX Cloud Flight", KIND_HEADSET, "cloud_flight", 0, 0),
+    (HP_VID, 0x0E90): ("cloud-flight", "HyperX Cloud Flight", KIND_HEADSET, "cloud_flight", 0, 0),
     (HP_VID, 0x0D93): ("cloud-stinger-2", "HyperX Cloud Stinger 2 Wireless", KIND_HEADSET, "cloud2_hp", 0xFF90, 0x0303),
+    (HP_VID, 0x0A93): ("cloud-stinger-core", "HyperX Cloud Stinger Core Wireless", KIND_HEADSET, "stinger_core", 0xFF00, 0x0001),
+    (KINGSTON_VID, 0x1713): ("cloud-stinger-core", "HyperX Cloud Stinger Core Wireless", KIND_HEADSET, "stinger_core", 0xFF00, 0x0001),
+    (HP_VID, 0x0A8E): ("cloud-stinger-core-dts", "HyperX Cloud Stinger Core Wireless DTS", KIND_HEADSET, "stinger_core", 0xFF00, 0x0001),
     (HP_VID, 0x05B7): ("cloud-iii", "HyperX Cloud III Wireless", KIND_HEADSET, "cloud3", 0, 0),
     (HP_VID, 0x0C9D): ("cloud-iii", "HyperX Cloud III Wireless", KIND_HEADSET, "cloud3", 0, 0),
+    (HP_VID, 0x06BE): ("cloud-iii-s", "HyperX Cloud III S Wireless", KIND_HEADSET, "cloud3s", 0, 0),
+    (HP_VID, 0x02CC): ("cloud-iii-s", "HyperX Cloud III S Wireless", KIND_HEADSET, "cloud3s", 0, 0),
     (HP_VID, 0x069F): ("cloud-ii-core", "HyperX Cloud II Core Wireless", KIND_HEADSET, "cloud3", 0, 0),
     (HP_VID, 0x0995): ("cloud-ii-core", "HyperX Cloud II Core Wireless", KIND_HEADSET, "cloud3", 0, 0),
     (HP_VID, 0x0F98): ("pulsefire-haste-2", "HyperX Pulsefire Haste 2 Wireless", KIND_MOUSE, "universal", 0, 0),
@@ -75,6 +89,61 @@ def parse_hyperx_ngenuity2_heartbeat(reply: list[int] | bytes) -> Optional[tuple
         r = r[1:]
     if len(r) >= 6 and r[0] == 0x51 and r[4] <= 100:
         return (int(r[4]), r[5] == 1, r[5] == 2)
+    return None
+
+
+def parse_hyperx_cloud3s_reply(reply: list[int] | bytes, field_id: int) -> Optional[int]:
+    """解析 Cloud III S Wireless Report 0x0C 回包，返回字段值。"""
+    r = list(reply)
+    if len(r) >= 7 and r[0] == 0x0C and r[5] == field_id:
+        return int(r[6])
+    return None
+
+
+def parse_hyperx_cloud_flight_voltage(reply: list[int] | bytes) -> Optional[tuple[bool, Optional[int], bool]]:
+    """解析 Cloud Flight 电压回包 -> (online, percent, charging)。"""
+    r = list(reply)
+    if len(r) < 5 or r[0] in (0x64, 0x65):
+        return None
+    mv = (r[3] << 8) | r[4]
+    if mv > 4107:
+        return (True, None, True)
+    if mv < 3000:
+        return (False, None, False)
+    if mv <= 3648:
+        pct = int(round(0.00125 * mv))
+    elif mv > 3975:
+        pct = 100
+    else:
+        v = float(mv)
+        pct = int(round(2.547505e-8 * v**4 - 3.900299e-4 * v**3 + 2.238321 * v**2 - 5706.256 * v + 5452299.0))
+    return (True, max(0, min(100, pct)), False)
+
+
+_STINGER_MV = (3517, 3651, 3700, 3738, 3763, 3785, 3838, 3905, 3954, 4042, 4121)
+
+
+def parse_hyperx_stinger_core_battery(reply: list[int] | bytes) -> Optional[tuple[Optional[int], bool, bool]]:
+    """解析 Cloud Stinger Core Wireless Feature 0xFF 电池回包 -> (percent, charging, full)。"""
+    r = list(reply)
+    if len(r) < 13 or r[0] != 0xFF or r[1] != 0x12 or r[2] != 0x05:
+        return None
+    code = r[9]
+    mv = r[11] | (r[12] << 8)
+    if code == 0x03 and 3000 <= mv <= 4400:
+        if mv >= _STINGER_MV[-1]:
+            return (100, False, False)
+        if mv <= _STINGER_MV[0]:
+            return (0, False, False)
+        for i in range(1, len(_STINGER_MV)):
+            if mv < _STINGER_MV[i]:
+                lo, hi = _STINGER_MV[i - 1], _STINGER_MV[i]
+                pct = (i - 1) * 10 + (mv - lo) * 10 // (hi - lo)
+                return (max(0, min(100, pct)), False, False)
+    if code == 0x05:
+        return (None, True, False)
+    if code == 0x06:
+        return (100, False, True)
     return None
 
 
@@ -127,6 +196,61 @@ class HyperXHidProvider(BatteryProvider):
                 pcode = pwr[2] if pwr else 0
                 return (True, pct, pcode == 1, pcode == 2)
 
+            if proto == "cloud2_kingston":
+                pkt_bat = pad_report(62, [0x06, 0x00, 0x02, 0x00, 0x9A, 0x00, 0x00, 0x68, 0x4A, 0x8E, 0x0A, 0, 0, 0, 0xBB, 0x02])
+                bat = self._ask(dev, pkt_bat, lambda d: len(d) >= 8 and d[0] == 0x0B and d[2] == 0xBB and d[3] == 0x02)
+                if not bat or bat[7] > 100:
+                    return (False, None, False, False)
+                pkt_chg = pad_report(62, [0x06, 0x00, 0x02, 0x00, 0x9A, 0x00, 0x00, 0x68, 0x4A, 0x8E, 0x0A, 0, 0, 0, 0xBB, 0x03])
+                chg = self._ask(dev, pkt_chg, lambda d: len(d) >= 5 and d[0] == 0x0B and d[2] == 0xBB and d[3] == 0x03)
+                return (True, int(bat[7]), bool(chg and chg[4] == 0x01), False)
+
+            if proto == "cloud_flight":
+                raw = self._ask(dev, pad_report(20, [0x21, 0xFF, 0x05]), lambda d: len(d) >= 5 and d[0] not in (0x64, 0x65))
+                res = parse_hyperx_cloud_flight_voltage(raw) if raw else None
+                return (res[0], res[1], res[2], False) if res else (False, None, False, False)
+
+            if proto == "cloud3s":
+                def _ask_c3s(field_id: int) -> Optional[int]:
+                    raw = self._ask(
+                        dev,
+                        pad_report(64, [0x0C, 0x02, 0x03, 0x01, 0x00, field_id]),
+                        lambda d: parse_hyperx_cloud3s_reply(d, field_id) is not None,
+                    )
+                    return parse_hyperx_cloud3s_reply(raw, field_id) if raw else None
+
+                if _ask_c3s(0x02) != 0x02:
+                    return (False, None, False, False)
+                lvl = _ask_c3s(0x06)
+                chg = _ask_c3s(0x48)
+                pct = lvl if (lvl is not None and lvl <= 100) else None
+                return (True, pct, chg == 1, chg == 2)
+
+            if proto == "stinger_core":
+                import time as _time
+                link_req = [0xFF, 0x07, 0x00, 0xFD, 0x04, 0x00, 0x00, 0x02, 0x82, 0x03, 0x05, 0x29, 0x0F, 0x00, 0x00, 0x03, 0x68, 0x10, 0x00, 0x00]
+                if dev.send_feature_report(pad_report(64, link_req)) <= 0:
+                    return (False, None, False, False)
+                linked = False
+                for _ in range(8):
+                    _time.sleep(0.02)
+                    rep = dev.get_feature_report(0xFF, 64)
+                    if rep and len(rep) >= 13 and rep[0] == 0xFF and not (rep[1] == 0x01 and rep[2] == 0x00):
+                        linked = rep[11] == 0x01
+                        break
+                if not linked:
+                    return (False, None, False, False)
+                bat_req = [0xFF, 0x07, 0x00, 0xFD, 0x04, 0x0C, 0xF1, 0x02, 0x01, 0x04, 0xF0, 0x0C]
+                if dev.send_feature_report(pad_report(64, bat_req)) <= 0:
+                    return (True, None, False, False)
+                for _ in range(8):
+                    _time.sleep(0.02)
+                    rep = dev.get_feature_report(0xFF, 64)
+                    res = parse_hyperx_stinger_core_battery(rep) if rep else None
+                    if res is not None:
+                        return (True, res[0], res[1], res[2])
+                return (True, None, False, False)
+
             if proto == "universal":
                 link = self._ask(dev, pad_report(64, [0x52, 0x01]), lambda d: len(d) > 2 and d[0] == 0x53 and d[1] == 0x01)
                 if not link or link[2] == 0:
@@ -157,15 +281,27 @@ class HyperXHidProvider(BatteryProvider):
             if (vid, pid) not in HYPERX_DEVICES or (vid, pid) in seen:
                 continue
             key, name, kind, proto, up, u = HYPERX_DEVICES[(vid, pid)]
-            if up and d.get("usage_page") != up:
-                continue
-            if u and d.get("usage") != u:
-                continue
-            if not up and d.get("usage_page", 0) < 0xFF00:
-                continue
             path = d.get("path")
             if not path:
                 continue
+            if proto == "cloud3s":
+                # Cloud III S 接收器 6 个集合中仅 64B 输入/输出的集合（01C0:0001）承载 Report 0x0C
+                in_len, out_len, _ = get_hid_report_lengths(path)
+                if in_len != 64 or out_len != 64:
+                    continue
+            elif proto == "stinger_core":
+                if d.get("usage_page") != 0xFF00 or d.get("usage") != 0x0001:
+                    continue
+                _, _, feat_len = get_hid_report_lengths(path)
+                if feat_len < 32:
+                    continue
+            else:
+                if up and d.get("usage_page") != up:
+                    continue
+                if u and d.get("usage") != u:
+                    continue
+                if not up and d.get("usage_page", 0) < 0xFF00:
+                    continue
             seen.add((vid, pid))
             res = self._query_device(path, proto)
             online, pct, charging, full = res if res else (False, None, False, False)

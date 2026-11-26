@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.5.2-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.6.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
 </a>
 
 </div>
@@ -93,15 +93,17 @@
 | 品牌 | 覆盖设备类型 | 连接方式 | 当前验证状态 |
 | :--- | :--- | :--- | :--- |
 | **VGN**（Dragonfly F2 Pro Max） | 无线鼠标 | 2.4GHz 无线连接 / USB 有线连接 | **已实机验证** |
-| **VGN / VXE / ATK / MCHOSE / LAMZU** | 无线鼠标 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **Logitech 罗技** | 无线鼠标、键盘、G 系列耳机 | 2.4GHz 无线连接 / 蓝牙连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **Razer 雷蛇** | 无线鼠标、无线键盘 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **SteelSeries 赛睿** | 无线鼠标、Arctis / Nova 耳机与耳塞 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **Corsair 海盗船** | SLIPSTREAM 鼠键、Void / HS / Virtuoso 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **HyperX** | Cloud 无线耳机、Pulsefire 无线鼠标 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **VGN / VXE / ATK / MCHOSE / LAMZU** | 无线鼠标、无线键盘、无线耳机（OMNISOUND / X9 / V9 Pro 等） | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **AULA / AJAZZ / Attack Shark / CHERRY / EPOMAKER / Redragon / Alienware** | 2.4GHz / 三模无线键盘（CompX BY / SONiX / Evision / Semico 等方案） | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Logitech 罗技 / ASTRO** | 无线鼠标、键盘、G 系列与 Centurion / ASTRO A50 / A20 X 无线耳机 | 2.4GHz 无线连接 / 蓝牙连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Razer 雷蛇** | 无线鼠标、无线键盘（11 款）、BlackShark / Kraken / Barracuda 无线耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **SteelSeries 赛睿** | 无线鼠标、Arctis 1/7/9/Pro / Nova 5/7/Pro/Elite 无线耳机与 GameBuds | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Corsair 海盗船** | SLIPSTREAM 鼠键（含 K70 Core TKL / MAKR 75）、Void / HS70 / HS80 / Virtuoso 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **HyperX** | Cloud Alpha / Alpha 2 / II / III / III S / Flight / Stinger 耳机、Pulsefire 鼠标 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **ASUS ROG / TUF** | 无线鼠标、键盘、Omni 接收器、ROG 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **JBL / EPOS / Audeze / AKG / Skullcandy / FIFINE / Lenovo** | Quantum 全系、H3PRO Hybrid、Maxwell / 2、N9 Hybrid、PLYR、HT6、VoIP 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **Sony 索尼** | INZONE H5 / H9 II / Buds、WH-1000XM5 等 | 2.4GHz 无线连接 / 蓝牙连接 | 协议已适配，待实机验证 |
-| **Apple / Beats & 标准蓝牙外设** | AirPods 全系、Beats 及标准蓝牙鼠键耳机 | 蓝牙连接 | 协议已适配，待实机验证 |
+| **Apple / Beats & 标准蓝牙外设** | AirPods 全系、Beats、Apple Magic Keyboard 及标准蓝牙鼠键耳机 | 蓝牙连接 | 协议已适配，待实机验证 |
 
 > 实际兼容性可能因设备固件版本与连接方式而异；部分旧款雷柏（Rapoo）私有加密协议设备目前暂不支持。
 
@@ -114,13 +116,13 @@
 
 ### 发布产物说明
 前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载：
-- **`BattDock-v2.5.2-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
-- **`BattDock-v2.5.2-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
+- **`BattDock-v2.6.0-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
+- **`BattDock-v2.6.0-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
 - **`SHA256SUMS.txt`**：所有发布文件的 SHA-256 校验值清单，用于核对文件完整性。
 - **`update-summary.json`**：供软件内部直接读取的简明中文更新摘要。
-- **`VGNMouseBattery-v2.5.1-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
+- **`VGNMouseBattery-v2.6.0-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
 
-> **升级说明**：已安装 `v2.4.0` / `v2.5.0` 的用户可直接点击软件内「立即更新」一键自动覆盖并自动重启；`v2.3.0` 及更早版本请下载运行 **`BattDock-v2.5.1-Setup.exe`**（或便携版覆盖一次，个人配置保存在 `%LOCALAPPDATA%\BattDock\config.json` 完整保留）。
+> **升级说明**：已安装 `v2.4.0`–`v2.5.2` 的用户可直接点击软件内「立即更新」一键自动覆盖并自动重启；`v2.3.0` 及更早版本请下载运行 **`BattDock-v2.6.0-Setup.exe`**（或便携版覆盖一次，个人配置保存在 `%LOCALAPPDATA%\BattDock\config.json` 完整保留）。
 
 ### 首次启动与在线更新
 1. **开机静默自启**：在安装向导或「设置 → 常规设置」中开启开机自启，默认以 `--background` 静默驻留系统托盘，不弹出窗口。
@@ -142,7 +144,7 @@
 # 1. 安装依赖（Python 3.12+）
 pip install -r requirements.txt
 
-# 2. 运行全部单元测试（29 项）
+# 2. 运行全部单元测试（36 项）
 python -m unittest discover -s tests -v
 
 # 3. 源码启动 BattDock

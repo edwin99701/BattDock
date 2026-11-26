@@ -8,8 +8,8 @@
 
 | 参考仓库 | 许可证 | 使用方式与合规说明 |
 | :--- | :--- | :--- |
-| [`qu1ncky/BatteryTray`](https://github.com/qu1ncky/BatteryTray) | **MIT License** | 参考了其公开整理的 Logitech HID++、Razer、SteelSeries、Corsair、HyperX、ASUS ROG、Sony INZONE、MCHOSE 等只读 HID 协议字段与报文规范，使用 Python 独立编写本项目的 `providers/` 适配器模块。 |
-| [`JKWTCN/BatteryMonitor`](https://github.com/JKWTCN/BatteryMonitor) | **MIT License** | 参考了其公开整理的 ASUS ROG 鼠标型号表、MCHOSE `0x11` Feature Report XOR-0xFF 格式及 Apple AirPods Continuity BLE 广播字段解析规范，使用 Python 独立实现。 |
+| [`qu1ncky/BatteryTray`](https://github.com/qu1ncky/BatteryTray) | **MIT License** | 参考了其公开整理的 Logitech HID++/Centurion、ASTRO、Razer（鼠标/键盘/无线耳机）、SteelSeries、Corsair（SLIPSTREAM/Bragi/Wireless v2）、HyperX、ASUS ROG、Sony INZONE、JBL Quantum、EPOS、Airoha RACE、CompX BY / SONiX / Evision / Semico / MCHOSE / Alienware / Apple Magic Keyboard 等只读 HID 协议字段与报文规范，使用 Python 独立编写本项目的 `providers/` 适配器模块。 |
+| [`JKWTCN/BatteryMonitor`](https://github.com/JKWTCN/BatteryMonitor) | **MIT License** | 参考了其公开整理的 ASUS ROG 鼠标型号表、AULA/CompX 键盘只读报文、MCHOSE `0x11` Feature Report XOR-0xFF 格式及 Apple AirPods Continuity BLE 广播字段解析规范，使用 Python 独立实现。 |
 | [`Sapd/HeadsetControl`](https://github.com/Sapd/HeadsetControl) | **GPL-3.0**（强传染性 Copyleft） | **未复制或移植任何代码**。因 GPL-3.0 许可证兼容性限制，本项目仅参考了行业公开硬件通讯报文格式说明，全部实现为独立干净室 Python 代码。 |
 | [`Fan4Metal/mouse_tray`](https://github.com/Fan4Metal/mouse_tray) | **无 LICENSE 文件** | **未复制或移植任何代码**（按开源版权规范，无明确许可证仓库视为保留全部权利，不得直接复用源码）。 |
 | [`Capi005/batteryonpc`](https://github.com/Capi005/batteryonpc) | **无 LICENSE 文件** | **未复制或移植任何代码**。 |

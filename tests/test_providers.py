@@ -802,9 +802,221 @@ class TestV252StabilityAndLifecycle(unittest.TestCase):
         set_html = (root / "ui" / "settings.html").read_text(encoding="utf-8")
         common_css = (root / "ui" / "common.css").read_text(encoding="utf-8")
         self.assertIn("function resetInteractionState", idx_html)
-        self.assertIn("ui-reset-hover", idx_html)
+        self.assertIn("ui-await-pointer", idx_html)
         self.assertIn("function resetInteractionState", set_html)
-        self.assertIn(":root.ui-reset-hover *", common_css)
+        self.assertIn(":root.ui-await-pointer .win-btn.close:hover", common_css)
+
+
+class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
+    def test_wireless_keyboards_parsers_and_qmk_safety(self):
+        from providers.base import KIND_KEYBOARD
+        from providers.wireless_keyboards import (
+            WirelessKeyboardsProvider,
+            build_compx_kb_request,
+            build_evision_request,
+            build_mchose_k87_v3_request,
+            build_sonix_battery_request,
+            parse_alienware_kb_reply,
+            parse_apple_magic_keyboard_report,
+            parse_compx_kb_battery,
+            parse_compx_kb_model,
+            parse_evision_reply,
+            parse_mchose_k87_v3_reply,
+            parse_semico_reply,
+            parse_sonix_battery_reply,
+            parse_sonix_info_reply,
+        )
+
+        # 1. CompX BY 键盘 0x13 / 0x4A & 0x05
+        req = build_compx_kb_request(0x4A)
+        self.assertEqual(len(req), 20)
+        self.assertEqual(req[0], 0x13)
+        self.assertEqual(req[19], sum(req[:19]) & 0xFF)
+        rep = [0x13, 0x4A, 0x01, 0x00, 0x00, 82, 0x10] + [0x00] * 13
+        self.assertEqual(parse_compx_kb_battery(rep), (82, True))
+        self.assertIsNone(parse_compx_kb_battery([0x13, 0x4A, 0x01, 0x00] + [0x00] * 16))
+        mrep = [0x13, 0x05, 0x01, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x15] + [0x00] * 9
+        self.assertEqual(parse_compx_kb_model(mrep), ("MCHOSE G75 Pro", "MCHOSE"))
+
+        # 2. SONiX 键盘 20 01 与 55 10 两种回包格式
+        sreq = build_sonix_battery_request()
+        self.assertEqual(len(sreq), 33)
+        self.assertEqual(sreq[32], sum(sreq[:32]) & 0xFF)
+        self.assertEqual(parse_sonix_battery_reply([0x00, 0x20, 0x01, 0x00, 76]), 76)
+        self.assertEqual(parse_sonix_battery_reply([0x20, 0x01, 0x00, 65]), 65)
+        info_rep = [0x00, 0x55, 0x10] + [0x00] * 23 + [91] + [0x00] * 6
+        self.assertEqual(parse_sonix_info_reply(info_rep), 91)
+
+        # 共享 05AC:024F 的 Interface 1（QMK/VIA）必须被严格忽略，绝不打开
+        prov = WirelessKeyboardsProvider()
+        qmk_snap = [{
+            "vendor_id": 0x05AC,
+            "product_id": 0x024F,
+            "usage_page": 0xFF60,
+            "usage": 0x0061,
+            "interface_number": 1,
+            "path": b"fake-qmk-via",
+            "product_string": "QMK Keyboard",
+        }]
+        self.assertEqual(prov._poll_sonix_keyboards(qmk_snap, 100.0, False), [])
+
+        # 3. Evision 键盘（CHERRY / VGN / ATK）
+        ev_req, ev_tag = build_evision_request("vgn", 1, 64)
+        self.assertEqual(ev_req[0], 0x04)
+        self.assertEqual(ev_req[3], 0x1A)
+        ev_ok = [0x04, ev_tag & 0xFF, (ev_tag >> 8) & 0xFF, 0x1A, 0x06, 0x00, 0x00, 0x00, 73, 0x01] + [0x00] * 54
+        self.assertEqual(parse_evision_reply(ev_ok, "vgn", ev_tag), (True, 73, True))
+        ev_sleep = [0x04, ev_tag & 0xFF, (ev_tag >> 8) & 0xFF, 0xFF] + [0x00] * 60
+        self.assertEqual(parse_evision_reply(ev_sleep, "vgn", ev_tag), (False, None, False))
+
+        # 4. Semico / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard
+        self.assertEqual(parse_semico_reply([0x00, 0xAA, 0x55, 0xCC, 0x33, 0x0E, 64, 0x01]), (True, 64))
+        self.assertEqual(parse_semico_reply([0xAA, 0x55, 0xCC, 0x33, 0x0E, 0, 0x00]), (False, None))
+
+        k87_req = build_mchose_k87_v3_request()
+        self.assertEqual(k87_req[0], 0x4D)
+        data = [0x37, 0x38, 0x23, 0x20] + [0x00] * 6 + [1, 1, 88] + [0x00] * 7
+        frame = [0x4D, 0x01, 0x01, len(data), 0x00, 0x09, 0x00, 0x00] + data
+        crc = 0
+        for b in frame[2:]:
+            crc ^= b
+        frame.append(crc)
+        self.assertEqual(parse_mchose_k87_v3_reply(frame), (True, 88, True))
+
+        self.assertEqual(parse_alienware_kb_reply([0x00, 0x0E, 0xA1, 55, 0x04]), (55, True))
+        self.assertEqual(parse_apple_magic_keyboard_report([0x90, 0x02, 85]), (85, True, False))
+        self.assertEqual(parse_apple_magic_keyboard_report([0x90, 0x02, 100]), (100, False, True))
+
+        # 5. 键盘 180 秒低打扰节流与手动刷新穿透
+        cached_dev = DeviceBattery("kb-compx:3554:fa09", "AULA F75", "AULA", KIND_KEYBOARD, online=True, percent=80)
+        prov._remember(cached_dev, 1000.0)
+        self.assertIsNotNone(prov._get_throttled("kb-compx:3554:fa09", 1050.0, False))
+        self.assertIsNone(prov._get_throttled("kb-compx:3554:fa09", 1050.0, True))
+        self.assertIsNone(prov._get_throttled("kb-compx:3554:fa09", 1200.0, False))
+
+    def test_wireless_headsets_parsers(self):
+        from providers.wireless_headsets import (
+            build_centurion_frame,
+            build_epos_request,
+            build_razer_bridge_frame,
+            build_razer_report02_frame,
+            build_razer_v3x_request,
+            epos_crc8,
+            parse_astro_a50_gen4_battery,
+            parse_astro_a50_gen5_reply,
+            parse_centurion_battery,
+            parse_centurion_payload,
+            parse_cmedia_5565_reply,
+            parse_epos_reply,
+            parse_jbl_info_reply,
+            parse_mchose_v9_pro_2_reply,
+            parse_race_battery_reply,
+            parse_razer_bridge_value,
+            parse_razer_report02_answer,
+            parse_razer_v2_pro_2020_reply,
+            parse_razer_v3x_reply,
+        )
+
+        # 1. Razer Report 02 / Feature 07 / Feature FF / Bridge
+        r02 = build_razer_report02_frame(0x80, 0x21, 3)
+        rep02 = list(r02)
+        rep02[1] = 0x02
+        rep02[6] = 0x05
+        rep02[11] = 0x01
+        rep02[12] = 0x01
+        rep02[13] = 74
+        x = 0
+        for b in rep02[1:62]:
+            x ^= b
+        rep02[62] = x
+        self.assertEqual(parse_razer_report02_answer(rep02, r02), 74)
+
+        v3x_req = build_razer_v3x_request(0x05, 0x80)
+        v3x_rep = list(v3x_req)
+        v3x_rep[1] = 0x02
+        v3x_rep[10] = 63
+        xc = 0
+        for b in v3x_rep[3:61]:
+            xc ^= b
+        v3x_rep[62] = xc
+        self.assertEqual(parse_razer_v3x_reply(v3x_rep, v3x_req), 63)
+
+        v2p = [0xFF, 0x0F, 0x05, 0xFE, 0x12, 0x04, 0x1F, 0x08, 0x05, 0x00, 0x00, 0x03, 0x01, 0x00, 88]
+        self.assertEqual(parse_razer_v2_pro_2020_reply(v2p), (True, 88, False, False))
+
+        br_req = build_razer_bridge_frame(0x02, 0x08, [0x03, 0x21, 0x00, 0x00])
+        self.assertEqual(br_req[0], 0x02)
+        br_rep = [0x02, 0x80, 0x50, 0x49] + [0x00] * 8 + [0x21, 0x01, 0x01, 67] + [0x00] * 48
+        self.assertEqual(parse_razer_bridge_value(br_rep, 0x02, 0x21), 67)
+
+        # 2. Logitech Centurion & ASTRO A50 Gen 4/5
+        cframe = build_centurion_frame((0x51,), [0x04, 0x06, 85, 0x00, 0x01])
+        cpl = parse_centurion_payload((0x51,), cframe)
+        self.assertEqual(cpl, [0x04, 0x06, 85, 0x00, 0x01])
+        self.assertEqual(parse_centurion_battery(cpl[2:]), (85, True, False))
+        self.assertEqual(parse_astro_a50_gen5_reply([0x02, 0x0C, 0x03, 0x00, 0x06, 0x0C, 90, 0x00, 0x01]), (90, True))
+        self.assertEqual(parse_astro_a50_gen4_battery([0x02, 0x02, 0x01, 0x80 | 72]), (72, True))
+
+        # 3. JBL Quantum FF12 / EPOS H3PRO / Airoha RACE / C-Media 55 65 / MCHOSE V9 Pro 2
+        jbl = [0x86, 0x00, 0xDD, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0x00, 0x0D, 0x00, 0x01, 0x00, 0x80 | 55]
+        self.assertEqual(parse_jbl_info_reply(jbl), (55, True))
+
+        ep_req = build_epos_request(0x0005, 0x12, 0x03)
+        self.assertEqual(len(ep_req), 107)
+        ep_pl = [0x12, 0x00, 0x03, 0x00, 77, 0x00]
+        ep_rep = [0x01, 0xEB, 0xFE, 0x01, 0x00, 0x04, 0x00, 0x04, 0x00, len(ep_pl), 0x00, epos_crc8(ep_pl), 0x00] + ep_pl
+        self.assertEqual(parse_epos_reply(ep_rep, 0x0005, 0x12, 0x03), [77])
+
+        race_rep = [0x07, 9, 0x00, 0x05, 0x5D, 0x04, 0x00, 0xD6, 0x0C, 0x00, 0x00, 94]
+        self.assertEqual(parse_race_battery_reply(race_rep), 94)
+
+        self.assertEqual(parse_cmedia_5565_reply([0x55, 0x65, 80, 0x02]), (True, 80, False, False))
+        self.assertEqual(parse_cmedia_5565_reply([0x55, 0x65, 50, 0x00], allow_zero_charge=True), (True, 50, True, False))
+        self.assertEqual(parse_cmedia_5565_reply([0x55, 0x65, 50, 0x1A]), (False, None, False, False))
+
+        mc_notify = [0x55, 0xAA, 0x01, 0x01, 0x03, 0x00, 0x04, 0x22, 0x01, 0x40, 0x65] + [0x00] * 53
+        self.assertEqual(parse_mchose_v9_pro_2_reply(mc_notify), (True, 64, False))
+
+    def test_upgraded_brand_providers_and_manager_registration(self):
+        from providers.corsair_hid import CORSAIR_PERIPHERALS, parse_bragi_headset_reply
+        from providers.hyperx_hid import (
+            parse_hyperx_cloud3s_reply,
+            parse_hyperx_cloud_flight_voltage,
+            parse_hyperx_stinger_core_battery,
+        )
+        from providers.razer_hid import RAZER_MODELS
+        from providers.steelseries_hid import HEADSET_MODELS, parse_steelseries_headset
+
+        # Corsair Bragi 耳机（Virtuoso/HS80/wireless_v2）与新增键盘 PID
+        self.assertEqual(parse_bragi_headset_reply([0x01, 0x01, 0x02, 0x00, 0x69, 0x03, 0x00, 0x00], 0x09), 873)
+        self.assertIsNone(parse_bragi_headset_reply([0x01, 0x00, 0x02, 0x00, 0x69, 0x03, 0x00, 0x00], 0x09))
+        self.assertIn(0x2B02, CORSAIR_PERIPHERALS)  # K70 Core TKL Wireless
+        self.assertIn(0x2B04, CORSAIR_PERIPHERALS)  # MAKR 75
+
+        # SteelSeries Arctis 1 / Nova Elite / Nova Pro Omni
+        self.assertEqual(parse_steelseries_headset("arctis1", [0x06, 0x12, 0x03, 66]), (True, 66, False))
+        elite_rep = [0x01, 0xB0, 0, 0, 0x04, 0x01, 48, 0, 0, 0, 0, 0, 0, 0, 0x08, 0x08]
+        self.assertEqual(parse_steelseries_headset("nova_omni", elite_rep), (True, 48, False))
+        self.assertIn(0x1290, HEADSET_MODELS)  # Arctis Pro Wireless
+
+        # HyperX Cloud III S / Cloud Flight / Cloud Stinger Core
+        self.assertEqual(parse_hyperx_cloud3s_reply([0x0C, 0x02, 0x03, 0x01, 0x00, 0x06, 39], 0x06), 39)
+        self.assertEqual(parse_hyperx_cloud_flight_voltage([0x21, 0xFF, 0x05, 0x0F, 0xA0]), (True, 100, False))
+        self.assertEqual(
+            parse_hyperx_stinger_core_battery([0xFF, 0x12, 0x05, 0xFE, 0x0C, 0x04, 0x1F, 0x0B, 0x01, 0x03, 0x05, 0x7F, 0x0F]),
+            (81, False, False),
+        )
+
+        # Razer 新增无线键盘型号
+        self.assertIn(0x02BA, RAZER_MODELS)  # BlackWidow V4 Mini HyperSpeed
+        self.assertIn(0x02D5, RAZER_MODELS)  # BlackWidow V4 TKL HyperSpeed
+        self.assertIn(0x027B, RAZER_MODELS)  # Pro Type Ultra
+
+        # DeviceManager 默认已注册全部无线耳机与无线键盘适配器
+        mgr = DeviceManager()
+        names = [p.name for p in mgr.providers]
+        self.assertIn("wireless_headsets", names)
+        self.assertIn("wireless_keyboards", names)
 
 
 if __name__ == "__main__":

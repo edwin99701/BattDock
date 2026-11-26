@@ -583,7 +583,7 @@ def _is_window_alive(win: Optional[webview.Window], hwnd: int = 0) -> bool:
 
 
 def _clear_native_pointer_state(win: Optional[webview.Window]) -> None:
-    """向 WinForms 窗口及其 WebView2 子窗口投递取消捕获与鼠标离开消息，防止隐藏/重开后残留悬停态。"""
+    """递归向 WinForms 窗口及深层 WebView2 / Chrome_RenderWidgetHostHWND 投递取消捕获与鼠标离开消息。"""
     if win is None or sys.platform != "win32":
         return
     native = getattr(win, "native", None)
@@ -601,14 +601,20 @@ def _clear_native_pointer_state(win: Optional[webview.Window]) -> None:
         user32.PostMessageW(wintypes.HWND(hwnd), WM_CANCELMODE, 0, 0)
         user32.PostMessageW(wintypes.HWND(hwnd), WM_MOUSELEAVE, 0, 0)
 
-        # 同时通知 WebView2 子窗口释放悬停与按下捕获（仅投递异步消息，绝不阻塞 UI 线程）
-        child = user32.GetWindow(wintypes.HWND(hwnd), 5)  # GW_CHILD
-        seen = 0
-        while child and seen < 16:
-            user32.PostMessageW(wintypes.HWND(child), WM_CANCELMODE, 0, 0)
-            user32.PostMessageW(wintypes.HWND(child), WM_MOUSELEAVE, 0, 0)
-            child = user32.GetWindow(wintypes.HWND(child), 2)  # GW_HWNDNEXT
-            seen += 1
+        # 使用 EnumChildWindows 递归穿透 WebView2 -> Chrome_WidgetWin_1 -> Chrome_RenderWidgetHostHWND
+        descendants: list[int] = []
+        ENUM_CB = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def _collect(child_hwnd, _lp):
+            if child_hwnd:
+                descendants.append(int(child_hwnd))
+            return len(descendants) < 64
+
+        cb = ENUM_CB(_collect)
+        user32.EnumChildWindows(wintypes.HWND(hwnd), cb, 0)
+        for ch in descendants:
+            user32.PostMessageW(wintypes.HWND(ch), WM_CANCELMODE, 0, 0)
+            user32.PostMessageW(wintypes.HWND(ch), WM_MOUSELEAVE, 0, 0)
     except Exception:
         pass
 

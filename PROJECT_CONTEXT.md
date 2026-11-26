@@ -7,7 +7,7 @@
 ## 一、项目定位、运行环境与技术栈
 
 - **软件名称**：**BattDock**（轻量化 Windows 无线外设电量管理工具，开源协议 MIT）
-- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前最新正式版 `v2.5.2`）
+- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前最新正式版 `v2.6.0`）
 - **兼容目标**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时，免 Python 环境、免官方驱动）
 - **开发与构建环境**：Python `3.12+`（验证版本 `3.12.10`）、`hidapi 0.15.0`、`pywebview 6.2.1`（WinForms + EdgeChromium）、`pystray 0.19.5`、`Pillow 13.0.0`、`pythonnet` / `clr-loader`、`PyInstaller 6.22.3`、`Inno Setup 6.7.3`（用户级安装于 `%LOCALAPPDATA%\Programs\Inno Setup 6`）
 - **当前本机硬件环境**：Windows 11 x64，物理连接 `VGN Dragonfly F2 Pro Max (VID 0x3554, PID 0xFB3E)`；本机**无蓝牙适配器**（蓝牙适配器缺失时 `BluetoothBatteryProvider` 必须静默返回 `[]` 且零报错）。
@@ -44,11 +44,13 @@ providers/
   ├── corsair_hid.py          Corsair SLIPSTREAM Bragi (FF42:0001) & Void/HS70 耳机
   ├── hyperx_hid.py           HyperX Cloud 耳机 & Pulsefire 鼠标
   ├── extra_brands.py         ASUS ROG/TUF 鼠键/Omni/SpeedNova/耳机 & Sony INZONE H5/H9 II/Buds
+  ├── wireless_headsets.py    Razer Audio / Logitech Centurion / ASTRO / JBL Quantum / EPOS / Airoha RACE / MCHOSE / VGN OMNISOUND / FIFINE / Lenovo 无线耳机
+  ├── wireless_keyboards.py   CompX BY / SONiX(隔离QMK) / Evision / Semico / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard 无线键盘（180s 低打扰节流）
   └── bluetooth_provider.py   Windows SetupAPI DEVPKEY_Device_BatteryLevel + Apple AirPods Continuity BLE 解析
 installer/
   ├── BattDock.iss            Inno Setup 6 标准安装脚本（管理员安装 + 目录 users-modify 权限 + 防重复安装 + 卸载）
   └── ChineseSimplified.isl   UTF-8 BOM 简体中文安装向导语言包（Microsoft YaHei UI）
-tests/test_providers.py       33 项自动化单元测试（全协议解析 + 去重 + 提醒状态机 + 命名/图标/摘要/UI 不变量 + 更新脚本 + 生命周期/HID 缓存）
+tests/test_providers.py       36 项自动化单元测试（全协议解析 + 去重 + 提醒状态机 + 命名/图标/摘要/UI 不变量 + 更新脚本 + 生命周期/HID 缓存 + 无线耳机/键盘协议）
 build_release.ps1             一键测试 → PyInstaller 构建 → Inno Setup 编译 Setup.exe → ZIP 打包 → SHA256SUMS.txt
 version_info.txt              Windows EXE 文件版本属性元数据（ProductName=BattDock）
 ```
@@ -87,9 +89,9 @@ version_info.txt              Windows EXE 文件版本属性元数据（ProductN
    - 悬浮窗默认仅显示品牌名（悬停显示完整名）；低电量提醒弹窗按 `TextRenderer.MeasureText` 动态计算宽度（`250–360 × 56` 逻辑像素），显示完整标准设备名（超长仅裁冗余后缀，绝不缩减为纯品牌名），加 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` 避免抢夺游戏/全屏焦点。
 6. **设备管理拖拽排序与顺序同步**：
    - `ui/settings.html` 使用 Pointer Events + FLIP 位移交换实现无闪影拖拽排序，松手调用 `reorder_devices(ids)` 持久化至 `config.json`，并同步刷新主窗口（`_sorted_devices`）、托盘与桌面悬浮窗（`_pick_floating_device`）。
-7. **窗口生命周期、防交互残留与 HID 通信稳定化（v2.5.2）**：
+7. **窗口生命周期、防交互残留与 HID 通信稳定化（v2.5.2 – v2.6.0）**：
    - **拦截任务栏右键关闭 / Alt+F4**：主窗口与设置窗口统一订阅 `events.closing`（`should_lock=True`）；开启 `close_to_tray` 时取消销毁并隐藏复用，关闭时触发 `quit_app()` 完整退出；`show_main_window()` 校验 `_is_window_alive()`、自动还原最小化窗口并在窗口意外销毁时安全重建，后台监控线程由 `_bg_started` 保护绝不重复启动。
-   - **消除隐藏/重开残留选中态**：隐藏与显现前通过 `resetInteractionState()` + `ui-reset-hover` + `WM_CANCELMODE` / `WM_MOUSELEAVE` 清理焦点、悬停、按下与文本选中，且 `_safe_eval_js` 在 WinForms UI 线程自动转后台调用以杜绝 `pywebview` 信号量死锁。
+   - **彻底消除隐藏/重开残留选中态（v2.6.0 根治）**：隐藏与显现前通过 `resetInteractionState()` 持久挂载 `:root.ui-await-pointer` 压制 Chromium 残留 `:hover`/`:active`（不阻挡点击与键盘 Tab 导航），直到窗口显现 120ms 后检测到用户真实位移 >3px 的 `pointermove` 或 `pointerdown` 才解除；并配合 `EnumChildWindows` 递归向深层 `Chrome_RenderWidgetHostHWND` 投递 `WM_CANCELMODE` / `WM_MOUSELEAVE`。
    - **事件驱动 HID 拓扑缓存与串行退避轮询**：Win32 `WM_DEVICECHANGE` 监听 HID 热插拔，`DeviceManager` 串行加锁并缓存 HID 快照（消除常规 25 秒轮询触发 46–83ms 全总线 `hid.enumerate(0, 0)`）；`VgnBatteryReader` 复用共享快照、改用非阻塞排空并对休眠设备执行阶梯退避（`45s → 90s → 180s`），同步提供内存环形轻量诊断缓冲（零持续磁盘写）。
 8. **开源合规决策**：
    - 仅参考 MIT 仓库（`qu1ncky/BatteryTray`、`JKWTCN/BatteryMonitor`）的公开报文规范独立实现；未从 GPL-3.0（`Sapd/HeadsetControl`）或无 LICENSE 仓库复制代码，详情记录于 `THIRD_PARTY_LICENSES.md`。

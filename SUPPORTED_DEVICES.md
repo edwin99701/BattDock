@@ -25,54 +25,73 @@
 ### 1. VGN / VXE / ATK / MCHOSE / LAMZU / CompX 方案
 | 品牌 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| VGN / VXE / ATK | F2 Master+、F1 Pro / MOBA、Dragonfly 4K、VXE R1 Pro Max / SE+、ATK F1 / X1 系列 | `0x3554` / `0x373B` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
-| MCHOSE | A5 / G3 / A7 / L7 / K7 等支持 Feature Report `0x11`（XOR `0xFF`）型号 | `0x35A4` / `0x248A` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| VGN / VXE / ATK 鼠标 | F2 Master+、F1 Pro / MOBA、Dragonfly 4K、VXE R1 Pro Max / SE+、ATK F1 / X1 系列 | `0x3554` / `0x373B` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| VGN / VXE / ATK 无线键盘 | VGN V98 Pro / V98 Pro V2 / V98 Pro V3、S99、N75 Pro / N75 V2、V87 V2、V108、VXE75 / VXE75 V2、VXE V87、ATK V75X / Z87 | `0x258A` / `0x391D` / `0x320F` / `0x373B` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| VGN 无线耳机 | VGN OMNISOUND | `0x372E` | 2.4GHz 无线连接 | 协议已实现待实测 |
+| MCHOSE 鼠标 / 键盘 / 耳机 | A5 / G3 / A7 / L7 / K7 鼠标；G75 / G87 / G98 / K87 / K87 V3 / K99 / X75 / Z75 / GX87 / KX75 / UT98 键盘；MCHOSE X9 / V9 Pro / V9 Pro 2 耳机 | `0x35A4` / `0x248A` / `0x3554` / `0x41E4` / `0x3837` / `0x291D` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 | LAMZU / Zaopin / Scyrox | 采用标准 CompX `0xFF02:0x0002` 17 字节协议的型号 | `0x3554` / `0x373B` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 
-### 2. Logitech（官网参考：[logitechg.com](https://www.logitechg.com/)）
+### 2. AULA / AJAZZ / Attack Shark / CHERRY / EPOMAKER / EWEADN / Redragon / Alienware 无线键盘
+| 品牌 / 方案 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
+| :--- | :--- | :--- | :--- | :--- |
+| CompX BY（`0x13` 20B） | AULA F75 / F75 Max、Redragon Horus Pro / V2 及上述 MCHOSE / VGN 型号 | `0x3554` / `0x05AC` / `0x41E4` | 2.4GHz 无线连接 | 协议已实现待实测 |
+| SONiX（33B，严格隔离 QMK/VIA） | Attack Shark X85、EWEADN X87、AJAZZ AK820 Pro / MAX、AULA F87 Pro V2 / F99 MAX、EPOMAKER EA75 | `0x0C45` / `0x05AC`（仅 Interface 3） | 2.4GHz 无线连接 | 协议已实现待实测 |
+| Evision（`0x04 / 0x1A`） | CHERRY MX 3.0S Wireless / MX 2.0S Wireless / MX 2.0S WL Pro / PIXIU 75、AJAZZ AK992 及上述 ATK / VGN / VXE 型号 | `0x046A` / `0x320F` / `0x373B` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| Semico / Alienware | Attack Shark X98、AJAZZ AK820 Max Plus、Alienware Pro Wireless Gaming Keyboard | `0x1A2C` / `0x413C` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+
+### 3. Logitech / ASTRO（官网参考：[logitechg.com](https://www.logitechg.com/)）
 | 类型 | 覆盖型号 / 协议 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| 鼠标 / 键盘 | 支持 HID++ 2.0 电池特性（`0x1004` UnifiedBattery、`0x1000` BatteryStatus、`0x1001` BatteryVoltage、`0x1F20` ADC）的 **Logitech G Pro 2 Lightspeed**、**Logitech G Pro X Superlight 2**、Logitech G Pro X Superlight、G502 / G304 / G305 / G903、MX Master / MX Anywhere / MX Keys 等（注：G Pro 2 Lightspeed 与 G Pro X Superlight 2 为不同型号，底层独立精确映射） | `0x046D` | 2.4GHz 无线连接（接收器槽位 1–6）/ USB 有线连接 | 协议已实现待实测 |
-| 无线耳机 | Logitech G533 Wireless、G535 Lightspeed、G633、G635、G733 Lightspeed、G933、G935、G Pro Wireless Headset、G Pro X Wireless、G Pro X 2 Lightspeed | `0x046D` | 2.4GHz 无线连接 | 协议已实现待实测 |
+| 鼠标 / 键盘 | 支持 HID++ 2.0 电池特性（`0x1004` UnifiedBattery、`0x1000` BatteryStatus、`0x1001` BatteryVoltage、`0x1F20` ADC）的 **Logitech G Pro 2 Lightspeed**、**Logitech G Pro X Superlight 2**、Logitech G Pro X Superlight、G502 / G304 / G305 / G903、MX Master / MX Anywhere / MX Keys / MX Mechanical 等（注：G Pro 2 Lightspeed 与 G Pro X Superlight 2 为不同型号，底层独立精确映射） | `0x046D` | 2.4GHz 无线连接（接收器槽位 1–6）/ USB 有线连接 | 协议已实现待实测 |
+| 无线耳机 | Logitech G533 Wireless、G535 Lightspeed、G633、G635、G733 Lightspeed、G933、G935、G Pro Wireless Headset、G Pro X Wireless、G Pro X 2 / G Pro X 3 Lightspeed（Centurion）、G522 Lightspeed；ASTRO A50 Gen 4 / A50 Gen 5 / A50 X / A20 X | `0x046D` / `0x9886` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 
-### 3. Razer（官网参考：[razer.com](https://www.razer.com/)）
+### 4. Razer（官网参考：[razer.com](https://www.razer.com/)）
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| 无线鼠标 / 键盘 | Razer Viper V3 Pro / V2 Pro / Ultimate、DeathAdder V3 Pro / V2 Pro / V3 HyperSpeed、Basilisk V3 Pro / Ultimate、Orochi V2、Naga Pro、BlackWidow V3 Pro、DeathStalker V2 Pro（需支持 91 字节 Feature Report） | `0x1532` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| 无线鼠标 | Razer Viper V3 Pro / V2 Pro / Ultimate、DeathAdder V3 Pro / V2 Pro / V3 HyperSpeed、Basilisk V3 Pro / Ultimate、Orochi V2、Naga Pro、Cobra Pro 等 | `0x1532` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| 无线键盘 | Razer BlackWidow V3 Pro / V3 Mini / V4 Mini / V4 TKL / V4 Low-Profile / V4 Low-Profile TKL HyperSpeed、DeathStalker V2 Pro / V2 Pro TKL、Pro Type Ultra / Pro Type Ergo、Razer Joro（91 字节 Feature Report） | `0x1532` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| 无线耳机 | Razer BlackShark V2 Pro (2020/2023) / V2 HyperSpeed / V3（内置 5 分钟防断连节流）/ V3 X HyperSpeed、Kraken V4 / V4 Pro / Kitty V3 Pro、Barracuda Pro | `0x1532` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 
-### 4. SteelSeries（官网参考：[steelseries.com](https://steelseries.com/)）
+### 5. SteelSeries（官网参考：[steelseries.com](https://steelseries.com/)）
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
 | 无线鼠标 | SteelSeries Aerox 3 / 5 / 9 Wireless、Aerox 3 Gen 2、Prime Wireless / Mini、Rival 3 / 650 Wireless | `0x1038` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
-| 无线耳机 / 耳塞 | SteelSeries Arctis 7 / 7+ / 9、Arctis Nova 5 / Nova 7 / Nova Pro Wireless、Arctis GameBuds | `0x1038` | 2.4GHz 无线连接 | 协议已实现待实测 |
+| 无线耳机 / 耳塞 | SteelSeries Arctis 1 / 7 / 7+ / 9 / Pro Wireless、Arctis Nova 5 / Nova 3P / Nova 7（完整 15 PID）/ Nova Pro Wireless / Nova Pro Omni / Nova Elite、Arctis GameBuds | `0x1038` | 2.4GHz 无线连接 | 协议已实现待实测 |
 
-### 5. Corsair（官网参考：[corsair.com](https://www.corsair.com/)）
+### 6. Corsair（官网参考：[corsair.com](https://www.corsair.com/)）
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| 无线鼠标 / 键盘 | 支持 SLIPSTREAM Bragi 协议（Usage Page `0xFF42`）的 Dark Core、Harpoon、Katar、M75、Sabre、K57 / K65 / K70 Wireless 等 | `0x1B1C` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
-| 无线耳机 | Corsair Void RGB / Pro / Elite Wireless、HS70 / HS70 Pro Wireless、Virtuoso RGB Wireless / HS80 系列 | `0x1B1C` | 2.4GHz 无线连接 | 协议已实现待实测 |
+| 无线鼠标 / 键盘 | 支持 SLIPSTREAM Bragi 协议（Usage Page `0xFF42`）的 Dark Core、Harpoon、Katar、M75、Sabre、Scimitar、K57 / K65 Plus / K70 Pro Mini / K70 Core TKL / K100 Air / MAKR 75 等 | `0x1B1C` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| 无线耳机 | Corsair Void RGB / Pro / Elite / Void v2、HS70 / HS70 Pro、Virtuoso RGB Wireless / SE / XT / MAX、HS80 RGB / HS80 MAX Wireless | `0x1B1C` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 
-### 6. HyperX（官网参考：[hyperx.com](https://hyperx.com/)）
+### 7. HyperX（官网参考：[hyperx.com](https://hyperx.com/)）
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| 无线耳机 | HyperX Cloud Alpha Wireless、Cloud II Wireless（HP）、Cloud III Wireless、Cloud II Core Wireless、Cloud Stinger 2 Wireless | `0x03F0` / `0x0951` | 2.4GHz 无线连接 | 协议已实现待实测 |
+| 无线耳机 | HyperX Cloud Alpha / Cloud Alpha 2 Wireless、Cloud II Wireless（HP / Kingston）、Cloud III / Cloud III S Wireless、Cloud II Core Wireless、Cloud Flight / Flight S、Cloud Stinger 2 / Stinger Core Wireless (DTS) | `0x03F0` / `0x0951` | 2.4GHz 无线连接 | 协议已实现待实测 |
 | 无线鼠标 | HyperX Pulsefire Haste 2 / 2 Core / 2 Mini Wireless、Pulsefire Haste Wireless、Pulsefire Dart | `0x03F0` / `0x0951` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 
-### 7. ASUS ROG / TUF（官网参考：[rog.asus.com](https://rog.asus.com/)）
+### 8. ASUS ROG / TUF（官网参考：[rog.asus.com](https://rog.asus.com/)）
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
 | 无线鼠标 / 键盘 | ROG Chakram / Chakram X、Gladius II / III / III AimPoint、Keris Wireless / AimPoint / II Ace / II Origin、Harpe Ace / Mini / Extreme / II Ace、Spatha X、Pugio II、Strix Impact II、Strix Carry、TUF M4、ROG Azoth / Falchion / Strix Scope II 96 及 ROG Omni（`0x1ACE`）/ SpeedNova 8K（`0x1AD0`）接收器 | `0x0B05` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 | 无线耳机 / 耳塞 | ROG Pelta、ROG Delta II、ROG Cetra True Wireless SpeedNova（含左/右/盒独立电量）、ROG Cetra Open、ROG Strix Go 2.4 | `0x0B05` | 2.4GHz 无线连接 | 协议已实现待实测 |
 
-### 8. Sony（官网参考：[sony.com](https://www.sony.com/)）
+### 9. JBL / EPOS / Audeze / AKG / Skullcandy / FIFINE / Lenovo 无线耳机
+| 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
+| :--- | :--- | :--- | :--- | :--- |
+| JBL Quantum | Quantum 350 / 360 / 520 / 610 / 650 / 650X / 810 / 850 / 910 / 950 / 950X Wireless | `0x0ECB` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+| Airoha RACE / EPOS / 其他 | Audeze Maxwell / Maxwell 2、EPOS H3PRO Hybrid、AKG N9 Hybrid、Skullcandy PLYR / Crusher PLYR 720、FIFINE HT6、Lenovo Wireless VoIP Headset | `0x3329` / `0x1395` / `0x0ECB` / `0x34F0` / `0x3142` / `0x17EF` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
+
+### 10. Sony（官网参考：[sony.com](https://www.sony.com/)）
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
 | 无线耳机 / 耳塞 | Sony INZONE H5（`0x0EBF`）、Sony INZONE H9 II（`0x0FA8`）、Sony INZONE Buds（`0x0EC2`，含左/右/盒独立电量） | `0x054C` | 2.4GHz 无线连接 | 协议已实现待实测 |
 
-### 9. Apple AirPods / Beats 与标准蓝牙设备
+### 11. Apple AirPods / Beats / Magic Keyboard 与标准蓝牙设备
 | 类型 | 覆盖型号 / 服务 | 连接方式 | 说明 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
 | Apple AirPods / Beats | AirPods 1/2/3/4/4 ANC、AirPods Pro 1/2/2 USB-C/3、AirPods Max / USB-C / 2、Beats 全系 | 蓝牙连接（BLE Continuity `0x004C / 0x07`） | 解析器已实现左/右/盒独立电量与充电位；运行时依赖本机蓝牙适配器及可选 WinRT BLE 监听 | 协议已实现待实测 |
+| Apple Magic Keyboard | Apple Magic Keyboard（含数字小键盘 / Touch ID 多代蓝牙款） | 蓝牙连接（只读 `HidD_GetInputReport(0x90)`） | 零写操作、不占用键盘输入通道 | 协议已实现待实测 |
 | 标准蓝牙外设 | 支持 Windows Bluetooth Battery Service（GATT `0x180F`）或 HFP 电量上报的任意蓝牙鼠标、耳机、键盘 | 蓝牙连接 | 通过 Windows SetupAPI 只读读取 `DEVPKEY_Device_BatteryLevel`；无蓝牙适配器时静默跳过 | 协议已实现待实测 |
 
 ---

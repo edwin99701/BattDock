@@ -749,14 +749,36 @@
     }, 620);
   }
 
-  let _hoverReleaseRaf = 0;
-  function _releaseHoverReset() {
-    if (_hoverReleaseRaf) {
-      cancelAnimationFrame(_hoverReleaseRaf);
-      _hoverReleaseRaf = 0;
+  let _awaitPointerSince = 0;
+  let _lastPointerX = -9999;
+  let _lastPointerY = -9999;
+  let _stalePointerX = -9999;
+  let _stalePointerY = -9999;
+
+  window.addEventListener("pointermove", (e) => {
+    const cx = e.clientX;
+    const cy = e.clientY;
+    const prevX = _lastPointerX;
+    const prevY = _lastPointerY;
+    _lastPointerX = cx;
+    _lastPointerY = cy;
+    if (!document.documentElement.classList.contains("ui-await-pointer")) return;
+    if (document.hidden) return;
+    const elapsed = performance.now() - _awaitPointerSince;
+    // 忽略窗口刚显现瞬间 Chromium 使用旧坐标补发的合成 pointermove
+    if (elapsed < 120) return;
+    const movedFromStale = Math.abs(cx - _stalePointerX) > 3 || Math.abs(cy - _stalePointerY) > 3;
+    const movedFromPrev = Math.abs(cx - prevX) > 2 || Math.abs(cy - prevY) > 2;
+    if (movedFromStale || movedFromPrev) {
+      document.documentElement.classList.remove("ui-await-pointer");
     }
-    document.documentElement.classList.remove("ui-reset-hover");
-  }
+  }, { passive: true });
+
+  window.addEventListener("pointerdown", (e) => {
+    _lastPointerX = e.clientX;
+    _lastPointerY = e.clientY;
+    document.documentElement.classList.remove("ui-await-pointer");
+  }, { passive: true });
 
   function resetInteractionState(isHiding) {
     if (_dragResetFn) _dragResetFn();
@@ -770,6 +792,8 @@
     } catch (_) {}
 
     if (isHiding) {
+      _stalePointerX = _lastPointerX;
+      _stalePointerY = _lastPointerY;
       clearTimeout(refreshTimer);
       const btn = document.getElementById("refreshBtn");
       if (btn) btn.classList.remove("spinning");
@@ -777,24 +801,13 @@
       if (lbl) lbl.textContent = "刷新";
     }
 
-    document.documentElement.classList.add("ui-reset-hover");
+    // 持续保持 ui-await-pointer 直到用户真实移动鼠标进入窗口，彻底免疫 Chromium 缓存旧悬停坐标导致的关闭按钮变红
+    _awaitPointerSince = performance.now();
+    document.documentElement.classList.add("ui-await-pointer");
     void document.documentElement.offsetHeight;
-    if (_hoverReleaseRaf) {
-      cancelAnimationFrame(_hoverReleaseRaf);
-      _hoverReleaseRaf = 0;
-    }
-    if (!isHiding) {
-      _hoverReleaseRaf = requestAnimationFrame(() => {
-        _hoverReleaseRaf = requestAnimationFrame(() => {
-          _hoverReleaseRaf = 0;
-          document.documentElement.classList.remove("ui-reset-hover");
-        });
-      });
-    }
   }
   window.resetInteractionState = resetInteractionState;
 
-  window.addEventListener("pointermove", _releaseHoverReset, { passive: true });
   window.addEventListener("blur", () => resetInteractionState(false));
 
   // 窗口最小化或隐藏至托盘后停止任何进行中的前端动画并清除残留选中/悬停状态
@@ -806,9 +819,9 @@
     }
   });
 
-  function openSettings() { window.pywebview?.api?.open_settings("general"); }
-  function openUpdateSettings() { window.pywebview?.api?.open_settings("about"); }
-  function minimizeWin() { resetInteractionState(false); window.pywebview?.api?.minimize_window(); }
+  function openSettings() { resetInteractionState(false); window.pywebview?.api?.open_settings("general"); }
+  function openUpdateSettings() { resetInteractionState(false); window.pywebview?.api?.open_settings("about"); }
+  function minimizeWin() { resetInteractionState(true); window.pywebview?.api?.minimize_window(); }
   function toggleMax() { window.pywebview?.api?.toggle_maximize(); }
   function closeWin() { resetInteractionState(true); window.pywebview?.api?.close_window(); }
 

@@ -1,5 +1,28 @@
 # 更新日志（CHANGELOG）
 
+## BattDock v2.6.0（2026-11-26）— 根治关闭按钮红色悬停残留、大幅扩展无线耳机与无线键盘支持
+
+### 窗口交互 Bug 彻底修复
+- **根治主窗口重开后关闭按钮残留红色高亮**：定位 `v2.5.2` 残留根因为 Chromium Blink 在窗口隐藏时保留了旧鼠标坐标，且 2 帧后自动移除重置类导致 `:hover` 立即重新命中 `.win-btn.close`（`#E81123`），同时原 `GetWindow(GW_CHILD)` 未递归触达深层 `Chrome_RenderWidgetHostHWND`。现改用 `:root.ui-await-pointer` 持久屏蔽残留 `:hover`/`:active` 样式（不阻塞点击与键盘 `Tab` 导航），直到重开后 120ms 且收到真实位移超过 3px 的用户 `pointermove` 或 `pointerdown` 才解除，并配合 `EnumChildWindows` 递归向所有 WebView2 子窗口投递 `WM_CANCELMODE` / `WM_MOUSELEAVE`，已在 Edge WebView2 实机验证通过。
+
+### 新增无线键盘只读电量支持（协议已实现待实测）
+- **新增多品牌无线键盘适配器（`providers/wireless_keyboards.py`）**：基于 MIT 许可公开只读协议规范独立实现，内置 180 秒在线低打扰节流（避免频繁唤醒休眠键盘，手动刷新立即穿透）：
+  - **CompX BY 2.4G**：AULA F75 / F75 Max、MCHOSE G75 / G87 / G98 / K87 / K99 / X75 / Z75 / GX87 / KX75 / UT98 系列、VGN V98 Pro V3 / V87 V2 / N75 V2 / V108、Redragon Horus Pro / V2；
+  - **SONiX 2.4G**：Attack Shark X85、EWEADN X87、AJAZZ AK820 Pro / MAX、AULA F87 Pro V2 / F99 MAX、EPOMAKER EA75（对共享 `05AC:024F` 严格限定 Interface 3，绝不误触 QMK/VIA Interface 1）；
+  - **Evision 2.4G/有线**：CHERRY MX 3.0S / MX 2.0S / MX 2.0S WL Pro / PIXIU 75、ATK V75X / Z87、VGN S99 / V98 Pro / V98 Pro V2 / N75 Pro / VXE75 / VXE V87、AJAZZ AK992；
+  - **Semico / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard**：Attack Shark X98、AJAZZ AK820 Max Plus、MCHOSE K87 V3、Alienware Pro Wireless Gaming Keyboard 及多代 Apple Magic Keyboard（只读 `HidD_GetInputReport(0x90)`）。
+- **扩展 Razer & Corsair 无线键盘**：补全 Razer 9 款无线键盘（BlackWidow V3 Mini / V4 Mini / V4 TKL / V4 Low-Profile / V4 Low-Profile TKL HyperSpeed、DeathStalker V2 Pro TKL、Pro Type Ultra / Ergo、Joro）以及 Corsair K70 Core TKL Wireless、MAKR 75 与 K65 Plus / K70 Pro Mini 多 PID。
+
+### 新增无线耳机只读电量支持（协议已实现待实测）
+- **新增多品牌无线耳机适配器（`providers/wireless_headsets.py`）**：
+  - **Razer 无线耳机**：BlackShark V2 Pro (2020/2023) / V2 HyperSpeed / V3（内置 5 分钟防断连节流）/ V3 X HyperSpeed、Kraken V4 / V4 Pro / Kitty V3 Pro、Barracuda Pro；
+  - **Logitech Centurion & ASTRO**：Logitech G Pro X 2 / G Pro X 3 / G522 Lightspeed、ASTRO A50 Gen 4 / A50 Gen 5 / A50 X / A20 X；
+  - **JBL / EPOS / Audeze / AKG / Skullcandy / MCHOSE / VGN / FIFINE / Lenovo**：JBL Quantum 350 / 360 / 520 / 610 / 650 / 650X / 810 / 850 / 910 / 950 / 950X Wireless、EPOS H3PRO Hybrid、Audeze Maxwell / Maxwell 2、AKG N9 Hybrid、Skullcandy PLYR / Crusher PLYR 720、MCHOSE X9 / V9 Pro / V9 Pro 2、VGN OMNISOUND、FIFINE HT6、Lenovo Wireless VoIP Headset。
+- **升级 Corsair / SteelSeries / HyperX 无线耳机**：正式启用 Corsair Virtuoso / SE / XT / MAX、HS80 RGB / HS80 MAX、Void v2 耳机轮询；补全 SteelSeries Arctis 1 / Pro Wireless / Nova Elite / Nova Pro Omni、Arctis Nova 7 完整 15 PID 与 Nova 3P；补全 HyperX Cloud III S、Cloud Alpha 2、Cloud Flight / Flight S、Cloud Stinger Core (DTS) 与 Cloud II (Kingston)。
+- **同步更新设置页支持设备目录与开源合规文档**：新增 36 项自动化单元测试全部通过，所有新增外设严格标明为「协议已实现待实测」，完整保留 VGN Dragonfly F2 Pro Max 已验证通信基线。
+
+---
+
 ## BattDock v2.5.2（2026-11-26）— 窗口交互状态与生命周期修复、HID 轮询稳定性优化
 
 ### 窗口交互与生命周期修复

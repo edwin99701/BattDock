@@ -32,6 +32,8 @@ from .logitech_hidpp import LogitechHidppProvider
 from .razer_hid import RazerHidProvider
 from .steelseries_hid import SteelSeriesHidProvider
 from .vgn_provider import VgnCompxProvider
+from .wireless_headsets import WirelessHeadsetsProvider
+from .wireless_keyboards import WirelessKeyboardsProvider
 
 
 def _device_score(dev: DeviceBattery) -> tuple[int, int, int, int]:
@@ -85,6 +87,8 @@ class DeviceManager:
             CorsairHidProvider(),
             HyperXHidProvider(),
             ExtraBrandsProvider(),
+            WirelessHeadsetsProvider(),
+            WirelessKeyboardsProvider(),
             BluetoothBatteryProvider(),
         ]
         self._poll_lock = threading.RLock()

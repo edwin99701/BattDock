@@ -33,20 +33,29 @@ CORSAIR_PERIPHERALS: dict[int, tuple[str, str]] = {
     0x1B7E: ("Corsair Dark Core RGB Pro SE", KIND_MOUSE),
     0x1B80: ("Corsair Dark Core RGB Pro", KIND_MOUSE),
     0x1B4C: ("Corsair Ironclaw RGB Wireless", KIND_MOUSE),
+    0x2B32: ("Corsair Ironclaw Wireless SE", KIND_MOUSE),
     0x1B5E: ("Corsair Harpoon RGB Wireless", KIND_MOUSE),
+    0x2B2E: ("Corsair Harpoon V2 Wireless", KIND_MOUSE),
     0x1B98: ("Corsair Sabre RGB Pro Wireless", KIND_MOUSE),
     0x1BB5: ("Corsair M65 RGB Ultra Wireless", KIND_MOUSE),
     0x1BD6: ("Corsair M65 RGB Ultra Wireless", KIND_MOUSE),
     0x1BF1: ("Corsair M75 Wireless", KIND_MOUSE),
+    0x2B08: ("Corsair M75 Wireless", KIND_MOUSE),
     0x1BF2: ("Corsair M75 Air", KIND_MOUSE),
     0x1BDB: ("Corsair Scimitar RGB Elite Wireless", KIND_MOUSE),
+    0x2B22: ("Corsair Scimitar Elite Wireless SE", KIND_MOUSE),
     0x1BB8: ("Corsair Nightsabre Wireless", KIND_MOUSE),
     0x1BB2: ("Corsair Darkstar Wireless", KIND_MOUSE),
     0x1BFB: ("Corsair M55 Wireless", KIND_MOUSE),
     0x1B6E: ("Corsair K57 RGB Wireless", KIND_KEYBOARD),
     0x1BAB: ("Corsair K100 Air Wireless", KIND_KEYBOARD),
     0x1BB6: ("Corsair K70 Pro Mini Wireless", KIND_KEYBOARD),
+    0x1BD3: ("Corsair K70 Pro Mini Wireless", KIND_KEYBOARD),
+    0x2B02: ("Corsair K70 Core TKL Wireless", KIND_KEYBOARD),
     0x2B10: ("Corsair K65 Plus Wireless", KIND_KEYBOARD),
+    0x2B11: ("Corsair K65 Plus Wireless", KIND_KEYBOARD),
+    0x2B23: ("Corsair K65 Plus Wireless", KIND_KEYBOARD),
+    0x2B04: ("Corsair MAKR 75", KIND_KEYBOARD),
 }
 
 SLIPSTREAM_RECEIVERS: dict[int, Optional[str]] = {
@@ -62,8 +71,40 @@ SLIPSTREAM_RECEIVERS: dict[int, Optional[str]] = {
     0x2B07: "Corsair K65 Plus Wireless",
 }
 
-VOID_HEADSET_PIDS = {0x0A14, 0x0A16, 0x0A17, 0x0A1D, 0x0A1A, 0x0A55, 0x0A51, 0x0A52, 0x0A38, 0x0A4F, 0x0A2B, 0x0A75, 0x0A56}
-BRAGI_HEADSET_PIDS = {0x2A08, 0x2A02, 0x0A97, 0x2A0F, 0x2A03, 0x2A0C, 0x2A12, 0x2A05}
+VOID_HEADSET_PIDS = {
+    0x1B1C, 0x1B27, 0x0A14, 0x0A16, 0x0A17, 0x0A1D, 0x0A1A, 0x1B2A,
+    0x1B23, 0x1B29, 0x0A55, 0x0A51, 0x0A52, 0x0A38, 0x0A4F, 0x0A2B, 0x0A75, 0x0A56,
+}
+
+# Corsair Bragi 耳机（Report ID 0x02 读属性，FF42:0001 Interface 3）: pid -> (key, name, is_wired)
+BRAGI_HEADSET_MODELS: dict[int, tuple[str, str, bool]] = {
+    0x0A64: ("virtuoso", "Corsair Virtuoso RGB Wireless", False),
+    0x0A62: ("virtuoso", "Corsair Virtuoso RGB Wireless", True),
+    0x0A3E: ("virtuoso", "Corsair Virtuoso RGB Wireless", False),
+    0x0A3D: ("virtuoso", "Corsair Virtuoso RGB Wireless", True),
+    0x0A40: ("virtuoso", "Corsair Virtuoso RGB Wireless SE", False),
+    0x0A3F: ("virtuoso", "Corsair Virtuoso RGB Wireless SE", True),
+    0x0A42: ("virtuoso", "Corsair Virtuoso RGB Wireless XT", False),
+    0x0A41: ("virtuoso", "Corsair Virtuoso RGB Wireless XT", True),
+    0x0A44: ("virtuoso", "Corsair Virtuoso RGB Wireless", False),
+    0x0A43: ("virtuoso", "Corsair Virtuoso RGB Wireless", True),
+    0x0A6B: ("hs80-rgb", "Corsair HS80 RGB Wireless", False),
+    0x0A73: ("hs80-rgb", "Corsair HS80 RGB Wireless", False),
+    0x0A69: ("hs80-rgb", "Corsair HS80 RGB Wireless", True),
+}
+
+# Corsair Wireless v2 耳机（Void v2 / Virtuoso MAX / HS80 MAX）: pid -> (key, name, interface)
+BRAGI_V2_HEADSETS: dict[int, tuple[str, str, int]] = {
+    0x2A08: ("wireless-v2", "Corsair Void / Virtuoso / HS80 MAX Wireless", 4),
+    0x2A02: ("wireless-v2", "Corsair Void / Virtuoso / HS80 MAX Wireless", 4),
+    0x0A97: ("wireless-v2", "Corsair HS80 MAX Wireless", 4),
+    0x2A0F: ("wireless-v2", "Corsair Void / Virtuoso / HS80 MAX Wireless", 4),
+    0x2A03: ("wireless-v2", "Corsair Void / Virtuoso / HS80 MAX Wireless", 4),
+    0x2A0C: ("wireless-v2", "Corsair Void / Virtuoso / HS80 MAX Wireless", 3),
+    0x2A12: ("wireless-v2", "Corsair Void / Virtuoso / HS80 MAX Wireless", 3),
+    0x2A05: ("wireless-v2", "Corsair Void / Virtuoso / HS80 MAX Wireless", 3),
+}
+BRAGI_HEADSET_PIDS = set(BRAGI_V2_HEADSETS.keys()) | set(BRAGI_HEADSET_MODELS.keys())
 
 
 def parse_bragi_property(reply: list[int] | bytes, expected_slot: int) -> Optional[int]:
@@ -88,6 +129,17 @@ def parse_corsair_void_reply(reply: list[int] | bytes) -> Optional[tuple[bool, O
             return (False, None, False)
         return (True, min(100, r[2] & 0x7F), r[4] in (4, 5))
     return None
+
+
+def parse_bragi_headset_reply(reply: list[int] | bytes, target: int) -> Optional[int]:
+    """解析 Corsair Bragi 耳机 Report 0x01 属性回包 `[01, who, 02, status, v0..v3]` -> 32 位值。"""
+    r = list(reply)
+    if len(r) >= 9 and r[0] == 0x00 and r[1] == 0x01:
+        r = r[1:]
+    expected_who = 0x01 if target == 0x09 else 0x00
+    if len(r) < 8 or r[0] != 0x01 or r[1] != expected_who or r[2] != 0x02 or r[3] != 0x00:
+        return None
+    return r[4] | (r[5] << 8) | (r[6] << 16) | (r[7] << 24)
 
 
 class CorsairHidProvider(BatteryProvider):
@@ -197,20 +249,39 @@ class CorsairHidProvider(BatteryProvider):
                     pass
         return out
 
+    def _read_bragi_headset_prop(self, dev: hid.device, target: int, prop_id: int, numbered: bool = True) -> Optional[int]:
+        req = pad_report(64, [0x02, target, 0x02, prop_id]) if numbered else pad_report(65, [0x00, 0x02, target, 0x02, prop_id])
+        try:
+            dev.write(req)
+            for _ in range(8):
+                raw = dev.read(65, 220)
+                if not raw:
+                    break
+                val = parse_bragi_headset_reply(raw, target)
+                if val is not None:
+                    return val
+        except OSError:
+            return None
+        return None
+
     def _poll_headsets(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
         seen: set[int] = set()
         for d in hid_snapshot:
             if d.get("vendor_id") != CORSAIR_VID:
                 continue
-            pid = d.get("product_id", 0)
+            pid = int(d.get("product_id", 0))
             if pid in seen:
                 continue
             path = d.get("path")
             if not path:
                 continue
+            up = int(d.get("usage_page", 0))
+            u = int(d.get("usage", 0))
+            iface = int(d.get("interface_number", -1))
 
-            if pid in VOID_HEADSET_PIDS and d.get("usage_page") == 0xFFC5 and d.get("usage") == 0x0001:
+            # 1. Corsair Void / HS70
+            if pid in VOID_HEADSET_PIDS and up == 0xFFC5 and u == 0x0001:
                 seen.add(pid)
                 dev = hid.device()
                 parsed = None
@@ -247,6 +318,106 @@ class CorsairHidProvider(BatteryProvider):
                         asleep=not online,
                         percent=pct,
                         charging=charging,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if online else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+
+            # 2. Corsair Virtuoso / XT / SE & HS80 RGB Wireless (Bragi Report 02 on FF42:0001 interface 3)
+            elif pid in BRAGI_HEADSET_MODELS and up == BRAGI_PAGE and u == BRAGI_USAGE and (iface in (-1, 3)):
+                seen.add(pid)
+                key, name, is_wired = BRAGI_HEADSET_MODELS[pid]
+                online, pct, chg, full = False, None, False, False
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, 64, 4, 5)
+                    targets = (0x08, 0x09) if is_wired else (0x09,)
+                    for tgt in targets:
+                        tenths = self._read_bragi_headset_prop(dev, tgt, 0x0F, numbered=True)
+                        if tenths is not None and 0 <= tenths <= 1000:
+                            pwr = self._read_bragi_headset_prop(dev, tgt, 0x10, numbered=True)
+                            online = True
+                            pct = min(100, tenths // 10)
+                            chg = pwr == 1
+                            full = pwr == 3
+                            break
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                out.append(
+                    DeviceBattery(
+                        device_id=f"corsair:{key}",
+                        name=name,
+                        brand="Corsair",
+                        kind=KIND_HEADSET,
+                        connection_mode="有线" if (is_wired or chg) else "2.4G",
+                        vid=CORSAIR_VID,
+                        pid=pid,
+                        connected=True,
+                        online=online,
+                        asleep=not online,
+                        percent=pct,
+                        charging=chg and not full,
+                        full=full,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if online else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+
+            # 3. Corsair Void v2 / Virtuoso MAX / HS80 MAX Wireless (wireless_v2 on interface 3/4)
+            elif pid in BRAGI_V2_HEADSETS:
+                key, name, req_iface = BRAGI_V2_HEADSETS[pid]
+                if iface != req_iface or up < 0xFF00:
+                    continue
+                in_len, out_len, _ = get_hid_report_lengths(path)
+                if out_len < 64 or in_len < 64:
+                    continue
+                seen.add(pid)
+                numbered = out_len == 64
+                online, pct = False, None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, in_len, 4, 5)
+                    # 仅发送只读属性请求 0x13/0x12/0x0F，不切换软件模式
+                    for init_prop in (0x13, 0x12):
+                        req = pad_report(64, [0x02, 0x08, 0x02, init_prop]) if numbered else pad_report(65, [0x00, 0x02, 0x08, 0x02, init_prop])
+                        dev.write(req)
+                    hid_drain(dev, in_len, 4, 5)
+                    if self._read_bragi_headset_prop(dev, 0x09, 0x12, numbered=numbered) is not None:
+                        for _ in range(3):
+                            tenths = self._read_bragi_headset_prop(dev, 0x09, 0x0F, numbered=numbered)
+                            if tenths is not None and 1 <= tenths <= 1000:
+                                online = True
+                                pct = min(100, tenths // 10)
+                                break
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                out.append(
+                    DeviceBattery(
+                        device_id=f"corsair:{key}:{pid:04x}",
+                        name=name,
+                        brand="Corsair",
+                        kind=KIND_HEADSET,
+                        connection_mode="2.4G",
+                        vid=CORSAIR_VID,
+                        pid=pid,
+                        connected=True,
+                        online=online,
+                        asleep=not online,
+                        percent=pct,
                         support_status=STATUS_PROTOCOL,
                         status_detail="" if online else "耳机离线或休眠",
                         provider_name=self.name,

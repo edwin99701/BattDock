@@ -141,9 +141,64 @@
   }
 }
 
-/* 窗口隐藏或重新唤出瞬间临时清除 Chromium 残留的 :hover / :active 伪类状态，不影响键盘导航 */
-:root.ui-reset-hover * {
-  pointer-events: none !important;
+/* 窗口隐藏或重新唤出后等待真实鼠标进入移动前，彻底屏蔽 Chromium 缓存的残留 :hover / :active 视觉高亮（不阻断点击与键盘导航） */
+:root.ui-await-pointer .win-btn:hover,
+:root.ui-await-pointer .win-btn:active,
+:root.ui-await-pointer .win-btn.close:hover,
+:root.ui-await-pointer .win-btn.close:active {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+:root.ui-await-pointer .btn:hover,
+:root.ui-await-pointer .btn:active {
+  background: var(--bg-card) !important;
+  border-color: var(--border-input) !important;
+  color: var(--text-primary) !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+:root.ui-await-pointer .btn-primary:hover,
+:root.ui-await-pointer .btn-primary:active {
+  background: var(--brand) !important;
+  border-color: var(--brand) !important;
+  color: #FFFFFF !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+:root.ui-await-pointer .device-card:hover {
+  border-color: var(--border-card) !important;
+}
+
+:root.ui-await-pointer .device-card.level-tier2:hover {
+  border-color: var(--warn-card-border) !important;
+}
+
+:root.ui-await-pointer .device-card.level-tier3:hover {
+  border-color: var(--crit-card-border) !important;
+}
+
+:root.ui-await-pointer .update-pill:hover,
+:root.ui-await-pointer .update-pill:active {
+  background: var(--brand-soft) !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+:root.ui-await-pointer .cselect-btn:hover,
+:root.ui-await-pointer .cselect-btn:active {
+  border-color: var(--border-input) !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+:root.ui-await-pointer .nav-item:not(.active):hover {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
 }
 
 * {

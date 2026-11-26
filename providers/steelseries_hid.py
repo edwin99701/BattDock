@@ -62,20 +62,48 @@ MOUSE_MODELS: dict[int, SteelSeriesMouseModel] = {
 
 # 耳机表: pid -> (key, name, proto, interface, usage_page, kind)
 HEADSET_MODELS: dict[int, tuple[str, str, str, int, int, str]] = {
+    0x12B3: ("arctis-1", "SteelSeries Arctis 1 Wireless", "arctis1", 3, 0xFF43, KIND_HEADSET),
+    0x12B6: ("arctis-1", "SteelSeries Arctis 1 Wireless", "arctis1", 3, 0xFF43, KIND_HEADSET),
+    0x12D7: ("arctis-1", "SteelSeries Arctis 1 Wireless", "arctis1", 3, 0xFF43, KIND_HEADSET),
+    0x12D5: ("arctis-1", "SteelSeries Arctis 1 Wireless", "arctis1", 3, 0xFF43, KIND_HEADSET),
     0x1260: ("arctis-7", "SteelSeries Arctis 7", "arctis7", 5, 0, KIND_HEADSET),
     0x12AD: ("arctis-7", "SteelSeries Arctis 7 (2019)", "arctis7", 5, 0, KIND_HEADSET),
+    0x1252: ("arctis-7", "SteelSeries Arctis Pro", "arctis7", 5, 0, KIND_HEADSET),
+    0x1280: ("arctis-7", "SteelSeries Arctis 7", "arctis7", 5, 0, KIND_HEADSET),
     0x12C2: ("arctis-9", "SteelSeries Arctis 9", "arctis9", -1, 0, KIND_HEADSET),
     0x12C4: ("arctis-9", "SteelSeries Arctis 9", "arctis9", -1, 0, KIND_HEADSET),
+    0x1290: ("arctis-pro-wireless", "SteelSeries Arctis Pro Wireless", "arctis_pro", -1, 0, KIND_HEADSET),
     0x12E0: ("arctis-nova-pro", "SteelSeries Arctis Nova Pro Wireless", "nova_pro", 4, 0, KIND_HEADSET),
     0x12E5: ("arctis-nova-pro", "SteelSeries Arctis Nova Pro Wireless", "nova_pro", 4, 0, KIND_HEADSET),
     0x225D: ("arctis-nova-pro", "SteelSeries Arctis Nova Pro Wireless", "nova_pro", 4, 0, KIND_HEADSET),
+    0x2244: ("arctis-nova-elite", "SteelSeries Arctis Nova Elite", "nova_elite", 3, 0, KIND_HEADSET),
+    0x2246: ("arctis-nova-elite", "SteelSeries Arctis Nova Elite", "nova_elite", 3, 0, KIND_HEADSET),
+    0x2249: ("arctis-nova-elite", "SteelSeries Arctis Nova Elite", "nova_elite", 3, 0, KIND_HEADSET),
+    0x2270: ("arctis-nova-elite", "SteelSeries Arctis Nova Elite", "nova_elite", 3, 0, KIND_HEADSET),
+    0x2290: ("arctis-nova-pro-omni", "SteelSeries Arctis Nova Pro Omni", "nova_omni", 3, 0, KIND_HEADSET),
     0x220E: ("arctis-7-plus", "SteelSeries Arctis 7+", "arctis7p", 3, 0xFFC0, KIND_HEADSET),
     0x2212: ("arctis-7-plus", "SteelSeries Arctis 7+", "arctis7p", 3, 0xFFC0, KIND_HEADSET),
+    0x2216: ("arctis-7-plus", "SteelSeries Arctis 7+", "arctis7p", 3, 0xFFC0, KIND_HEADSET),
+    0x2236: ("arctis-7-plus", "SteelSeries Arctis 7+", "arctis7p", 3, 0xFFC0, KIND_HEADSET),
     0x2202: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_steps", 3, 0xFFC0, KIND_HEADSET),
     0x2206: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_steps", 3, 0xFFC0, KIND_HEADSET),
+    0x220A: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_steps", 3, 0xFFC0, KIND_HEADSET),
+    0x223A: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_steps", 3, 0xFFC0, KIND_HEADSET),
+    0x227A: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_steps", 3, 0xFFC0, KIND_HEADSET),
+    0x22A4: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_steps", 3, 0xFFC0, KIND_HEADSET),
     0x2258: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x22A1: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x227E: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x229E: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x22AD: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x22A9: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x22A5: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x22A7: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
+    0x2298: ("arctis-nova-7", "SteelSeries Arctis Nova 7", "nova7_pct", 3, 0xFFC0, KIND_HEADSET),
     0x2232: ("arctis-nova-5", "SteelSeries Arctis Nova 5", "nova5", 3, 0xFFC0, KIND_HEADSET),
     0x2253: ("arctis-nova-5", "SteelSeries Arctis Nova 5", "nova5", 3, 0xFFC0, KIND_HEADSET),
+    0x2269: ("arctis-nova-5", "SteelSeries Arctis Nova 5 / Nova 3P", "nova5", 3, 0xFFC0, KIND_HEADSET),
+    0x226D: ("arctis-nova-5", "SteelSeries Arctis Nova 5 / Nova 3P", "nova5", 3, 0xFFC0, KIND_HEADSET),
     0x230A: ("arctis-gamebuds", "SteelSeries Arctis GameBuds", "gamebuds", 3, 0xFFC0, KIND_EARBUDS),
 }
 
@@ -121,6 +149,10 @@ def parse_steelseries_headset(proto: str, reply: list[int] | bytes) -> Optional[
     r = list(reply)
     if not r:
         return None
+    if proto == "arctis1" and len(r) > 3:
+        if r[2] == 0x01:
+            return (False, None, False)
+        return (True, min(100, r[3]), False)
     if proto == "arctis7" and len(r) > 2:
         return (True, min(100, r[2]), False)
     if proto == "arctis9" and len(r) > 4:
@@ -131,6 +163,14 @@ def parse_steelseries_headset(proto: str, reply: list[int] | bytes) -> Optional[
         if r[15] == 0x01:
             return (False, None, False)
         return (True, map_range(r[6], 0, 8), r[15] == 0x02)
+    if proto in ("nova_elite", "nova_omni") and len(r) >= 16 and r[0] == 0x01 and r[1] == 0xB0:
+        omni = proto == "nova_omni"
+        level, power, charge = r[6], r[14], r[15]
+        there = power != 0x01 and (not omni or charge in (0x02, 0x08))
+        charging = charge == 0x02 or (not omni and power == 0x02)
+        if not there or level > 100 or (level == 0 and not charging):
+            return (False, None, False)
+        return (True, int(level), charging)
     if proto == "arctis7p" and len(r) >= 4:
         if r[1] == 0x01:
             return (False, None, False)
@@ -232,15 +272,24 @@ class SteelSeriesHidProvider(BatteryProvider):
                 continue
             if up and d.get("usage_page") != up:
                 continue
+            if proto in ("nova_elite", "nova_omni"):
+                if int(d.get("usage_page", 0)) < 0xFF00:
+                    continue
+                _, out_len, _ = get_hid_report_lengths(d.get("path"))
+                if out_len == 0:
+                    continue
             path = d.get("path")
             if not path:
                 continue
             seen.add(pid)
 
             req_map = {
+                "arctis1": [0x06, 0x12],
                 "arctis7": [0x06, 0x18],
                 "arctis9": [0x00, 0x20],
                 "nova_pro": pad_report(31, [0x06, 0xB0]),
+                "nova_elite": pad_report(64, [0x01, 0xB0]),
+                "nova_omni": pad_report(64, [0x01, 0xB0]),
                 "arctis7p": pad_report(64, [0x00, 0xB0]),
                 "nova7_steps": pad_report(64, [0x00, 0xB0]),
                 "nova7_pct": pad_report(64, [0x00, 0xB0]),
@@ -252,14 +301,25 @@ class SteelSeriesHidProvider(BatteryProvider):
             try:
                 dev.open_path(path)
                 hid_drain(dev, 64, 4, 10)
-                dev.write(req_map[proto])
-                for _ in range(4):
-                    raw = dev.read(64, 250)
-                    if not raw:
-                        break
-                    parsed = parse_steelseries_headset(proto, raw)
-                    if parsed is not None:
-                        break
+                if proto == "arctis_pro":
+                    dev.write(pad_report(31, [0x41, 0xAA]))
+                    link = dev.read(64, 250)
+                    if link and link[0] != 0x02:
+                        dev.write(pad_report(31, [0x40, 0xAA]))
+                        bat = dev.read(64, 250)
+                        if bat:
+                            parsed = (True, map_range(bat[0], 0, 4), False)
+                    else:
+                        parsed = (False, None, False)
+                else:
+                    dev.write(req_map[proto])
+                    for _ in range(8 if proto in ("nova_elite", "nova_omni") else 4):
+                        raw = dev.read(64, 250)
+                        if not raw:
+                            break
+                        parsed = parse_steelseries_headset(proto, raw)
+                        if parsed is not None:
+                            break
             except OSError:
                 parsed = None
             finally:

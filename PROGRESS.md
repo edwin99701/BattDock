@@ -1,8 +1,8 @@
 # PROGRESS.md — BattDock 项目真实开发进度看板
 
 > 最后更新：2026-11-26  
-> 当前最新正式版本：**BattDock v2.5.2**（稳定性补丁版）  
-> 关键历史基线：v1 单设备基线 `8075917` ｜ v2.0 多品牌底层基线 `45e9cd4` ｜ v2.3.0 品牌升级 `7a3bb61` ｜ v2.4.0 图标与更新重构 `7efafee` ｜ v2.5.0 体验升级 `448cd83` ｜ v2.5.1 Win10 圆角修复 `4e7df67`
+> 当前最新正式版本：**BattDock v2.6.0**（关闭按钮悬停残留根治 + 无线耳机与无线键盘大幅扩展）  
+> 关键历史基线：v1 单设备基线 `8075917` ｜ v2.0 多品牌底层基线 `45e9cd4` ｜ v2.3.0 品牌升级 `7a3bb61` ｜ v2.4.0 图标与更新重构 `7efafee` ｜ v2.5.0 体验升级 `448cd83` ｜ v2.5.1 Win10 圆角修复 `4e7df67` ｜ v2.5.2 稳定性与生命周期修复 `1432b35`
 
 ---
 
@@ -38,11 +38,15 @@
   - 统一拦截 `closing` 事件（右上角关闭 / 任务栏右键关闭 / `Alt+F4` 一致遵循 `close_to_tray`）、补齐最小化还原与销毁安全重建机制、严格防止重复启动后台监控线程；
   - `DeviceManager` 落地 `WM_DEVICECHANGE` 事件驱动 HID 拓扑缓存 + 串行锁 + 轻量内存诊断缓冲；`VgnBatteryReader` 复用共享快照、非阻塞排空并加入休眠阶梯退避（`45s → 90s → 180s`）；33/33 单元测试及 Win11 真机 E2E 回归全部通过。
 
+### 阶段 6：关闭按钮红框残留根治与无线耳机/无线键盘大幅扩展（v2.6.0）
+- [x] **根治主窗口重开后关闭按钮红色 `:hover` 残留**：将 2 帧自动撤销改为 `:root.ui-await-pointer` 持久压制（不阻挡点击与键盘导航），直到重开 120ms 后检测到真实位移 >3px 的 `pointermove` 或 `pointerdown` 才解除，同时通过 `EnumChildWindows` 递归向深层 `Chrome_RenderWidgetHostHWND` 发送 `WM_CANCELMODE` / `WM_MOUSELEAVE`，已通过真实 Edge WebView2 DOM 验证。
+- [x] **新增无线键盘与无线耳机独立只读适配器**：新增 `providers/wireless_keyboards.py`（CompX BY / SONiX 含 QMK/VIA 隔离 / Evision / Semico / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard，内置 180s 在线节流）与 `providers/wireless_headsets.py`（Razer Audio / Logitech Centurion / ASTRO A50 / JBL Quantum / EPOS / Airoha RACE / C-Media / MCHOSE V9 Pro 2 / VGN OMNISOUND / Lenovo VoIP），并同步升级 Razer、Corsair、SteelSeries、HyperX 现有适配器及设置页支持设备目录；36/36 单元测试通过。
+
 ---
 
 ## 二、当前状态
 
-- **BattDock v2.5.2** 已完成稳定性修复、自动化单测（33/33）与 Win11 真机窗口/HID 回归测试，准备同步打包并发布至 GitHub Releases（Latest）。
+- **BattDock v2.6.0** 已完成关闭按钮悬停残留根治、主流无线耳机与无线键盘只读协议扩展及 36/36 单元测试，准备构建并发布至 GitHub Releases（Latest）。
 
 ---
 
