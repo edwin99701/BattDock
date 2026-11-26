@@ -1,13 +1,15 @@
-"""BattDock 基于 GitHub Releases 的轻量在线检查更新与 Windows 安全原地升级模块。
+"""BattDock 基于 GitHub Releases 的轻量在线检查更新、简明摘要解析与 Windows 安全原地升级模块。
 
-设计原则：
-1. 零第三方依赖，仅使用 Python 标准库（兼容 Win10/11 与 PyInstaller 打包），不要求 GitHub Token。
-2. 默认仅识别稳定正式版（跳过 draft 与 prerelease），自动兼容系统代理，断网优雅降级。
-3. 仅通过 HTTPS 下载，优先匹配 BattDock Windows 便携包，支持 SHA256SUMS.txt 完整性校验与防 Zip Slip 校验。
-4. 通过独立隐藏 PowerShell 辅助脚本（UTF-8 BOM，完美支持中文路径）在主进程退出后安全覆盖升级：
-   - 失败时自动回滚原有程序文件；
-   - 不删除用户目录中的其他无关文件，保留个人配置（%LOCALAPPDATA%\\BattDock\\config.json）与卸载脚本；
-   - 自动清理旧版 VGNMouseBattery.exe 及重复开机自启项，重启新版本 BattDock.exe。
+核心修复与设计原则（v2.4.0）：
+1. 零第三方依赖、不内置 GitHub Token、自动兼容系统代理；仅识别正式稳定版本（过滤 draft/prerelease）。
+2. 两层更新说明：
+   - 优先解析 Release 中的结构化简明摘要（`<!-- BATTDOCK_SUMMARY_START -->` 块或 `update-summary.json`）；
+   - 对历史无摘要版本自动清洗 Markdown 符号、文件名与提交号，提取 3-5 条简短面向普通用户的中文条目。
+3. 仅通过 HTTPS 下载并校验 SHA256SUMS.txt 与 ZIP 完整性（含防 Zip Slip 路径遍历检查）。
+4. 彻底修复跨盘符覆盖失败 Bug：
+   - 回滚备份目录建立在目标程序同盘同目录下（`._battdock_rollback_<pid>`），不再跨盘 `Move-Item` 到系统临时目录；
+   - 仅替换更新包内包含的文件，绝不删除用户目录中的其他文件；失败时自动完整回滚；
+   - 等待旧进程及子进程释放锁后替换、自动重启新版 `BattDock.exe`、确认新进程运行并清理全部临时文件。
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import threading
 import urllib.error
 import urllib.request
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -42,6 +44,9 @@ from brand import (
     RUN_VALUE_NAME,
 )
 
+SUMMARY_START_MARKER = "<!-- BATTDOCK_SUMMARY_START"
+SUMMARY_END_MARKER = "BATTDOCK_SUMMARY_END -->"
+
 
 @dataclass
 class UpdateCheckResult:
@@ -51,10 +56,13 @@ class UpdateCheckResult:
     has_update: bool = False
     release_url: str = RELEASES_PAGE_URL
     release_notes: str = ""
+    summary_items: list[str] = field(default_factory=list)
+    important_notice: str = ""
     asset_name: str = ""
     asset_url: str = ""
     asset_size: int = 0
     sha256_url: str = ""
+    summary_url: str = ""
     published_at: str = ""
     error: str = ""
 
@@ -71,7 +79,7 @@ def normalize_version_str(raw: str) -> str:
 
 
 def parse_version(raw: str) -> tuple[int, ...]:
-    """将版本号（如 'v2.3.0' 或 '2.1.0-beta1'）解析为可比较的整数元组。"""
+    """将版本号（如 'v2.4.0' 或 '2.1.0-beta1'）解析为可比较的整数元组。"""
     clean = normalize_version_str(raw)
     if not clean:
         return (0,)
@@ -100,17 +108,14 @@ def select_release_asset(assets: list[dict[str, Any]]) -> Optional[dict[str, Any
     ]
     if not zip_assets:
         return None
-    # 1. 最优先匹配官方 BattDock Windows 便携包
     for a in zip_assets:
         name = str(a.get("name", "")).lower()
         if "battdock" in name and "portable" in name and "bridge" not in name:
             return a
-    # 2. 其次匹配任意 BattDock ZIP
     for a in zip_assets:
         name = str(a.get("name", "")).lower()
         if "battdock" in name and "bridge" not in name:
             return a
-    # 3. 兼容历史命名
     for a in zip_assets:
         name = str(a.get("name", "")).lower()
         if "win64" in name or "windows" in name:
@@ -128,6 +133,106 @@ def select_checksum_asset(assets: list[dict[str, Any]]) -> str:
         if name in ("sha256sums.txt", "checksums.txt") and url.startswith("https://"):
             return url
     return ""
+
+
+def select_summary_asset(assets: list[dict[str, Any]]) -> str:
+    """查找 Release 中随附的机器可读简明更新摘要 update-summary.json 地址。"""
+    for a in (assets or []):
+        if not isinstance(a, dict):
+            continue
+        name = str(a.get("name", "")).lower()
+        url = str(a.get("browser_download_url", ""))
+        if name == "update-summary.json" and url.startswith("https://"):
+            return url
+    return ""
+
+
+def _strip_markdown_and_tech_noise(line: str) -> str:
+    """去除原始 Markdown 标记、HTML 标签、代码标识符与文件路径，输出自然中文短句。"""
+    s = (line or "").strip()
+    s = re.sub(r"<!--.*?-->", "", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+    s = re.sub(r"`[^`]*`", "", s)
+    s = re.sub(r"[*_~#>]+", "", s)
+    s = re.sub(r"^\s*[-•·\d.、]+\s*", "", s)
+    # 去除括号中纯英文文件/路径/哈希注释，如（updater.py）
+    s = re.sub(r"[（(]\s*[A-Za-z0-9_./\\-]+\.(?:py|js|html|css|json|bat|ps1|exe|zip)\s*[）)]", "", s)
+    s = re.sub(r"\s+", " ", s).strip(" ：:;-—。")
+    return s
+
+
+def extract_user_summary(body: str, max_items: int = 5) -> tuple[list[str], str]:
+    """从 Release 正文中提取面向普通用户的简明摘要（3-5 条、无 Markdown、无技术路径）。
+
+    优先级：
+    1. 正文内嵌结构化 JSON 块（`<!-- BATTDOCK_SUMMARY_START {...} BATTDOCK_SUMMARY_END -->`）；
+    2. 兼容历史 Release：从要点行中自动去噪提炼前 3-5 条用户可感知变更。
+    """
+    text = body or ""
+    # 1. 优先解析结构化摘要块
+    m = re.search(
+        r"<!--\s*BATTDOCK_SUMMARY_START\s*(\{.*?\})\s*BATTDOCK_SUMMARY_END\s*-->",
+        text,
+        flags=re.DOTALL,
+    )
+    if m:
+        try:
+            obj = json.loads(m.group(1))
+            if isinstance(obj, dict):
+                raw_items = obj.get("summary") or obj.get("items") or []
+                clean_items = [_strip_markdown_and_tech_noise(str(x)) for x in raw_items]
+                clean_items = [x for x in clean_items if x][:max_items]
+                notice = _strip_markdown_and_tech_noise(str(obj.get("important_notice") or ""))
+                if clean_items:
+                    return clean_items, notice
+        except Exception:
+            pass
+
+    # 2. 兼容无结构化块的历史 Release：移除代码块后提取简明条目
+    stripped = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    items: list[str] = []
+    seen: set[str] = set()
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(("-", "*", "•")):
+            continue
+        cleaned = _strip_markdown_and_tech_noise(line)
+        if not cleaned or len(cleaned) < 4:
+            continue
+        # 若为“标题：冗长解释”格式，仅取简明核心短语
+        if "：" in cleaned and len(cleaned) > 26:
+            head = cleaned.split("：", 1)[0].strip()
+            if 4 <= len(head) <= 26:
+                cleaned = head
+        if len(cleaned) > 28:
+            cleaned = cleaned[:26].rstrip("，,、；; ") + "…"
+        key = cleaned.lower()
+        if key not in seen:
+            seen.add(key)
+            items.append(cleaned)
+        if len(items) >= max_items:
+            break
+
+    return items, ""
+
+
+def fetch_remote_summary_json(summary_url: str, timeout: float = 6.0) -> tuple[list[str], str]:
+    """若 Release 随附 update-summary.json，拉取其中的结构化用户摘要与重要提示。"""
+    if not summary_url or not summary_url.startswith("https://"):
+        return [], ""
+    req = urllib.request.Request(summary_url, headers={"User-Agent": f"{APP_NAME}-Updater/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            obj = json.loads(resp.read().decode("utf-8", errors="replace"))
+        if isinstance(obj, dict):
+            raw_items = obj.get("summary") or []
+            clean = [_strip_markdown_and_tech_noise(str(x)) for x in raw_items if str(x).strip()][:5]
+            notice = _strip_markdown_and_tech_noise(str(obj.get("important_notice") or ""))
+            return clean, notice
+    except Exception:
+        pass
+    return [], ""
 
 
 def parse_sha256_manifest(text: str) -> dict[str, str]:
@@ -175,7 +280,7 @@ def verify_downloaded_sha256(file_path: Path, asset_name: str, sha256_url: str, 
 
 
 def parse_github_release_payload(payload: dict[str, Any], current_version: str) -> UpdateCheckResult:
-    """解析 GitHub Releases API JSON 负载（自动过滤 draft 与 prerelease）。"""
+    """解析 GitHub Releases API JSON 负载（自动过滤 draft 与 prerelease，提取简明用户摘要）。"""
     cur = normalize_version_str(current_version)
     if payload.get("draft") or payload.get("prerelease"):
         return UpdateCheckResult(
@@ -195,6 +300,8 @@ def parse_github_release_payload(payload: dict[str, Any], current_version: str) 
     assets = payload.get("assets") or []
     asset = select_release_asset(assets)
     sha256_url = select_checksum_asset(assets)
+    summary_url = select_summary_asset(assets)
+    summary_items, important_notice = extract_user_summary(body)
     has_upd = bool(latest) and is_newer_version(latest, cur)
 
     return UpdateCheckResult(
@@ -204,10 +311,13 @@ def parse_github_release_payload(payload: dict[str, Any], current_version: str) 
         has_update=has_upd,
         release_url=html_url,
         release_notes=body[:1500],
+        summary_items=summary_items,
+        important_notice=important_notice,
         asset_name=str(asset.get("name", "")) if asset else "",
         asset_url=str(asset.get("browser_download_url", "")) if asset else "",
         asset_size=int(asset.get("size", 0) or 0) if asset else 0,
         sha256_url=sha256_url,
+        summary_url=summary_url,
         published_at=published_at,
         error="",
     )
@@ -219,7 +329,7 @@ def check_for_update(current_version: str, timeout: float = 10.0) -> UpdateCheck
     req = urllib.request.Request(
         LATEST_RELEASE_API,
         headers={
-            "User-Agent": f"{APP_NAME}/{cur or '2.3'}",
+            "User-Agent": f"{APP_NAME}/{cur or '2.4'}",
             "Accept": "application/vnd.github+json",
         },
     )
@@ -229,7 +339,15 @@ def check_for_update(current_version: str, timeout: float = 10.0) -> UpdateCheck
             data = json.loads(raw)
             if not isinstance(data, dict):
                 return UpdateCheckResult(ok=False, current_version=cur, error="更新接口返回数据格式异常。")
-            return parse_github_release_payload(data, cur)
+            res = parse_github_release_payload(data, cur)
+            # 若正文未含结构化摘要块但存在 update-summary.json，则补充拉取
+            if res.ok and res.summary_url and (not res.summary_items or not res.important_notice):
+                ext_items, ext_notice = fetch_remote_summary_json(res.summary_url, timeout=6.0)
+                if ext_items:
+                    res.summary_items = ext_items
+                if ext_notice and not res.important_notice:
+                    res.important_notice = ext_notice
+            return res
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return UpdateCheckResult(ok=False, current_version=cur, error="GitHub 仓库尚未发布正式版本。")
@@ -250,7 +368,7 @@ def download_update_asset(
     cancel_event: Optional[threading.Event] = None,
     timeout: float = 30.0,
 ) -> Path:
-    """仅通过 HTTPS 流式下载 Release ZIP 压缩包并持续回调进度。"""
+    """仅通过 HTTPS 流式下载 Release ZIP 压缩包并持续回调真实进度。"""
     if not asset_url.startswith("https://"):
         raise ValueError("出于安全限制，仅允许通过 HTTPS 下载更新包")
 
@@ -322,24 +440,27 @@ def extract_and_verify_update(
     raise FileNotFoundError(f"更新包中未找到主程序 {exe_name}")
 
 
-def launch_windows_updater(
+def build_windows_updater_script(
     staged_dir: Path,
     target_dir: Path,
     pid: int,
     exe_name: str = APP_EXE_NAME,
     work_root: Optional[Path] = None,
-) -> Path:
-    """生成并启动隐藏 PowerShell 覆盖更新脚本（支持失败回滚、不误删无关文件、清理旧版残留并重启 BattDock）。"""
-    if sys.platform != "win32":
-        raise RuntimeError("仅支持 Windows 平台执行原地自动更新")
-
+    relaunch_args: str = "",
+) -> str:
+    """生成同盘回滚、安全替换并自动重启新版 BattDock.exe 的 PowerShell 更新脚本。"""
     cleanup_root = work_root or staged_dir.parent
-    script_path = Path(tempfile.gettempdir()) / f"battdock_apply_update_{os.getpid()}.ps1"
 
     def _ps_quote(p: Path) -> str:
         return "'" + str(p.resolve()).replace("'", "''") + "'"
 
-    ps_script = f"""$ErrorActionPreference = 'Stop'
+    arg_line = (
+        f"$newProc = Start-Process -FilePath $NewExe -ArgumentList '{relaunch_args}' -WorkingDirectory $TargetDir -PassThru"
+        if relaunch_args
+        else "$newProc = Start-Process -FilePath $NewExe -WorkingDirectory $TargetDir -PassThru"
+    )
+
+    return f"""$ErrorActionPreference = 'Stop'
 $TargetPid = {int(pid)}
 $StagedDir = {_ps_quote(staged_dir)}
 $TargetDir = {_ps_quote(target_dir)}
@@ -347,7 +468,8 @@ $CleanupDir = {_ps_quote(cleanup_root)}
 $ExeName = '{exe_name}'
 $LegacyExeName = '{LEGACY_EXE_NAME}'
 $LogFile = Join-Path $env:TEMP 'battdock_updater.log'
-$RollbackDir = Join-Path $env:TEMP ('battdock_rollback_' + $TargetPid)
+# 关键修复：回滚目录必须与 TargetDir 位于同一磁盘卷，彻底避免跨盘 Move-Item 抛出根路径不一致异常
+$RollbackDir = Join-Path $TargetDir ('._battdock_rollback_' + $TargetPid)
 
 function Write-Log([string]$msg) {{
     try {{
@@ -357,8 +479,8 @@ function Write-Log([string]$msg) {{
 
 Write-Log "开始应用 BattDock 更新：$StagedDir -> $TargetDir (等待 PID=$TargetPid 退出)"
 
-# 1. 等待旧进程退出（最多 12 秒，超时则强制结束）
-for ($i = 0; $i -lt 48; $i++) {{
+# 1. 等待旧进程安全退出（最多 10 秒，超时则温和强制结束）
+for ($i = 0; $i -lt 40; $i++) {{
     $proc = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue
     if (-not $proc) {{ break }}
     Start-Sleep -Milliseconds 250
@@ -366,47 +488,71 @@ for ($i = 0; $i -lt 48; $i++) {{
 $proc = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue
 if ($proc) {{
     try {{ Stop-Process -Id $TargetPid -Force -ErrorAction SilentlyContinue }} catch {{}}
-    Start-Sleep -Milliseconds 600
+    Start-Sleep -Milliseconds 500
 }}
+# 额外等待 WebView2 / CLR 文件句柄完全释放
+Start-Sleep -Milliseconds 400
 
-# 2. 为可替换核心文件建立临时回滚备份（仅备份程序自身与 _internal，绝不触碰用户目录中的其他无关文件）
+# 2. 在同盘建立回滚目录（仅移出本软件自身主程序与 _internal，绝不触碰用户目录中的其他无关文件）
+if (Test-Path $RollbackDir) {{ Remove-Item -Path $RollbackDir -Recurse -Force -ErrorAction SilentlyContinue }}
 New-Item -ItemType Directory -Path $RollbackDir -Force | Out-Null
+
 $CurExe = Join-Path $TargetDir $ExeName
 $CurInternal = Join-Path $TargetDir '_internal'
-if (Test-Path $CurExe) {{ Copy-Item $CurExe (Join-Path $RollbackDir $ExeName) -Force }}
-if (Test-Path $CurInternal) {{ Move-Item $CurInternal (Join-Path $RollbackDir '_internal') -Force }}
+$BackedUp = $false
 
-# 3. 复制新版程序文件（带重试，失败则自动回滚旧版本）
-$Applied = $false
-for ($try = 0; $try -lt 10; $try++) {{
+for ($try = 0; $try -lt 15; $try++) {{
     try {{
-        Get-ChildItem -Path $StagedDir -Force | ForEach-Object {{
-            Copy-Item -Path $_.FullName -Destination $TargetDir -Recurse -Force
+        if ((Test-Path $CurInternal) -and (-not (Test-Path (Join-Path $RollbackDir '_internal')))) {{
+            Move-Item -Path $CurInternal -Destination (Join-Path $RollbackDir '_internal') -Force
         }}
-        $Applied = $true
-        Write-Log "文件替换成功（尝试第 $($try + 1) 次）"
+        if ((Test-Path $CurExe) -and (-not (Test-Path (Join-Path $RollbackDir $ExeName)))) {{
+            Move-Item -Path $CurExe -Destination (Join-Path $RollbackDir $ExeName) -Force
+        }}
+        $BackedUp = $true
+        Write-Log "旧版文件已同盘移入回滚区（第 $($try + 1) 次尝试）"
         break
     }} catch {{
-        Write-Log "替换遇阻（第 $($try + 1) 次）：$($_.Exception.Message)"
-        Start-Sleep -Milliseconds 500
+        Write-Log "等待文件锁释放（第 $($try + 1) 次）：$($_.Exception.Message)"
+        Start-Sleep -Milliseconds 400
+    }}
+}}
+
+# 3. 逐项复制新版程序文件（仅替换更新包包含的文件，失败自动完整回滚）
+$Applied = $false
+if ($BackedUp) {{
+    for ($try = 0; $try -lt 10; $try++) {{
+        try {{
+            Get-ChildItem -Path $StagedDir -Force | ForEach-Object {{
+                Copy-Item -Path $_.FullName -Destination $TargetDir -Recurse -Force
+            }}
+            if (Test-Path (Join-Path $TargetDir $ExeName)) {{
+                $Applied = $true
+                Write-Log "新版本文件替换成功（第 $($try + 1) 次尝试）"
+                break
+            }}
+        }} catch {{
+            Write-Log "复制新版文件重试（第 $($try + 1) 次）：$($_.Exception.Message)"
+            Start-Sleep -Milliseconds 400
+        }}
     }}
 }}
 
 if (-not $Applied) {{
-    Write-Log "更新失败，正在回滚至旧版本..."
+    Write-Log "更新失败，正在自动回滚至原可用版本..."
     try {{
-        $FailedInternal = Join-Path $TargetDir '_internal'
-        if (Test-Path $FailedInternal) {{ Remove-Item $FailedInternal -Recurse -Force -ErrorAction SilentlyContinue }}
-        if (Test-Path (Join-Path $RollbackDir '_internal')) {{ Move-Item (Join-Path $RollbackDir '_internal') $CurInternal -Force }}
-        if (Test-Path (Join-Path $RollbackDir $ExeName)) {{ Copy-Item (Join-Path $RollbackDir $ExeName) $CurExe -Force }}
-    }} catch {{}}
-}} else {{
-    # 清理历史遗留的旧版主程序（若存在），避免新旧版本共存
-    $LegacyExe = Join-Path $TargetDir $LegacyExeName
-    if (Test-Path $LegacyExe) {{
-        Remove-Item $LegacyExe -Force -ErrorAction SilentlyContinue
+        $PartialInternal = Join-Path $TargetDir '_internal'
+        if (Test-Path $PartialInternal) {{ Remove-Item -Path $PartialInternal -Recurse -Force -ErrorAction SilentlyContinue }}
+        if (Test-Path (Join-Path $RollbackDir '_internal')) {{ Move-Item -Path (Join-Path $RollbackDir '_internal') -Destination $CurInternal -Force }}
+        if (Test-Path (Join-Path $RollbackDir $ExeName)) {{ Move-Item -Path (Join-Path $RollbackDir $ExeName) -Destination $CurExe -Force }}
+        Write-Log "已恢复旧版本"
+    }} catch {{
+        Write-Log "回滚时发生异常：$($_.Exception.Message)"
     }}
-    # 同步检查注册表，防止残留旧版重复开机自启项
+}} else {{
+    # 清理旧版残留主程序与重复开机自启项
+    $LegacyExe = Join-Path $TargetDir $LegacyExeName
+    if (Test-Path $LegacyExe) {{ Remove-Item -Path $LegacyExe -Force -ErrorAction SilentlyContinue }}
     try {{
         $RunKey = 'HKCU:\\{RUN_REG_PATH}'
         $oldRun = Get-ItemProperty -Path $RunKey -Name '{LEGACY_RUN_VALUE_NAME}' -ErrorAction SilentlyContinue
@@ -420,21 +566,50 @@ if (-not $Applied) {{
     }} catch {{}}
 }}
 
-# 4. 启动新版 BattDock.exe
+# 4. 自动启动新版 BattDock.exe 并确认进程运行
 $NewExe = Join-Path $TargetDir $ExeName
 if (Test-Path $NewExe) {{
     Write-Log "正在启动新版本：$NewExe"
-    Start-Process -FilePath $NewExe -WorkingDirectory $TargetDir
+    {arg_line}
+    Start-Sleep -Milliseconds 500
+    if ($newProc -and (-not $newProc.HasExited)) {{
+        Write-Log "新版本已正常运行 (PID=$($newProc.Id))"
+    }}
 }}
 
-# 5. 清理临时目录、回滚缓存与脚本自身
+# 5. 清理本次更新产生的回滚缓存、下载临时目录与辅助脚本
 try {{ if (Test-Path $RollbackDir) {{ Remove-Item -Path $RollbackDir -Recurse -Force -ErrorAction SilentlyContinue }} }} catch {{}}
 try {{ if (Test-Path $CleanupDir) {{ Remove-Item -Path $CleanupDir -Recurse -Force -ErrorAction SilentlyContinue }} }} catch {{}}
 try {{ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue }} catch {{}}
 """
+
+
+def launch_windows_updater(
+    staged_dir: Path,
+    target_dir: Path,
+    pid: int,
+    exe_name: str = APP_EXE_NAME,
+    work_root: Optional[Path] = None,
+    relaunch_args: str = "",
+) -> Path:
+    """生成并启动隐藏 PowerShell 覆盖更新脚本（UTF-8 BOM，同盘回滚，兼容中文路径与任意盘符）。"""
+    if sys.platform != "win32":
+        raise RuntimeError("仅支持 Windows 平台执行原地自动更新")
+
+    script_path = Path(tempfile.gettempdir()) / f"battdock_apply_update_{os.getpid()}.ps1"
+    ps_script = build_windows_updater_script(
+        staged_dir=staged_dir,
+        target_dir=target_dir,
+        pid=pid,
+        exe_name=exe_name,
+        work_root=work_root,
+        relaunch_args=relaunch_args,
+    )
     script_path.write_text(ps_script, encoding="utf-8-sig")
 
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    # 注意：Windows 下 CREATE_NO_WINDOW 与 DETACHED_PROCESS 互斥，同时传入会导致 powershell.exe 启动即退出！
+    # 使用 CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP + DEVNULL 可稳定隐藏运行并在父进程退出后存活。
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
     subprocess.Popen(
         [
             "powershell.exe",
@@ -446,6 +621,9 @@ try {{ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction Silent
             "-File",
             str(script_path),
         ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         creationflags=flags,
         close_fds=True,
     )

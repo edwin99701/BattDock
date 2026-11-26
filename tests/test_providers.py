@@ -562,6 +562,54 @@ class TestBrandAndDeviceNaming(unittest.TestCase):
             # 二次调用不覆盖已存在的新配置
             self.assertFalse(migrate_legacy_config(target_path=new_cfg, legacy_path=legacy_cfg))
 
+    def test_v240_icons_compact_labels_summary_and_same_volume_updater(self):
+        from device_icons import canonical_device_icon_kind, get_device_icons_svg_map, render_device_icon_pil
+        from providers.base import DeviceBattery, KIND_EARBUDS, KIND_HEADSET, KIND_KEYBOARD, KIND_MOUSE
+        from providers.device_naming import resolve_compact_device_label
+        from updater import build_windows_updater_script, extract_user_summary
+
+        # 1. 全局设备图标统一性（earbuds 复用 headset；浅色黑、深色白）
+        self.assertEqual(canonical_device_icon_kind(KIND_EARBUDS), KIND_HEADSET)
+        svg_map = get_device_icons_svg_map(20)
+        self.assertEqual(svg_map[KIND_EARBUDS], svg_map[KIND_HEADSET])
+        for k in (KIND_MOUSE, KIND_HEADSET, KIND_KEYBOARD):
+            im_l = render_device_icon_pil(k, 24, is_dark=False)
+            im_d = render_device_icon_pil(k, 24, is_dark=True)
+            self.assertEqual(im_l.size, (24, 24))
+            self.assertNotEqual(im_l.tobytes(), im_d.tobytes())
+
+        # 2. 悬浮窗品牌精简与同品牌多设备自动区分
+        d_vgn = DeviceBattery("vgn:1", "VGN Dragonfly F2 Pro Max", "VGN", KIND_MOUSE)
+        d_logi1 = DeviceBattery("logi:1", "Logitech G Pro 2 Lightspeed", "Logitech", KIND_MOUSE)
+        d_logi2 = DeviceBattery("logi:2", "Logitech G Pro X Superlight 2", "Logitech", KIND_MOUSE)
+        d_unknown = DeviceBattery("unk:1", "Wireless Mouse X1", "", KIND_MOUSE)
+        self.assertEqual(resolve_compact_device_label(d_vgn, [d_vgn, d_logi1]), "VGN")
+        self.assertEqual(resolve_compact_device_label(d_vgn, [d_vgn], custom_label="主力鼠标"), "主力鼠标")
+        # 同品牌双鼠标自动补充型号区分
+        self.assertEqual(resolve_compact_device_label(d_logi1, [d_logi1, d_logi2]), "Logitech G Pro 2 Lightspeed")
+        self.assertEqual(resolve_compact_device_label(d_logi2, [d_logi1, d_logi2]), "Logitech G Pro X Superlight 2")
+        # 未知品牌不编造
+        self.assertEqual(resolve_compact_device_label(d_unknown, [d_unknown]), "Wireless Mouse X1")
+
+        # 3. 简明摘要提取（结构化块 + Markdown 清洗降级，不含 Markdown 符号或源码文件名）
+        structured = '正文\n<!-- BATTDOCK_SUMMARY_START {"summary":["统一设备图标","修复Win10圆角"],"important_notice":"请重启生效"} BATTDOCK_SUMMARY_END -->'
+        items, notice = extract_user_summary(structured)
+        self.assertEqual(items, ["统一设备图标", "修复Win10圆角"])
+        self.assertEqual(notice, "请重启生效")
+
+        raw_md = "## 更新\n- **修复自动更新（updater.py）**：解决 `Move-Item` 跨盘失败\n- 优化悬浮窗与提醒弹窗"
+        fb_items, _ = extract_user_summary(raw_md)
+        self.assertTrue(len(fb_items) >= 2)
+        for it in fb_items:
+            self.assertNotIn("**", it)
+            self.assertNotIn("`", it)
+            self.assertNotIn("updater.py", it)
+
+        # 4. 更新脚本必须将回滚目录置于 TargetDir 同盘（杜绝跨盘 Move-Item 失败）
+        ps = build_windows_updater_script(Path(r"C:\Temp\stage"), Path(r"E:\Apps\BattDock"), pid=12345)
+        self.assertIn("Join-Path $TargetDir ('._battdock_rollback_' + $TargetPid)", ps)
+        self.assertNotIn("Join-Path $env:TEMP ('battdock_rollback_'", ps)
+
 
 if __name__ == "__main__":
     unittest.main()

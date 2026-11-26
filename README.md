@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.3.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.4.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
 </a>
 
 </div>
@@ -38,15 +38,15 @@
 
 | | |
 | :--- | :--- |
-| **实时电量监控**<br>多品牌无线鼠标、耳机、分体耳塞与键盘统一管理，自动热插拔检测与规范设备命名 | **智能电量提醒**<br>默认 `30% / 20% / 10%` 三级提醒与自定义阈值、滞回防抖、不抢游戏焦点的 5 秒迷你弹窗 |
-| **动态托盘电池**<br>系统托盘图标随实际电量填充与低电量色阶联动，仅状态变化时刷新，零冗余后台开销 | **桌面悬浮窗**<br>基于原生 WinForms 的轻量悬浮窗（零额外浏览器内存），支持置顶、透明度、尺寸与位置锁定 |
-| **浅色与深色主题**<br>融合 Win11 与 macOS 的简洁设计语言，支持浅色 / 深色 / 跟随系统与轻量平滑动效，原生兼容 Win10/11 | **在线检查与一键更新**<br>内置免 Token GitHub Releases 更新检查、SHA-256 完整性校验与自动覆盖升级，完整保留个人配置 |
+| **实时电量监控**<br>统一黑白实心设备类型图标（鼠标/耳机/键盘），多品牌统一管理、自动热插拔与规范型号命名 | **三级低电量提醒**<br>默认 `30% / 20% / 10%` 黄/橙/红分级提醒、统一实心设备图标与不抢游戏焦点的 5 秒迷你弹窗 |
+| **动态托盘电池**<br>系统托盘图标随实际电量填充与低电量色阶联动，仅状态变化时刷新，零冗余后台开销 | **桌面悬浮窗**<br>原生 WinForms 轻量悬浮窗（默认精简为品牌名 + 悬停完整详情 + 同品牌自动区分），支持自定义名与位置锁定 |
+| **Win10 / 11 原生圆角与双主题**<br>浅色 / 深色 / 跟随系统自适应，Win11 原生 DWM 圆角 + Win10 兼容外轮廓圆角，轻量平滑动效 | **一键在线更新与自动重启**<br>软件内展示简明更新摘要，支持真实进度下载、SHA-256 完整性校验、同盘安全回滚与自动重启升级 |
 
 ---
 
 ## 界面截图
 
-> 以下均为 **BattDock v2.3.0** 实际运行截取画面。主窗口深色模式为展示多设备卡片、低电量警示与分体耳塞独立电量的**演示界面**，不代表对应全部外设均已完成实体硬件测试（真实硬件验证状态见下方表格与 [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md)）。
+> 以下均为 **BattDock v2.4.0** 实际运行截取画面。主窗口深色模式为展示统一设备图标、多设备卡片与分体耳塞独立电量的**演示界面**，不代表对应全部外设均已完成实体硬件测试（真实硬件验证状态见下方表格与 [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md)）。
 
 <table>
   <tr>
@@ -55,8 +55,8 @@
       <sub><b>主窗口 · 浅色模式</b>（本机 VGN Dragonfly F2 Pro Max 实拍）</sub>
     </td>
     <td width="50%" align="center">
-      <img src="docs/screenshots/main-dark.png" alt="BattDock 主窗口深色模式（多设备演示界面）" /><br />
-      <sub><b>主窗口 · 深色模式</b>（多设备卡片与分体耳塞演示界面）</sub>
+      <img src="docs/screenshots/main-dark.png" alt="BattDock 主窗口深色模式（统一设备图标演示界面）" /><br />
+      <sub><b>主窗口 · 深色模式</b>（统一黑白设备图标与多设备演示界面）</sub>
     </td>
   </tr>
   <tr>
@@ -65,20 +65,23 @@
       <sub><b>设置中心</b>（常规 / 设备管理 / 电量提醒 / 外观 / 悬浮窗 / 关于）</sub>
     </td>
     <td width="50%" align="center">
-      <img src="docs/screenshots/supported-devices.png" alt="BattDock 支持设备清单" /><br />
-      <sub><b>支持设备清单</b>（独立品牌折叠列表、类型筛选与实时搜索）</sub>
+      <img src="docs/screenshots/update-panel.png" alt="BattDock 软件内简明更新界面" /><br />
+      <sub><b>软件内在线更新</b>（简明更新摘要、真实下载进度与自动重启升级）</sub>
     </td>
   </tr>
 </table>
 
 <div align="center">
+  <img src="docs/screenshots/supported-devices.png" width="540" alt="BattDock 支持设备清单" /><br />
+  <sub><b>支持设备清单</b>（独立品牌折叠列表、统一设备图标、类型筛选与实时搜索）</sub>
+  <br /><br />
   <img src="docs/screenshots/tray-battery.png" width="640" alt="系统托盘动态电池图标多状态展示" /><br />
   <sub><b>系统托盘动态电池图标</b>（正常 / 充电 / 三级低电量 / 离线休眠）</sub>
   <br /><br />
   <img src="docs/screenshots/floating-widget.png" alt="BattDock 桌面悬浮窗" />
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="docs/screenshots/low-battery-alert.png" alt="BattDock 低电量提醒弹窗" /><br />
-  <sub><b>桌面悬浮窗</b>（左）与 <b>5 秒不抢焦点低电量迷你弹窗</b>（右）</sub>
+  <sub><b>精简品牌桌面悬浮窗</b>（左）与 <b>统一设备图标三级低电量提醒</b>（右）</sub>
 </div>
 
 ---
@@ -111,9 +114,12 @@
 
 ### 发布产物说明
 前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载：
-- **`BattDock-v2.3.0-Windows-x64-Portable.zip`**（**推荐，便携免安装版**）：解压至任意本地目录，双击 `BattDock.exe` 即可运行；如需创建快捷方式，可运行目录内的 `创建桌面与开始菜单快捷方式.bat`。
+- **`BattDock-v2.4.0-Windows-x64-Portable.zip`**（**推荐，便携免安装版**）：解压至任意本地目录，双击 `BattDock.exe` 即可运行；如需创建快捷方式，可运行目录内的 `创建桌面与开始菜单快捷方式.bat`。
 - **`SHA256SUMS.txt`**：所有发布压缩包的 SHA-256 校验值清单，用于核对文件完整性。
-- **`VGNMouseBattery-v2.3.0-win64-UpgradeBridge.zip`**：仅供旧版 `v2.2.0` 软件内一键自动升级平滑迁移使用，新用户无需手动下载。
+- **`update-summary.json`**：供软件内部直接读取的简明中文更新摘要。
+- **`VGNMouseBattery-v2.4.0-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
+
+> **旧版升级说明**：若您此前将 `v2.3.0` 安装在非 C 盘（如 D 盘 / E 盘）并遇到自动覆盖失败，请手动下载本次 `BattDock-v2.4.0-Windows-x64-Portable.zip` 解压覆盖一次（个人配置保存在 `%LOCALAPPDATA%\BattDock\config.json`，不会丢失设置），从 `v2.4.0` 起任意盘符均可正常一键自动覆盖并重启。
 
 ### 首次启动与在线更新
 1. **开机静默自启**：在「设置 → 常规设置」中开启开机自启，默认以 `--background` 静默驻留系统托盘，不弹出窗口。
@@ -135,7 +141,7 @@
 # 1. 安装依赖（Python 3.12+）
 pip install -r requirements.txt
 
-# 2. 运行全部单元测试（28 项）
+# 2. 运行全部单元测试（29 项）
 python -m unittest discover -s tests -v
 
 # 3. 源码启动 BattDock

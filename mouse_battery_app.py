@@ -64,10 +64,12 @@ from updater import (
     launch_windows_updater,
     verify_downloaded_sha256,
 )
+from device_icons import get_device_icons_svg_map, render_device_icon_pil
 from floating_widget import (
     DesktopFloatingWidget,
     EDGE_MARGIN,
     _try_win11_round_corners,
+    apply_window_rounded_corners,
     draw_battery_icon,
     play_alert_sound,
 )
@@ -82,7 +84,11 @@ from providers import (
     STATUS_UNSUPPORTED,
     STATUS_VERIFIED,
 )
-from providers.device_naming import format_connection_mode_cn, format_device_subtitle
+from providers.device_naming import (
+    format_connection_mode_cn,
+    format_device_subtitle,
+    resolve_compact_device_label,
+)
 
 if sys.platform == "win32":
     try:
@@ -287,8 +293,8 @@ def _set_window_pos(hwnd: int, x: int, y: int, w: int, h: int, topmost: Optional
     )
 
 
-def _apply_window_chrome(hwnd: int, is_dark: bool) -> None:
-    """Windows 10/11 通用轻量窗口装饰：能力检测式启用 Win11 圆角与深浅色边框，Win10 自动安全降级。"""
+def _apply_window_chrome(hwnd: int, is_dark: bool, radius_dip: int = 10) -> None:
+    """Windows 10/11 通用轻量窗口装饰：Win11 使用原生 DWM 圆角，Win10 使用高 DPI 兼容外轮廓区域圆角。"""
     if sys.platform != "win32" or not hwnd:
         return
     try:
@@ -297,7 +303,31 @@ def _apply_window_chrome(hwnd: int, is_dark: bool) -> None:
         dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 20, ctypes.byref(dark_val), ctypes.sizeof(dark_val))
     except Exception:
         pass
-    _try_win11_round_corners(hwnd)
+    apply_window_rounded_corners(hwnd, radius_dip=radius_dip, scale=_get_dpi_scale(hwnd))
+
+
+def _attach_rounded_resize_hook(win: Optional[webview.Window], radius_dip: int = 10) -> None:
+    """在 WinForms 窗口尺寸变化或最大化/还原时自动重算圆角外轮廓（确保 Win10 缩放/最大化无异常）。"""
+    if win is None or sys.platform != "win32":
+        return
+    native = getattr(win, "native", None)
+    if native is None or getattr(native, "_battdock_rgn_hooked", False):
+        return
+    try:
+        def _on_size_changed(_s, _e):
+            try:
+                if native.IsDisposed:
+                    return
+                hwnd = int(native.Handle.ToInt64())
+                if hwnd:
+                    apply_window_rounded_corners(hwnd, radius_dip=radius_dip, scale=_get_dpi_scale(hwnd))
+            except Exception:
+                pass
+
+        native.SizeChanged += _on_size_changed
+        setattr(native, "_battdock_rgn_hooked", True)
+    except Exception:
+        pass
 
 
 _FLICKER_PATCH_INSTALLED = False
@@ -640,12 +670,15 @@ class MouseBatteryApp:
         self._last_tray_icon_key: Optional[tuple[Any, ...]] = None
         self._last_tray_title: str = ""
         self._update_state: dict[str, Any] = {
-            "status": "idle",  # idle | checking | up_to_date | available | downloading | installing | error
+            "status": "idle",  # idle | checking | up_to_date | available | downloading | verifying | preparing | restarting | error
             "current_version": APP_VERSION,
             "latest_version": "",
             "has_update": False,
+            "dismissed": False,
             "release_url": RELEASES_PAGE_URL,
             "release_notes": "",
+            "summary_items": [],
+            "important_notice": "",
             "asset_name": "",
             "asset_url": "",
             "asset_size": 0,
@@ -776,6 +809,7 @@ class MouseBatteryApp:
             "config": asdict(self.cfg),
             "devices": visible_devices,
             "all_devices": all_devices,
+            "device_icons": get_device_icons_svg_map(20),
             "updated_str": updated_str,
             "auto_monitor": bool(self.cfg.auto_monitor),
             "main_maximized": self._main_maximized,
@@ -794,10 +828,65 @@ class MouseBatteryApp:
                 except Exception:
                     pass
 
+    def _get_active_tier_thresholds(self, device_id: Optional[str] = None) -> tuple[int, int, int]:
+        """读取当前生效的三级低电量阈值（支持单设备覆盖与用户自定义阈值）。"""
+        rules = self.cfg.tier_rules if isinstance(self.cfg.tier_rules, list) else []
+        t1 = int(rules[0]["threshold"]) if len(rules) > 0 else 30
+        t2 = int(rules[1]["threshold"]) if len(rules) > 1 else 20
+        t3 = int(rules[2]["threshold"]) if len(rules) > 2 else 10
+        if device_id:
+            pref = get_device_pref(self.cfg, device_id)
+            if pref.custom_tiers_enabled and pref.custom_tiers:
+                st = sorted(normalize_tiers(pref.custom_tiers), reverse=True)
+                if len(st) >= 3:
+                    return st[0], st[1], st[-1]
+                if len(st) == 2:
+                    return st[0], st[1], min(10, st[1])
+                if len(st) == 1:
+                    return st[0], st[0], st[0]
+        return t1, t2, t3
+
+    def _resolve_alert_tier(self, percent: int, device_id: Optional[str] = None) -> tuple[int, str]:
+        """根据实际生效阈值判定低电量提醒等级与规范中文标题。"""
+        t1, t2, t3 = self._get_active_tier_thresholds(device_id)
+        if percent <= t3:
+            return (3, "电量紧急")
+        if percent <= t2:
+            return (2, "电量不足")
+        if percent <= t1:
+            return (1, "电量偏低")
+        return (1, "电量偏低")
+
     def _sync_floating_widget(self) -> None:
         fcfg = get_floating_config(self.cfg)
-        dev, name = self._pick_floating_device()
-        self.floating_widget.sync(fcfg, dev, name, self._effective_theme())
+        dev, _full_name = self._pick_floating_device()
+        pref = get_device_pref(self.cfg, dev.device_id) if dev is not None else None
+        compact_label = resolve_compact_device_label(
+            dev,
+            self.devices,
+            custom_label=fcfg.custom_label,
+            alias=(pref.alias if pref else ""),
+        )
+        t1, t2, t3 = self._get_active_tier_thresholds(dev.device_id if dev else None)
+        hover_detail = ""
+        if dev is not None:
+            sub = format_device_subtitle(
+                dev.connection_mode, dev.connected, dev.online,
+                dev.asleep, dev.charging, dev.full, dev.percent,
+            )
+            pct_s = f"{dev.percent}%" if dev.percent is not None else "—"
+            hover_detail = f"{dev.name}\n{sub} · {pct_s}" if sub else f"{dev.name}\n{pct_s}"
+        self.floating_widget.sync(
+            fcfg,
+            dev,
+            compact_label,
+            self._effective_theme(),
+            hover_detail=hover_detail,
+            low_t1=t1,
+            low_t2=t2,
+            low_t3=t3,
+            animations_enabled=self._effective_animations(),
+        )
 
     def _on_floating_position_saved(self, x: int, y: int) -> None:
         fcfg = get_floating_config(self.cfg)
@@ -995,6 +1084,8 @@ class MouseBatteryApp:
                 _apply_window_chrome(self.settings_hwnd, self._effective_theme() == "dark")
                 tpx, tpy, tpw, tph, _ = self._compute_settings_target_phys_rect()
                 _set_window_pos(self.settings_hwnd, tpx, tpy, tpw, tph)
+                apply_window_rounded_corners(self.settings_hwnd, radius_dip=10, scale=_get_dpi_scale(self.settings_hwnd))
+                _attach_rounded_resize_hook(win, radius_dip=10)
             self._push_state_to_ui()
             # 兜底定时器：若前端回调异常延迟，最迟 0.8s 自动显现，绝不卡死
             threading.Timer(0.8, self._reveal_settings_if_needed).start()
@@ -1034,6 +1125,7 @@ class MouseBatteryApp:
         user32 = ctypes.windll.user32
         is_max = bool(user32.IsZoomed(wintypes.HWND(hwnd)))
         user32.ShowWindow(wintypes.HWND(hwnd), 9 if is_max else 3)  # SW_RESTORE / SW_MAXIMIZE
+        apply_window_rounded_corners(hwnd, radius_dip=10, scale=_get_dpi_scale(hwnd))
         if target == "settings":
             self._settings_maximized = not is_max
         else:
@@ -1261,14 +1353,18 @@ class MouseBatteryApp:
         """后台异步检查 GitHub Releases 最新稳定版本（含轻量防高频请求冷却）。"""
         now_mono = time.monotonic()
         with self._update_lock:
-            if self._update_state["status"] in ("checking", "downloading", "installing"):
+            if self._update_state["status"] in ("checking", "downloading", "verifying", "preparing", "restarting"):
                 return dict(self._update_state)
-            if not silent and self._last_update_check_mono > 0 and (now_mono - self._last_update_check_mono) < 5.0 and self._update_state["status"] in ("up_to_date", "available"):
-                return dict(self._update_state)
+            if not silent and self._last_update_check_mono > 0 and (now_mono - self._last_update_check_mono) < 4.0 and self._update_state["status"] in ("up_to_date", "available"):
+                self._update_state["dismissed"] = False
+                snap = dict(self._update_state)
+                self._push_state_to_ui()
+                return snap
             self._last_update_check_mono = now_mono
             if not silent:
                 self._update_state["status"] = "checking"
-                self._update_state["message"] = "正在连接 GitHub 检查最新版本..."
+                self._update_state["dismissed"] = False
+                self._update_state["message"] = "正在检查更新…"
                 self._update_state["progress"] = 0
         if not silent:
             self._push_state_to_ui()
@@ -1284,7 +1380,7 @@ class MouseBatteryApp:
                     return
                 self._set_update_state(
                     status="error",
-                    message=res.error or "检查更新失败，请稍后重试。",
+                    message=res.error or "更新失败，请重试",
                     checked_at=now_str,
                 )
                 return
@@ -1294,8 +1390,11 @@ class MouseBatteryApp:
                     status="available",
                     latest_version=res.latest_version,
                     has_update=True,
+                    dismissed=False,
                     release_url=res.release_url,
                     release_notes=res.release_notes,
+                    summary_items=res.summary_items,
+                    important_notice=res.important_notice,
                     asset_name=res.asset_name,
                     asset_url=res.asset_url,
                     asset_size=res.asset_size,
@@ -1309,14 +1408,17 @@ class MouseBatteryApp:
                     status="up_to_date",
                     latest_version=res.latest_version or APP_VERSION,
                     has_update=False,
+                    dismissed=False,
                     release_url=res.release_url,
                     release_notes=res.release_notes,
+                    summary_items=res.summary_items,
+                    important_notice=res.important_notice,
                     asset_name=res.asset_name,
                     asset_url=res.asset_url,
                     asset_size=res.asset_size,
                     sha256_url=res.sha256_url,
                     progress=0,
-                    message=f"当前已是最新版本（v{APP_VERSION}）",
+                    message="已是最新版本",
                     checked_at=now_str,
                 )
 
@@ -1324,32 +1426,44 @@ class MouseBatteryApp:
         with self._update_lock:
             return dict(self._update_state)
 
+    def dismiss_update_notice(self) -> dict[str, Any]:
+        """用户点击「稍后更新」后收起更新卡片与底栏提醒胶囊（可随时再次点击检查更新）。"""
+        return self._set_update_state(dismissed=True)
+
     def download_and_install_update(self) -> dict[str, Any]:
-        """下载最新 Release 压缩包、核对 SHA-256 完整性，并在打包版模式下执行安全覆盖重启更新。"""
+        """完整在线更新链路：下载 -> 校验 SHA-256 与 ZIP -> 准备安装 -> 安全退出并自动覆盖重启新版。"""
         with self._update_lock:
             st = dict(self._update_state)
-            if st["status"] in ("downloading", "installing"):
+            if st["status"] in ("downloading", "verifying", "preparing", "restarting"):
                 return st
             asset_url = str(st.get("asset_url") or "")
-            asset_name = str(st.get("asset_name") or "update.zip")
+            asset_name = str(st.get("asset_name") or "BattDock-update.zip")
             asset_size = int(st.get("asset_size") or 0)
             sha256_url = str(st.get("sha256_url") or "")
             release_url = str(st.get("release_url") or RELEASES_PAGE_URL)
-            latest_ver = str(st.get("latest_version") or "")
 
-        if not IS_FROZEN or not asset_url:
+        if not asset_url:
+            return self._set_update_state(
+                status="error",
+                progress=0,
+                message="未找到可用的 Windows 更新包，请前往下载页手动更新",
+            )
+
+        if not IS_FROZEN:
             self.open_external_url(release_url)
             return self._set_update_state(
-                message="已在浏览器打开下载页面" if not IS_FROZEN else "未找到可自动安装的更新包，已打开下载页面"
+                status="available",
+                message="当前为源码开发模式，已在浏览器打开 Release 页面",
             )
 
         self._update_cancel.clear()
         self._set_update_state(
             status="downloading",
+            dismissed=False,
             progress=0,
             downloaded_mb=0.0,
             total_mb=round(asset_size / (1024 * 1024), 2) if asset_size else 0.0,
-            message=f"正在下载 v{latest_ver} 更新包...",
+            message="正在下载更新…",
         )
 
         def _worker() -> None:
@@ -1361,12 +1475,12 @@ class MouseBatteryApp:
             def _on_prog(done: int, total: int) -> None:
                 now = time.monotonic()
                 pct = int(min(99, round(done * 100 / total))) if total > 0 else 0
-                if pct != last_push[1] and (now - last_push[0] >= 0.22 or pct >= 99):
+                if pct != last_push[1] and (now - last_push[0] >= 0.2 or pct >= 99):
                     last_push[0] = now
                     last_push[1] = pct
-                    done_mb = round(done / (1024 * 1024), 2)
-                    tot_mb = round(total / (1024 * 1024), 2) if total > 0 else 0.0
-                    msg = f"正在下载更新包 {pct}%（{done_mb:.1f} / {tot_mb:.1f} MB）" if tot_mb > 0 else f"正在下载更新包（{done_mb:.1f} MB）"
+                    done_mb = round(done / (1024 * 1024), 1)
+                    tot_mb = round(total / (1024 * 1024), 1) if total > 0 else 0.0
+                    msg = f"正在下载更新… {pct}%（{done_mb:.1f} / {tot_mb:.1f} MB）" if tot_mb > 0 else f"正在下载更新…（{done_mb:.1f} MB）"
                     self._set_update_state(
                         status="downloading",
                         progress=pct,
@@ -1383,14 +1497,14 @@ class MouseBatteryApp:
                     on_progress=_on_prog,
                     cancel_event=self._update_cancel,
                 )
+                self._set_update_state(status="verifying", progress=100, message="正在校验文件…")
                 if sha256_url:
-                    self._set_update_state(status="installing", progress=100, message="正在校验更新包 SHA-256 完整性...")
                     sha_ok = verify_downloaded_sha256(zip_path, asset_name, sha256_url)
                     if sha_ok is False:
-                        raise ValueError("更新包 SHA-256 校验不匹配，已中止安装")
-                self._set_update_state(status="installing", progress=100, message="正在解压并检查更新包...")
+                        raise ValueError("安装包 SHA-256 校验失败，已中止更新")
+                self._set_update_state(status="preparing", progress=100, message="正在准备安装…")
                 staged_dir = extract_and_verify_update(zip_path, extract_dir)
-                self._set_update_state(status="installing", progress=100, message="校验通过，正在重启并应用更新...")
+                self._set_update_state(status="restarting", progress=100, message="正在重启软件…")
                 launch_windows_updater(
                     staged_dir=staged_dir,
                     target_dir=APP_DIR,
@@ -1399,12 +1513,14 @@ class MouseBatteryApp:
                 )
                 time.sleep(0.35)
                 self.quit_app()
+                # 确保 WebView2 / CLR 子线程立即释放全部 DLL 文件锁，让更新脚本顺利覆盖并重启新版
+                os._exit(0)
             except Exception as e:
                 cancelled = self._update_cancel.is_set()
                 self._set_update_state(
                     status="available" if cancelled else "error",
                     progress=0,
-                    message="已取消下载更新" if cancelled else f"更新失败：{e}",
+                    message="已取消下载更新" if cancelled else f"更新失败，请重试（{e}）",
                 )
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -1460,15 +1576,17 @@ class MouseBatteryApp:
 
     def _show_mini_alert(
         self,
-        device_name: str,
+        device_label: str,
         percent: int,
         kind: str = KIND_MOUSE,
         is_test: bool = False,
+        device_id: Optional[str] = None,
     ) -> None:
-        """原生 WinForms 极速纯色无边框置顶迷你弹窗（220ms 滑入淡入、不抢游戏焦点、最高置顶、停留 5 秒）。"""
+        """原生 WinForms 极速无边框置顶迷你弹窗（统一黑白实心设备图标、三级动态着色、Win10/11 圆角、停留 5 秒）。"""
         self._close_alert_window(instant=True)
         pct = max(0, min(100, int(percent)))
-        kind_label = _kind_cn(kind)
+        tier_lvl, tier_title = self._resolve_alert_tier(pct, device_id=device_id)
+        is_dark = self._effective_theme() == "dark"
         anim_on = self._effective_animations()
 
         native_main = getattr(self.window, "native", None) if self.window is not None else None
@@ -1496,12 +1614,13 @@ class MouseBatteryApp:
                 form.ShowInTaskbar = False
                 form.TopMost = True
                 form.StartPosition = WinForms.FormStartPosition.Manual
-                form.BackColor = Color.FromArgb(24, 27, 34)
+                form.BackColor = Color.FromArgb(24, 27, 34) if is_dark else Color.FromArgb(252, 253, 255)
                 form.Size = Size(aw, ah)
                 form.Location = Point(ax, ay)
 
-                icon_px = int(round(30 * scale))
-                pil_ic = draw_battery_icon(size=icon_px, percent=pct, charging=False, connected=True)
+                # 左侧显示统一黑白实心设备图标（严格单色，不随电量等级变色）
+                icon_px = int(round(26 * scale))
+                pil_ic = render_device_icon_pil(kind, size=icon_px, is_dark=is_dark)
                 buf = io.BytesIO()
                 pil_ic.save(buf, format="PNG")
                 ms = MemoryStream(buf.getvalue())
@@ -1510,44 +1629,53 @@ class MouseBatteryApp:
                 pic.SizeMode = WinForms.PictureBoxSizeMode.Zoom
                 pic.BackColor = Color.Transparent
                 pic.Size = Size(icon_px, icon_px)
-                pic.Location = Point(int(round(12 * scale)), (ah - icon_px) // 2)
+                pic.Location = Point(int(round(14 * scale)), (ah - icon_px) // 2)
                 form.Controls.Add(pic)
 
-                btn_w = int(round(50 * scale))
-                btn_h = int(round(24 * scale))
+                btn_w = int(round(54 * scale))
+                btn_h = int(round(26 * scale))
                 btn = WinForms.Label()
                 btn.Text = "知道了"
                 btn.TextAlign = ContentAlignment.MiddleCenter
-                btn.ForeColor = Color.FromArgb(235, 240, 248)
-                btn.BackColor = Color.FromArgb(44, 49, 62)
+                btn.ForeColor = Color.FromArgb(235, 240, 248) if is_dark else Color.FromArgb(30, 41, 59)
+                btn.BackColor = Color.FromArgb(44, 49, 62) if is_dark else Color.FromArgb(238, 241, 246)
                 btn.Font = Font("Microsoft YaHei UI", 8.5, FontStyle.Regular)
                 btn.Size = Size(btn_w, btn_h)
-                btn.Location = Point(aw - btn_w - int(round(10 * scale)), (ah - btn_h) // 2)
+                btn.Location = Point(aw - btn_w - int(round(12 * scale)), (ah - btn_h) // 2)
                 btn.Cursor = WinForms.Cursors.Hand
                 btn.Click += lambda _s, _e: self._close_alert_window()
                 form.Controls.Add(btn)
 
-                text_x = int(round(48 * scale))
-                text_w = aw - text_x - btn_w - int(round(16 * scale))
+                text_x = int(round(50 * scale))
+                text_w = aw - text_x - btn_w - int(round(18 * scale))
+
+                # 第一行：三级提醒文案与颜色严格与电量阈值和进度条色阶联动
+                if tier_lvl == 3:
+                    t_col = Color.FromArgb(248, 113, 113) if is_dark else Color.FromArgb(220, 38, 38)
+                elif tier_lvl == 2:
+                    t_col = Color.FromArgb(251, 146, 60) if is_dark else Color.FromArgb(234, 88, 12)
+                else:
+                    t_col = Color.FromArgb(250, 204, 21) if is_dark else Color.FromArgb(202, 138, 4)
 
                 title_lbl = WinForms.Label()
-                title_lbl.Text = f"{kind_label}电量偏低 · 剩余 {pct}%" + (" (测试)" if is_test else "")
-                title_lbl.ForeColor = Color.FromArgb(252, 165, 165) if pct <= 10 else Color.FromArgb(251, 146, 60)
+                title_lbl.Text = f"{tier_title} · 剩余 {pct}%"
+                title_lbl.ForeColor = t_col
                 title_lbl.BackColor = Color.Transparent
-                title_lbl.Font = Font("Microsoft YaHei UI", 9.0, FontStyle.Bold)
+                title_lbl.Font = Font("Microsoft YaHei UI", 9.3, FontStyle.Bold)
                 title_lbl.AutoEllipsis = True
-                title_lbl.Size = Size(text_w, int(round(20 * scale)))
+                title_lbl.Size = Size(text_w, int(round(21 * scale)))
                 title_lbl.Location = Point(text_x, int(round(13 * scale)))
                 form.Controls.Add(title_lbl)
 
+                # 第二行：品牌名称（正常文字颜色）
                 dev_lbl = WinForms.Label()
-                dev_lbl.Text = device_name
-                dev_lbl.ForeColor = Color.FromArgb(235, 240, 248)
+                dev_lbl.Text = device_label
+                dev_lbl.ForeColor = Color.FromArgb(235, 240, 248) if is_dark else Color.FromArgb(30, 41, 59)
                 dev_lbl.BackColor = Color.Transparent
-                dev_lbl.Font = Font("Microsoft YaHei UI", 8.5, FontStyle.Regular)
+                dev_lbl.Font = Font("Microsoft YaHei UI", 8.8, FontStyle.Regular)
                 dev_lbl.AutoEllipsis = True
                 dev_lbl.Size = Size(text_w, int(round(19 * scale)))
-                dev_lbl.Location = Point(text_x, int(round(35 * scale)))
+                dev_lbl.Location = Point(text_x, int(round(36 * scale)))
                 form.Controls.Add(dev_lbl)
 
                 hwnd = int(form.Handle.ToInt64())
@@ -1556,7 +1684,7 @@ class MouseBatteryApp:
                 ex = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
                 ex |= 0x00000008 | 0x08000000 | 0x00000080  # TOPMOST | NOACTIVATE | TOOLWINDOW
                 user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, ex)
-                _try_win11_round_corners(hwnd)
+                apply_window_rounded_corners(hwnd, radius_dip=10, scale=scale)
 
                 SWP_NOACTIVATE = 0x0010
                 SWP_SHOWWINDOW = 0x0040
@@ -1597,26 +1725,35 @@ class MouseBatteryApp:
         except Exception:
             pass
 
-    def _dispatch_alert(self, device_name: str, percent: int, kind: str, is_test: bool = False) -> None:
+    def _dispatch_alert(
+        self,
+        device_label: str,
+        percent: int,
+        kind: str,
+        is_test: bool = False,
+        device_id: Optional[str] = None,
+    ) -> None:
         if self.cfg.sound_enabled:
             threading.Thread(target=play_alert_sound, args=(self.cfg.sound_name,), daemon=True).start()
         if self.cfg.popup_alert_enabled or is_test:
             threading.Thread(
                 target=self._show_mini_alert,
-                args=(device_name, percent, kind, is_test),
+                args=(device_label, percent, kind, is_test, device_id),
                 daemon=True,
             ).start()
         if self.cfg.windows_notify_enabled and self._tray is not None:
             try:
-                tag = "（测试）" if is_test else ""
-                self._tray.notify(f"{device_name} 剩余电量 {percent}%", f"{APP_NAME} 低电量提醒{tag}")
+                _lvl, tier_title = self._resolve_alert_tier(int(percent), device_id=device_id)
+                self._tray.notify(f"{device_label} · 剩余电量 {percent}%", f"{APP_NAME} · {tier_title}")
             except Exception:
                 pass
 
     def test_low_battery(self) -> None:
-        dev, name = self._pick_floating_device()
+        dev, _name = self._pick_floating_device()
         kind = dev.kind if dev else KIND_MOUSE
-        self._dispatch_alert(name if dev else "VGN Dragonfly F2 Pro Max", 15, kind, is_test=True)
+        pref = get_device_pref(self.cfg, dev.device_id) if dev else None
+        label = resolve_compact_device_label(dev, self.devices, alias=(pref.alias if pref else "")) if dev else "VGN"
+        self._dispatch_alert(label, 15, kind, is_test=True, device_id=(dev.device_id if dev else None))
 
     def quit_app(self) -> None:
         self._stop_event.set()
@@ -1681,7 +1818,8 @@ class MouseBatteryApp:
             return
         dev, _tier = min(triggered, key=lambda pair: int(pair[0].percent or 100))
         pref = get_device_pref(self.cfg, dev.device_id)
-        self._dispatch_alert(pref.alias or dev.name, int(dev.percent or 0), dev.kind, is_test=False)
+        label = resolve_compact_device_label(dev, devices, alias=pref.alias)
+        self._dispatch_alert(label, int(dev.percent or 0), dev.kind, is_test=False, device_id=dev.device_id)
 
     def _update_tray_visual(self) -> None:
         """托盘栏始终使用动态矢量电池图标，仅在电量或设备状态实际变化时重绘图标与提示文本。"""
@@ -1770,6 +1908,8 @@ class MouseBatteryApp:
             target_h = int(round(max(380, int(self.cfg.height or MAIN_DEFAULT_SIZE[1])) * scale))
             tpx, tpy, tpw, tph = _compute_centered_rect(work, target_w, target_h)
             _set_window_pos(self.hwnd, tpx, tpy, tpw, tph, topmost=self.cfg.topmost)
+            apply_window_rounded_corners(self.hwnd, radius_dip=10, scale=scale)
+            _attach_rounded_resize_hook(self.window, radius_dip=10)
             if not self._allow_show:
                 _set_form_visibility(self.window, visible=False, opacity=0.0)
 
@@ -1897,6 +2037,9 @@ class _JsApi:
 
     def check_updates(self, silent: bool = False) -> dict[str, Any]:
         return self._app.check_updates(silent=bool(silent))
+
+    def dismiss_update_notice(self) -> dict[str, Any]:
+        return self._app.dismiss_update_notice()
 
     def download_and_install_update(self) -> dict[str, Any]:
         return self._app.download_and_install_update()

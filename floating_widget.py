@@ -13,9 +13,82 @@ from PIL import Image, ImageDraw
 
 from app_config import FloatingWidgetConfig
 from brand import APP_FLOATING_TITLE
+from device_icons import render_device_icon_pil
 from providers import DeviceBattery, KIND_EARBUDS, KIND_HEADSET, KIND_KEYBOARD, KIND_MOUSE
+from providers.device_naming import format_device_subtitle
 
 EDGE_MARGIN = 16
+
+
+def is_windows_11() -> bool:
+    """准确区分 Windows 11 (Build >= 22000) 与 Windows 10。"""
+    if sys.platform != "win32":
+        return False
+    try:
+        return int(sys.getwindowsversion().build) >= 22000
+    except Exception:
+        return False
+
+
+def apply_window_rounded_corners(
+    hwnd: int,
+    radius_dip: int = 10,
+    scale: float = 1.0,
+    force_region: bool = False,
+) -> str:
+    """跨 Windows 10 / 11 统一窗口外轮廓圆角实现。
+
+    - Windows 11 (>= 22000)：优先使用原生 DWM 圆角（自带系统抗锯齿阴影，零性能开销）。
+    - Windows 10 (< 22000)：使用 Win32 CreateRoundRectRgn + SetWindowRgn 精确裁剪外轮廓；
+      最大化时自动调用 SetWindowRgn(hwnd, 0, True) 恢复满屏直角边缘，不产生黑/白角边。
+    """
+    if sys.platform != "win32" or not hwnd:
+        return "noop"
+
+    user32 = ctypes.windll.user32
+    if is_windows_11() and not force_region:
+        try:
+            dwmapi = ctypes.windll.dwmapi
+            corner = ctypes.c_int(2)  # DWMWCP_ROUND
+            dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 33, ctypes.byref(corner), ctypes.sizeof(corner))
+            no_border = ctypes.c_uint(0xFFFFFFFE)
+            dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
+            return "win11_dwm"
+        except Exception:
+            pass
+
+    try:
+        if user32.IsZoomed(wintypes.HWND(hwnd)):
+            user32.SetWindowRgn(wintypes.HWND(hwnd), wintypes.HANDLE(0), True)
+            return "win10_rgn_cleared"
+
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
+            return "error"
+        w = max(1, rect.right - rect.left)
+        h = max(1, rect.bottom - rect.top)
+        eff_scale = float(scale or 1.0)
+        if eff_scale <= 0:
+            eff_scale = 1.0
+        diam = max(8, int(round(radius_dip * 2 * eff_scale)))
+        gdi32 = ctypes.windll.gdi32
+        gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        gdi32.CreateRoundRectRgn.restype = wintypes.HRGN
+        gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+        gdi32.DeleteObject.restype = wintypes.BOOL
+        user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+        user32.SetWindowRgn.restype = ctypes.c_int
+
+        hrgn = gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, diam, diam)
+        if hrgn:
+            # SetWindowRgn 接管区域句柄所有权，成功时不可再 DeleteObject
+            if not user32.SetWindowRgn(wintypes.HWND(hwnd), hrgn, True):
+                gdi32.DeleteObject(hrgn)
+                return "error"
+            return "win10_rgn"
+    except Exception:
+        return "error"
+    return "noop"
 
 
 def play_alert_sound(sound_name: str = "default") -> None:
@@ -117,27 +190,18 @@ def draw_battery_icon(
     return img.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def _try_win11_round_corners(hwnd: int) -> None:
-    """能力检测式启用 Win11 圆角；Windows 10 上静默忽略，绝不产生黑边或报错。"""
-    if sys.platform != "win32" or not hwnd:
-        return
-    try:
-        dwmapi = ctypes.windll.dwmapi
-        corner = ctypes.c_int(2)  # DWMWCP_ROUND
-        dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 33, ctypes.byref(corner), ctypes.sizeof(corner))
-        no_border = ctypes.c_uint(0xFFFFFFFE)
-        dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 34, ctypes.byref(no_border), ctypes.sizeof(no_border))
-    except Exception:
-        pass
+def _try_win11_round_corners(hwnd: int, radius_dip: int = 10, scale: float = 1.0) -> str:
+    """兼容别名：统一调用跨 Windows 10 / 11 圆角窗口实现。"""
+    return apply_window_rounded_corners(hwnd, radius_dip=radius_dip, scale=scale)
 
 
 class DesktopFloatingWidget:
-    """轻量桌面悬浮窗（使用主窗体 UI 线程的原生 WinForms 控件，Win10/11 通用，内存占用极低）。"""
+    """轻量桌面悬浮窗（原生 WinForms 控件，Win10/11 通用圆角、统一实心设备图标、品牌精简展示与悬停详情）。"""
 
     SIZE_MAP = {
-        "small": (208, 46),
-        "medium": (256, 54),
-        "large": (296, 62),
+        "small": (156, 46),
+        "medium": (188, 54),
+        "large": (222, 62),
     }
 
     def __init__(
@@ -160,6 +224,12 @@ class DesktopFloatingWidget:
         self._pct_lbl = None
         self._bar_bg = None
         self._bar_fill = None
+        self._tooltip = None
+        self._bar_timer = None
+        self._bar_target_w = 0
+        self._bar_current_w = 0
+        self._last_icon_sig = None
+        self._last_tooltip_text = ""
         self._locked = True
         self._dragging = False
         self._drag_origin_cursor = (0, 0)
@@ -182,6 +252,8 @@ class DesktopFloatingWidget:
     def close(self) -> None:
         def _do():
             with self._lock:
+                t = self._bar_timer
+                self._bar_timer = None
                 f = self._form
                 self._form = None
                 self._pic = None
@@ -189,6 +261,15 @@ class DesktopFloatingWidget:
                 self._pct_lbl = None
                 self._bar_bg = None
                 self._bar_fill = None
+                self._tooltip = None
+                self._last_icon_sig = None
+                self._last_tooltip_text = ""
+            if t is not None:
+                try:
+                    t.Stop()
+                    t.Dispose()
+                except Exception:
+                    pass
             if f is not None:
                 try:
                     if not f.IsDisposed:
@@ -205,6 +286,11 @@ class DesktopFloatingWidget:
         device: Optional[DeviceBattery],
         display_name: str,
         theme: str,
+        hover_detail: str = "",
+        low_t1: int = 30,
+        low_t2: int = 20,
+        low_t3: int = 10,
+        animations_enabled: bool = True,
     ) -> None:
         """根据配置与设备实时状态创建/更新/隐藏桌面悬浮窗。"""
         if not fcfg.enabled:
@@ -213,6 +299,11 @@ class DesktopFloatingWidget:
 
         scale = self._get_dpi_scale()
         base_w, base_h = self.SIZE_MAP.get(fcfg.size, self.SIZE_MAP["medium"])
+        # 同品牌多设备补充型号或自定义长名时适度自适应加宽，默认品牌名保持紧凑无多余留白
+        title = (display_name or (device.name if device else "未连接")).strip()
+        extra_chars = max(0, len(title) - 11)
+        if extra_chars > 0:
+            base_w = min(base_w + extra_chars * 7, 300)
         w = int(round(base_w * scale))
         h = int(round(base_h * scale))
         left, top, right, bottom = self._get_work_area()
@@ -233,17 +324,25 @@ class DesktopFloatingWidget:
         is_dark = theme == "dark"
         pct = device.percent if device else None
         charging = bool(device.charging) if device else False
-        online = bool(device.online) if device else False
-        asleep = bool(device.asleep) if device else False
-        title = display_name or (device.name if device else "未连接外设")
+        kind = device.kind if device else KIND_MOUSE
         pct_text = f"{pct}%" if pct is not None else "—"
         if charging and pct is not None:
             pct_text = f"⚡{pct}%"
 
+        if not hover_detail:
+            if device is not None:
+                sub = format_device_subtitle(
+                    device.connection_mode, device.connected, device.online,
+                    device.asleep, device.charging, device.full, device.percent,
+                )
+                hover_detail = f"{device.name}\n{sub} · {pct_text}" if sub else f"{device.name}\n{pct_text}"
+            else:
+                hover_detail = "BattDock · 当前未检测到已连接外设"
+
         def _do():
             try:
                 import System.Windows.Forms as WinForms
-                from System.Drawing import Color, ContentAlignment, Font, FontStyle, Image as GdiImage, Point, Size
+                from System.Drawing import Color, ContentAlignment, Font, FontStyle, Image as GdiImage, Pen, Point, Size
                 from System.IO import MemoryStream
 
                 self._locked = bool(fcfg.locked)
@@ -274,6 +373,12 @@ class DesktopFloatingWidget:
                     bar_fill = WinForms.Panel()
                     bar_bg.Controls.Add(bar_fill)
                     form.Controls.Add(bar_bg)
+
+                    tt = WinForms.ToolTip()
+                    tt.AutoPopDelay = 6000
+                    tt.InitialDelay = 350
+                    tt.ReshowDelay = 150
+                    tt.ShowAlways = True
 
                     def _on_down(_s, e):
                         if self._locked:
@@ -312,77 +417,128 @@ class DesktopFloatingWidget:
                     self._pct_lbl = pct_lbl
                     self._bar_bg = bar_bg
                     self._bar_fill = bar_fill
+                    self._tooltip = tt
 
                 form = self._form
                 form.TopMost = bool(fcfg.topmost)
                 form.Opacity = max(0.4, min(1.0, int(fcfg.opacity) / 100.0))
-                form.BackColor = Color.FromArgb(30, 34, 43) if is_dark else Color.FromArgb(250, 251, 254)
+                form.BackColor = Color.FromArgb(26, 30, 39) if is_dark else Color.FromArgb(250, 251, 254)
+                size_changed = (form.Size.Width != w or form.Size.Height != h)
                 form.Size = Size(w, h)
                 if not self._dragging:
                     form.Location = Point(x, y)
 
-                pad = int(round(10 * scale))
-                icon_px = int(round(22 * scale))
+                pad = int(round(12 * scale))
+                icon_px = int(round((18 if fcfg.size == "small" else (20 if fcfg.size == "medium" else 22)) * scale))
+                top_row_y = int(round((8 if fcfg.size == "small" else 10) * scale))
+                row_h = int(round(22 * scale))
+
                 self._pic.Size = Size(icon_px, icon_px)
-                self._pic.Location = Point(pad, (h - icon_px) // 2)
-                pil_ic = draw_battery_icon(
-                    size=icon_px,
-                    percent=pct,
-                    charging=charging,
-                    connected=online or asleep,
-                    light_bg=(not is_dark),
-                )
-                buf = io.BytesIO()
-                pil_ic.save(buf, format="PNG")
-                self._pic.Image = GdiImage.FromStream(MemoryStream(buf.getvalue()))
+                self._pic.Location = Point(pad, top_row_y + (row_h - icon_px) // 2)
+                icon_sig = (kind, icon_px, is_dark)
+                if icon_sig != self._last_icon_sig:
+                    self._last_icon_sig = icon_sig
+                    pil_ic = render_device_icon_pil(kind, size=icon_px, is_dark=is_dark)
+                    buf = io.BytesIO()
+                    pil_ic.save(buf, format="PNG")
+                    self._pic.Image = GdiImage.FromStream(MemoryStream(buf.getvalue()))
 
                 pct_w = int(round(48 * scale))
                 text_x = pad + icon_px + int(round(8 * scale))
-                text_w = max(60, w - text_x - pct_w - pad)
+                text_w = max(46, w - text_x - pct_w - pad)
 
                 self._name_lbl.Text = title
-                self._name_lbl.ForeColor = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(26, 29, 36)
-                self._name_lbl.Font = Font("Microsoft YaHei UI", 8.5 if fcfg.size == "small" else 9.0, FontStyle.Bold)
-                self._name_lbl.Size = Size(text_w, int(round(20 * scale)))
-                self._name_lbl.Location = Point(text_x, int(round(9 * scale)))
+                self._name_lbl.ForeColor = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(24, 27, 34)
+                self._name_lbl.Font = Font("Microsoft YaHei UI", 8.8 if fcfg.size == "small" else (9.5 if fcfg.size == "medium" else 10.2), FontStyle.Bold)
+                self._name_lbl.Size = Size(text_w, row_h)
+                self._name_lbl.Location = Point(text_x, top_row_y)
 
                 self._pct_lbl.Text = pct_text
-                if pct is not None and not charging and pct <= 10:
-                    p_col = Color.FromArgb(239, 68, 68)
-                elif pct is not None and not charging and pct <= 20:
-                    p_col = Color.FromArgb(234, 88, 12)
+                if pct is not None and not charging and pct <= low_t3:
+                    p_col = Color.FromArgb(248, 113, 113) if is_dark else Color.FromArgb(220, 38, 38)
+                elif pct is not None and not charging and pct <= low_t2:
+                    p_col = Color.FromArgb(251, 146, 60) if is_dark else Color.FromArgb(234, 88, 12)
+                elif pct is not None and not charging and pct <= low_t1:
+                    p_col = Color.FromArgb(250, 204, 21) if is_dark else Color.FromArgb(202, 138, 4)
                 elif charging:
-                    p_col = Color.FromArgb(22, 163, 74)
+                    p_col = Color.FromArgb(74, 222, 128) if is_dark else Color.FromArgb(22, 163, 74)
                 else:
-                    p_col = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(26, 29, 36)
+                    p_col = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(24, 27, 34)
                 self._pct_lbl.ForeColor = p_col
-                self._pct_lbl.Font = Font("Microsoft YaHei UI", 9.0 if fcfg.size == "small" else 10.0, FontStyle.Bold)
-                self._pct_lbl.Size = Size(pct_w, int(round(22 * scale)))
-                self._pct_lbl.Location = Point(w - pct_w - pad, (h - int(round(22 * scale))) // 2)
+                self._pct_lbl.Font = Font("Microsoft YaHei UI", 9.0 if fcfg.size == "small" else (9.8 if fcfg.size == "medium" else 10.5), FontStyle.Bold)
+                self._pct_lbl.Size = Size(pct_w, row_h)
+                self._pct_lbl.Location = Point(w - pct_w - pad, top_row_y)
 
+                # 底部电量进度条与左右内容对齐，支持平滑宽度过渡
                 bar_h = max(4, int(round(5 * scale)))
-                bar_y = h - int(round(13 * scale))
-                self._bar_bg.Location = Point(text_x, bar_y)
-                self._bar_bg.Size = Size(text_w, bar_h)
-                self._bar_bg.BackColor = Color.FromArgb(51, 57, 71) if is_dark else Color.FromArgb(228, 232, 240)
+                bar_y = h - int(round((10 if fcfg.size == "small" else 12) * scale))
+                bar_w = max(60, w - pad * 2)
+                self._bar_bg.Location = Point(pad, bar_y)
+                self._bar_bg.Size = Size(bar_w, bar_h)
+                self._bar_bg.BackColor = Color.FromArgb(49, 56, 71) if is_dark else Color.FromArgb(226, 232, 240)
 
-                fill_w = int(round(text_w * (max(0, min(100, pct)) / 100.0))) if pct is not None else 0
-                self._bar_fill.Location = Point(0, 0)
-                self._bar_fill.Size = Size(fill_w, bar_h)
+                target_fill_w = int(round(bar_w * (max(0, min(100, pct)) / 100.0))) if pct is not None else 0
                 if pct is None:
                     f_col = Color.FromArgb(148, 163, 184)
-                elif charging or pct > 30:
+                elif charging or pct > low_t1:
                     f_col = Color.FromArgb(34, 197, 94)
-                elif pct > 20:
+                elif pct > low_t2:
                     f_col = Color.FromArgb(234, 179, 8)
-                elif pct > 10:
+                elif pct > low_t3:
                     f_col = Color.FromArgb(245, 158, 11)
                 else:
                     f_col = Color.FromArgb(239, 68, 68)
                 self._bar_fill.BackColor = f_col
+                self._bar_fill.Location = Point(0, 0)
+
+                if not animations_enabled or not form.Visible or self._bar_current_w == 0:
+                    self._bar_current_w = target_fill_w
+                    self._bar_target_w = target_fill_w
+                    self._bar_fill.Size = Size(target_fill_w, bar_h)
+                elif target_fill_w != self._bar_target_w:
+                    self._bar_target_w = target_fill_w
+                    if self._bar_timer is not None:
+                        try:
+                            self._bar_timer.Stop()
+                            self._bar_timer.Dispose()
+                        except Exception:
+                            pass
+                    start_w = self._bar_current_w
+                    steps = 10
+                    step_idx = [0]
+                    tmr = WinForms.Timer()
+                    tmr.Interval = 18
+
+                    def _step_bar(_s, _e):
+                        step_idx[0] += 1
+                        if self._bar_fill is None or self._form is None or self._form.IsDisposed:
+                            tmr.Stop()
+                            tmr.Dispose()
+                            return
+                        t = min(1.0, step_idx[0] / float(steps))
+                        eased = 1.0 - (1.0 - t) ** 3
+                        cur = int(round(start_w + (self._bar_target_w - start_w) * eased))
+                        self._bar_current_w = cur
+                        self._bar_fill.Size = Size(cur, bar_h)
+                        if t >= 1.0:
+                            tmr.Stop()
+                            tmr.Dispose()
+                            self._bar_timer = None
+
+                    tmr.Tick += _step_bar
+                    self._bar_timer = tmr
+                    tmr.Start()
+                else:
+                    self._bar_fill.Size = Size(self._bar_current_w, bar_h)
+
+                if self._tooltip is not None and hover_detail != self._last_tooltip_text:
+                    self._last_tooltip_text = hover_detail
+                    for ctrl in (form, self._pic, self._name_lbl, self._pct_lbl, self._bar_bg, self._bar_fill):
+                        self._tooltip.SetToolTip(ctrl, hover_detail)
 
                 hwnd = int(form.Handle.ToInt64())
-                _try_win11_round_corners(hwnd)
+                if size_changed or not form.Visible:
+                    apply_window_rounded_corners(hwnd, radius_dip=10, scale=scale)
                 if not form.Visible:
                     user32 = ctypes.windll.user32
                     GWL_EXSTYLE = -20

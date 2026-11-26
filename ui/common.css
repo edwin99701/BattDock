@@ -175,7 +175,13 @@ input, select, textarea {
   flex-direction: column;
   background: var(--bg-app);
   border: 1px solid var(--border-window);
+  border-radius: 10px;
   overflow: hidden;
+}
+
+.app-shell.maximized {
+  border-radius: 0;
+  border-color: transparent;
 }
 
 /* 顶部统一标题栏 */

@@ -88,6 +88,7 @@ class FloatingWidgetConfig:
     y: Optional[int] = None
     device_id: str = "auto"  # "auto" 表示跟随最优先/最低电量设备
     locked: bool = True
+    custom_label: str = ""  # 悬浮窗自定义设备显示名称（空则自动展示品牌名）
 
 
 @dataclass

@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.3.0-111827?style=for-the-badge" alt="Download Latest BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.4.0-111827?style=for-the-badge" alt="Download Latest BattDock" />
 </a>
 
 </div>
@@ -45,7 +45,7 @@
 
 ## Screenshots
 
-> Captured from actual **BattDock v2.3.0** runs. The Dark Mode screenshot shows a **demo multi-device view** to illustrate card layouts and split-earbud indicators (see [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md) for actual hardware verification status).
+> Captured from actual **BattDock v2.4.0** runs. The Dark Mode screenshot shows a **demo multi-device view** to illustrate unified device icons, card layouts, and split-earbud indicators (see [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md) for actual hardware verification status).
 
 <table>
   <tr>
@@ -74,7 +74,7 @@
 
 ## Download & Installation
 
-1. Go to [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) and download **`BattDock-v2.3.0-Windows-x64-Portable.zip`**.
+1. Go to [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) and download **`BattDock-v2.4.0-Windows-x64-Portable.zip`**.
 2. Extract to any folder and launch **`BattDock.exe`** (requires Windows 10 22H2 x64+ or Windows 11 x64).
 3. Settings are stored in `%LOCALAPPDATA%\BattDock\config.json` and preserved across updates. Legacy `VGNMouseBattery` configurations and autostart entries migrate automatically on first launch.
 

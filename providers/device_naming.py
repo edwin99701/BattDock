@@ -401,3 +401,83 @@ def format_device_subtitle(
     if conn and state:
         return f"{conn} · {state}"
     return conn or state
+
+
+_CANONICAL_BRAND_MAP: dict[str, str] = {
+    "vgn": "VGN",
+    "vxe": "VXE",
+    "atk": "ATK",
+    "mchose": "MCHOSE",
+    "lamzu": "LAMZU",
+    "rapoo": "Rapoo",
+    "zaopin": "Zaopin",
+    "scyrox": "Scyrox",
+    "logitech": "Logitech",
+    "razer": "Razer",
+    "steelseries": "SteelSeries",
+    "corsair": "Corsair",
+    "hyperx": "HyperX",
+    "asus": "ASUS",
+    "rog": "ROG",
+    "sony": "Sony",
+    "apple": "Apple",
+    "beats": "Beats",
+    "jbl": "JBL",
+}
+
+_GENERIC_BRANDS = {"", "generic", "bluetooth", "unknown", "hid", "other", "usb", "标准蓝牙"}
+
+
+def canonical_brand_name(brand: str, device_name: str = "") -> str:
+    """提取官方规范品牌名（无法识别品牌时不编造，返回空字符串）。"""
+    b = (brand or "").strip()
+    bl = b.lower()
+    if bl in _CANONICAL_BRAND_MAP:
+        return _CANONICAL_BRAND_MAP[bl]
+    if b and bl not in _GENERIC_BRANDS:
+        return b
+    clean = (device_name or "").strip()
+    if clean:
+        first = clean.split()[0]
+        if first.lower() in _CANONICAL_BRAND_MAP:
+            return _CANONICAL_BRAND_MAP[first.lower()]
+        if clean.lower().startswith("airpods"):
+            return "Apple"
+    return ""
+
+
+def _canonical_icon_group(kind: str) -> str:
+    k = (kind or "").strip().lower()
+    if k in ("headset", "earbuds"):
+        return "headset"
+    return k or "other"
+
+
+def resolve_compact_device_label(
+    device,
+    all_devices: list,
+    custom_label: str = "",
+    alias: str = "",
+) -> str:
+    """生成悬浮窗与提醒弹窗使用的精简品牌标签（默认仅品牌名，同品牌多设备自动补型号，无品牌不编造）。"""
+    if (custom_label or "").strip():
+        return custom_label.strip()
+    if (alias or "").strip():
+        return alias.strip()
+    if device is None:
+        return "未连接外设"
+
+    full_name = (getattr(device, "name", "") or "").strip()
+    brand = canonical_brand_name(getattr(device, "brand", ""), full_name)
+    if not brand:
+        return full_name or "外设"
+
+    my_group = _canonical_icon_group(getattr(device, "kind", ""))
+    same_brand_peers = [
+        d for d in (all_devices or [])
+        if canonical_brand_name(getattr(d, "brand", ""), getattr(d, "name", "")) == brand
+        and _canonical_icon_group(getattr(d, "kind", "")) == my_group
+    ]
+    if len(same_brand_peers) >= 2 and full_name:
+        return full_name
+    return brand
