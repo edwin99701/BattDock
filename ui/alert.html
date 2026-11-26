@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    color: rgba(248, 250, 255, 0.95);
+    -webkit-font-smoothing: antialiased;
+  }
+  .toast {
+    width: 100%;
+    height: 100%;
+    border-radius: 8px;
+    /* 延续主窗口 Liquid Glass 材质，柔和玻璃底色 + 低对比度警告色细边框 */
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(235, 242, 252, 0.025) 40%, rgba(210, 222, 238, 0.01) 100%),
+      rgba(228, 236, 248, 0.055);
+    border: 1px solid rgba(248, 113, 113, 0.30);
+    box-shadow:
+      inset 0 1px 0.5px rgba(255, 255, 255, 0.26),
+      inset 0 -0.5px 0 rgba(255, 255, 255, 0.06);
+    display: flex;
+    align-items: center;
+    padding: 14px 16px;
+    gap: 14px;
+    animation: popIn 0.28s cubic-bezier(0.22, 1.08, 0.36, 1) both;
+  }
+  @keyframes popIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  /* 左侧 38px 透明背景电池图标 */
+  .bat-icon {
+    width: 38px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  /* 中间三行清晰排版 */
+  .content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .line-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: rgba(252, 165, 165, 0.96);
+    line-height: 1.25;
+  }
+  .test-tag {
+    font-size: 10px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.86);
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    padding: 0 5px;
+    border-radius: 999px;
+    line-height: 1.45;
+  }
+  .line-device {
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(248, 250, 255, 0.94);
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .line-pct {
+    font-size: 11px;
+    font-weight: 400;
+    color: rgba(251, 146, 60, 0.95);
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+  }
+  /* 右侧小巧「知道了」按钮（垂直居中，不挤压设备名称） */
+  .ok-btn {
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.09);
+    color: rgba(248, 250, 255, 0.92);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    flex-shrink: 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    transition: background 0.18s ease, transform 0.18s ease, color 0.18s ease;
+  }
+  .ok-btn:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: #FFFFFF;
+  }
+  .ok-btn:active {
+    transform: scale(0.94);
+  }
+</style>
+</head>
+<body>
+  <div class="toast">
+    <svg class="bat-icon" viewBox="0 0 38 22" fill="none">
+      <rect x="1.2" y="1.6" width="31" height="18.8" rx="4.5" stroke="rgba(242,246,252,0.88)" stroke-width="1.8"/>
+      <rect x="33.8" y="6.8" width="2.8" height="8.4" rx="1.2" fill="rgba(242,246,252,0.84)"/>
+      <rect x="4.2" y="4.6" width="__FILL_W__" height="12.8" rx="2.2" fill="__FILL_COL__"/>
+    </svg>
+    <div class="content">
+      <div class="line-title"><span>鼠标电量偏低</span>__TEST_BADGE__</div>
+      <div class="line-device">__DEVICE__</div>
+      <div class="line-pct">剩余电量 __PCT__%</div>
+    </div>
+    <button class="ok-btn" onclick="window.pywebview && window.pywebview.api.close_alert()">知道了</button>
+  </div>
+</body>
+</html>

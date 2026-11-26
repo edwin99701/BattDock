@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VGN 鼠标电量</title>
+<style>
+  :root {
+    --spring: cubic-bezier(0.28, 1.24, 0.42, 1);
+    --spring-soft: cubic-bezier(0.22, 1.08, 0.36, 1);
+    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+    --accent: #34D399;
+    --accent-soft: rgba(52, 211, 153, 0.20);
+    --text-primary: rgba(248, 250, 255, 0.95);
+    --text-secondary: rgba(232, 238, 248, 0.64);
+    --text-muted: rgba(220, 228, 242, 0.44);
+
+    /* 极薄冷白/银灰微染色玻璃层（底层由 Windows 11 原生 Acrylic 提供真实背景模糊） */
+    --surface-tint: rgba(228, 236, 248, 0.05);
+    --surface-subtle: rgba(255, 255, 255, 0.055);
+    --hairline: rgba(255, 255, 255, 0.14);
+    --hairline-soft: rgba(255, 255, 255, 0.075);
+    --specular-top: rgba(255, 255, 255, 0.28);
+
+    --mx: 50%;
+    --my: 0%;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 单层圆角液态玻璃主窗口（与 Win11 原生 DWM 圆角一致，避免双层圆角边框） */
+  .glass-window {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 8px;
+    overflow: hidden;
+    background:
+      radial-gradient(240px circle at var(--mx) var(--my), rgba(255, 255, 255, 0.08), transparent 65%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(235, 242, 252, 0.025) 28%, rgba(210, 222, 238, 0.01) 100%),
+      var(--surface-tint);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow:
+      inset 0 1px 0.5px var(--specular-top),
+      inset 0 -0.5px 0 rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-direction: column;
+    padding: 16px 20px 14px;
+    gap: 12px;
+  }
+
+  .glass-window.low-battery {
+    border-color: rgba(248, 113, 113, 0.38);
+  }
+
+  /* 1. 顶部设备信息栏（固定位置时禁用拖拽手势） */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: default;
+  }
+
+  .top-bar.draggable {
+    cursor: grab;
+  }
+
+  .top-bar.draggable:active {
+    cursor: grabbing;
+  }
+
+  .device-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .device-title {
+    font-size: 13.5px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .online-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .online-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .top-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .circle-glass-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid var(--hairline);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.82);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.20);
+    transition: background 0.18s var(--ease), transform 0.22s var(--spring), color 0.18s ease;
+  }
+
+  .circle-glass-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #FFFFFF;
+  }
+
+  .circle-glass-btn:active {
+    transform: scale(0.91);
+  }
+
+  .circle-glass-btn.spinning svg {
+    animation: spin 0.72s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  /* 2. 电量展示区域（核心视觉中心，直接浮于玻璃上） */
+  .battery-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 0 2px;
+  }
+
+  .ring-box {
+    position: relative;
+    width: 146px;
+    height: 146px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ring-svg {
+    width: 146px;
+    height: 146px;
+    transform: rotate(-90deg);
+    overflow: visible;
+  }
+
+  .ring-track {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.12);
+    stroke-width: 6.5;
+  }
+
+  .ring-arc {
+    fill: none;
+    stroke: url(#batGradNormal);
+    stroke-width: 6.5;
+    stroke-linecap: round;
+    stroke-dasharray: 389.56;
+    stroke-dashoffset: 389.56;
+    filter: drop-shadow(0 0 4px var(--accent-soft));
+    transition: stroke-dashoffset 0.72s var(--spring-soft);
+  }
+
+  .ring-center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+  }
+
+  .hero-pct {
+    font-size: 35px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    line-height: 1.06;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+  }
+
+  .hero-sub {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
+
+  /* 3. 轻量化半透明信息条（电芯电压 + 连接方式，禁止被 flex 压缩为空条） */
+  .metrics-strip {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-radius: 15px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--hairline-soft);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+  }
+
+  .metric-cell {
+    height: 52px;
+    padding: 8px 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .metric-cell + .metric-cell {
+    border-left: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .metric-label {
+    font-size: 10.5px;
+    color: var(--text-muted);
+  }
+
+  .metric-value {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 4. 设置分组（无迷你悬浮窗相关项） */
+  .settings-group {
+    flex-shrink: 0;
+    border-radius: 16px;
+    background: var(--surface-subtle);
+    border: 1px solid var(--hairline-soft);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    padding: 2px 14px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .setting-item {
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .setting-item:last-child {
+    border-bottom: none;
+  }
+
+  .setting-item.threshold-row.disabled {
+    opacity: 0.40;
+    pointer-events: none;
+  }
+
+  .item-label-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .item-label {
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--text-primary);
+  }
+
+  .subtle-action {
+    font-size: 10.5px;
+    color: rgba(147, 197, 253, 0.88);
+    cursor: pointer;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(147, 197, 253, 0.10);
+    transition: background 0.18s ease, color 0.18s ease;
+  }
+
+  .subtle-action:hover {
+    background: rgba(147, 197, 253, 0.20);
+    color: #FFFFFF;
+  }
+
+  /* 胶囊开关 */
+  .ios-toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.24s var(--ease);
+  }
+
+  .ios-toggle.on {
+    background: #34C759;
+  }
+
+  .ios-toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+    transition: transform 0.28s var(--spring), width 0.15s ease;
+  }
+
+  .ios-toggle:active .ios-toggle-knob {
+    width: 21px;
+  }
+
+  .ios-toggle.on .ios-toggle-knob {
+    transform: translateX(18px);
+  }
+
+  .ios-toggle.on:active .ios-toggle-knob {
+    transform: translateX(15px);
+  }
+
+  /* 细腻分段胶囊选择器 */
+  .seg-capsule {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    width: 176px;
+    background: rgba(255, 255, 255, 0.07);
+    border-radius: 999px;
+    padding: 2px;
+    overflow: hidden;
+  }
+
+  .seg-thumb {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    left: 2px;
+    width: calc(25% - 1px);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30);
+    transition: transform 0.30s var(--spring-soft);
+    pointer-events: none;
+  }
+
+  .seg-opt {
+    position: relative;
+    z-index: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 0;
+    cursor: pointer;
+    transition: color 0.18s ease;
+  }
+
+  .seg-opt.active {
+    color: #FFFFFF;
+  }
+
+  /* 底部极简状态栏 */
+  .bottom-bar {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 2px 0;
+  }
+
+  .sync-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .text-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: color 0.18s ease;
+  }
+
+  .text-btn:hover {
+    color: #FCA5A5;
+  }
+
+  /* 低电量悬浮提醒条 */
+  .alert-banner {
+    position: absolute;
+    top: 12px;
+    left: 16px;
+    right: 16px;
+    z-index: 20;
+    padding: 10px 13px;
+    border-radius: 15px;
+    background: rgba(220, 56, 56, 0.84);
+    border: 1px solid rgba(255, 215, 215, 0.30);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    transform: translateY(-140%);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.36s var(--spring-soft), opacity 0.22s ease;
+  }
+
+  .alert-banner.show {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .alert-msg {
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: #FFFFFF;
+  }
+
+  .alert-dismiss {
+    border: none;
+    background: rgba(255, 255, 255, 0.22);
+    color: #FFFFFF;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+  <div id="root" class="glass-window">
+    <!-- 低电量提示条 -->
+    <div id="alertBanner" class="alert-banner">
+      <div id="alertMsg" class="alert-msg">鼠标电量低，请及时充电</div>
+      <button class="alert-dismiss" onclick="hideToast()">知道了</button>
+    </div>
+
+    <!-- 1. 顶部设备信息 -->
+    <div id="topBar" class="top-bar">
+      <div class="device-meta">
+        <div id="deviceName" class="device-title">VGN Dragonfly F2 Pro Max</div>
+        <div class="online-row">
+          <span class="online-dot"></span>
+          <span id="onlineText">正在连接...</span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="refreshBtn" class="circle-glass-btn" title="立即刷新电量" onclick="refreshNow()">
+          <svg width="12.5" height="12.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+            <polyline points="21 3 21 9 15 9"/>
+          </svg>
+        </button>
+        <button class="circle-glass-btn" title="最小化到任务栏" onclick="minimizeWin()">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+        <button class="circle-glass-btn" title="隐藏到系统托盘" onclick="hideToTray()">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round">
+            <line x1="6" y1="6" x2="18" y2="18"/>
+            <line x1="18" y1="6" x2="6" y2="18"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 2. 核心电量圆环 -->
+    <div class="battery-hero">
+      <div class="ring-box">
+        <svg class="ring-svg" viewBox="0 0 148 148">
+          <defs>
+            <linearGradient id="batGradNormal" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#6EE7B7"/>
+              <stop offset="55%" stop-color="#34D399"/>
+              <stop offset="100%" stop-color="#22C55E"/>
+            </linearGradient>
+            <linearGradient id="batGradMed" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#FDE68A"/>
+              <stop offset="100%" stop-color="#F59E0B"/>
+            </linearGradient>
+            <linearGradient id="batGradLow" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#FCA5A5"/>
+              <stop offset="100%" stop-color="#EF4444"/>
+            </linearGradient>
+            <linearGradient id="batGradCharge" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#BAE6FD"/>
+              <stop offset="100%" stop-color="#38BDF8"/>
+            </linearGradient>
+            <linearGradient id="batGradOffline" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#CBD5E1"/>
+              <stop offset="100%" stop-color="#94A3B8"/>
+            </linearGradient>
+          </defs>
+          <circle class="ring-track" cx="74" cy="74" r="62"/>
+          <circle id="ringArc" class="ring-arc" cx="74" cy="74" r="62"/>
+        </svg>
+        <div class="ring-center">
+          <div id="heroPct" class="hero-pct">--%</div>
+          <div id="heroSub" class="hero-sub">检测中</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 轻量化半透明信息条 -->
+    <div class="metrics-strip">
+      <div class="metric-cell">
+        <div class="metric-label">电芯电压</div>
+        <div id="voltVal" class="metric-value">-- V</div>
+      </div>
+      <div class="metric-cell">
+        <div class="metric-label">连接方式</div>
+        <div id="modeVal" class="metric-value">检测中</div>
+      </div>
+    </div>
+
+    <!-- 4. 设置区域 -->
+    <div class="settings-group">
+      <div class="setting-item">
+        <span class="item-label">固定窗口位置</span>
+        <div id="swLockPos" class="ios-toggle" onclick="toggleLockPos()">
+          <div class="ios-toggle-knob"></div>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <span class="item-label">窗口置顶显示</span>
+        <div id="swTopmost" class="ios-toggle" onclick="toggleTopmost()">
+          <div class="ios-toggle-knob"></div>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <span class="item-label">开机自动启动</span>
+        <div id="swAutostart" class="ios-toggle" onclick="toggleAutostart()">
+          <div class="ios-toggle-knob"></div>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="item-label-wrap">
+          <span class="item-label">低电量提醒</span>
+          <span class="subtle-action" onclick="testToast()">测试</span>
+        </div>
+        <div id="swLowAlert" class="ios-toggle" onclick="toggleLowAlert()">
+          <div class="ios-toggle-knob"></div>
+        </div>
+      </div>
+
+      <div id="threshRow" class="setting-item threshold-row">
+        <span class="item-label">提醒阈值</span>
+        <div class="seg-capsule" id="threshSeg">
+          <div class="seg-thumb" id="threshThumb"></div>
+          <button class="seg-opt" data-val="10" onclick="setThreshold(10)">10%</button>
+          <button class="seg-opt" data-val="15" onclick="setThreshold(15)">15%</button>
+          <button class="seg-opt" data-val="20" onclick="setThreshold(20)">20%</button>
+          <button class="seg-opt" data-val="30" onclick="setThreshold(30)">30%</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部栏 -->
+    <div class="bottom-bar">
+      <div id="syncTime" class="sync-time">等待读取...</div>
+      <button class="text-btn" onclick="quitApp()">退出程序</button>
+    </div>
+  </div>
+
+<script>
+  const RING_CIRC = 2 * Math.PI * 62;
+  const THRESH_LIST = [10, 15, 20, 30];
+  let lastNonZeroThresh = 20;
+  let toastTimer = null;
+
+  let appState = {
+    lock_position: true,
+    topmost: false,
+    autostart: false,
+    low_battery_threshold: 20,
+    percent: null,
+    connected: false,
+    asleep: false,
+    charging: false,
+    voltage_mv: null,
+    device_name: "VGN Dragonfly F2 Pro Max",
+    connection_mode: "检测中",
+    updated_str: ""
+  };
+
+  const root = document.getElementById("root");
+  document.addEventListener("mousemove", (e) => {
+    const r = root.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      root.style.setProperty("--mx", `${e.clientX - r.left}px`);
+      root.style.setProperty("--my", `${e.clientY - r.top}px`);
+    }
+  });
+
+  // 顶部栏拖拽移动主窗口
+  (function attachTopDrag() {
+    const el = document.getElementById("topBar");
+    let dragging = false;
+    let moved = false;
+    let sx = 0, sy = 0;
+
+    el.addEventListener("mousedown", (e) => {
+      if (appState.lock_position) return;
+      if (e.button !== 0 || e.target.closest("button")) return;
+      dragging = true;
+      moved = false;
+      sx = e.screenX;
+      sy = e.screenY;
+      window.pywebview?.api?.begin_drag(sx, sy);
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      if (Math.abs(e.screenX - sx) > 3 || Math.abs(e.screenY - sy) > 3) moved = true;
+      if (moved) window.pywebview?.api?.drag_move(e.screenX, e.screenY);
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      if (moved) window.pywebview?.api?.end_drag();
+    });
+  })();
+
+  function resolveTheme(s) {
+    if (!s.connected || s.percent === null || s.percent === undefined) {
+      return { accent: "#94A3B8", soft: "rgba(148,163,184,0.16)", grad: "url(#batGradOffline)", low: false };
+    }
+    if (s.charging) {
+      return { accent: "#38BDF8", soft: "rgba(56,189,248,0.22)", grad: "url(#batGradCharge)", low: false };
+    }
+    if (s.low_battery_threshold > 0 && s.percent <= s.low_battery_threshold) {
+      return { accent: "#F87171", soft: "rgba(248,113,113,0.22)", grad: "url(#batGradLow)", low: true };
+    }
+    if (s.percent <= 50) {
+      return { accent: "#FBBF24", soft: "rgba(251,191,36,0.20)", grad: "url(#batGradMed)", low: false };
+    }
+    return { accent: "#34D399", soft: "rgba(52,211,153,0.20)", grad: "url(#batGradNormal)", low: false };
+  }
+
+  function applyState(next) {
+    appState = { ...appState, ...next };
+    const s = appState;
+    if (s.low_battery_threshold > 0) lastNonZeroThresh = Number(s.low_battery_threshold);
+
+    const theme = resolveTheme(s);
+    document.documentElement.style.setProperty("--accent", theme.accent);
+    document.documentElement.style.setProperty("--accent-soft", theme.soft);
+    root.classList.toggle("low-battery", theme.low);
+
+    const pctText = (s.connected && s.percent !== null) ? `${s.percent}%` : "--%";
+    document.getElementById("deviceName").textContent = (s.device_name || "VGN Dragonfly F2 Pro Max").replace("DragonFly", "Dragonfly");
+    document.getElementById("heroPct").textContent = pctText;
+
+    let statusText = "未连接";
+    let modeText = "未连接";
+    if (s.connected) {
+      if (s.charging) {
+        statusText = "充电中";
+        modeText = "有线充电";
+      } else if (s.asleep) {
+        statusText = "休眠中";
+        modeText = "2.4G 休眠";
+      } else {
+        statusText = "在线";
+        modeText = "2.4G 无线";
+      }
+    }
+    document.getElementById("onlineText").textContent = statusText;
+    document.getElementById("heroSub").textContent = s.connected
+      ? (s.charging ? "正在充电" : (s.asleep ? "保留上次读数" : (theme.low ? "电量偏低，建议充电" : "电量状态良好")))
+      : "请检查接收器";
+
+    document.getElementById("voltVal").textContent = s.voltage_mv ? `${(s.voltage_mv / 1000).toFixed(2)} V` : "-- V";
+    document.getElementById("modeVal").textContent = modeText;
+    document.getElementById("syncTime").textContent = s.updated_str ? `更新于 ${s.updated_str}` : "等待读取...";
+
+    const arc = document.getElementById("ringArc");
+    arc.style.stroke = theme.grad;
+    const pctNum = (s.connected && s.percent !== null) ? Math.max(0, Math.min(100, s.percent)) : 0;
+    arc.style.strokeDashoffset = (RING_CIRC * (1 - pctNum / 100)).toFixed(2);
+
+    document.getElementById("swLockPos").classList.toggle("on", Boolean(s.lock_position));
+    document.getElementById("topBar").classList.toggle("draggable", !Boolean(s.lock_position));
+    document.getElementById("swTopmost").classList.toggle("on", Boolean(s.topmost));
+    document.getElementById("swAutostart").classList.toggle("on", Boolean(s.autostart));
+
+    const alertOn = Number(s.low_battery_threshold) > 0;
+    document.getElementById("swLowAlert").classList.toggle("on", alertOn);
+    document.getElementById("threshRow").classList.toggle("disabled", !alertOn);
+
+    const activeThresh = alertOn ? Number(s.low_battery_threshold) : lastNonZeroThresh;
+    const tIdx = Math.max(0, THRESH_LIST.indexOf(activeThresh));
+    document.getElementById("threshThumb").style.transform = `translateX(${tIdx * 100}%)`;
+    document.querySelectorAll("#threshSeg .seg-opt").forEach((b) => {
+      b.classList.toggle("active", Number(b.dataset.val) === activeThresh);
+    });
+  }
+
+  function showToast(msg) {
+    document.getElementById("alertMsg").textContent = msg;
+    const el = document.getElementById("alertBanner");
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 9000);
+  }
+
+  function hideToast() {
+    document.getElementById("alertBanner").classList.remove("show");
+    clearTimeout(toastTimer);
+  }
+
+  function refreshNow() {
+    const btn = document.getElementById("refreshBtn");
+    btn.classList.add("spinning");
+    setTimeout(() => btn.classList.remove("spinning"), 750);
+    window.pywebview?.api?.refresh_now();
+  }
+
+  function minimizeWin() { window.pywebview?.api?.minimize_window(); }
+  function hideToTray() { window.pywebview?.api?.hide_to_tray(); }
+  function toggleLockPos() { const n = !appState.lock_position; applyState({ lock_position: n }); window.pywebview?.api?.set_lock_position(n); }
+  function toggleTopmost() { const n = !appState.topmost; applyState({ topmost: n }); window.pywebview?.api?.set_topmost(n); }
+  function toggleAutostart() { const n = !appState.autostart; applyState({ autostart: n }); window.pywebview?.api?.set_autostart(n); }
+  function toggleLowAlert() {
+    const nextVal = Number(appState.low_battery_threshold) > 0 ? 0 : lastNonZeroThresh;
+    applyState({ low_battery_threshold: nextVal });
+    window.pywebview?.api?.set_threshold(nextVal);
+  }
+  function setThreshold(val) {
+    lastNonZeroThresh = val;
+    applyState({ low_battery_threshold: val });
+    window.pywebview?.api?.set_threshold(val);
+  }
+  function testToast() { window.pywebview?.api?.test_low_battery(); }
+  function quitApp() { window.pywebview?.api?.quit_app(); }
+
+  window.addEventListener("pywebviewready", () => {
+    window.pywebview.api.get_initial_state().then(applyState);
+  });
+</script>
+</body>
+</html>
