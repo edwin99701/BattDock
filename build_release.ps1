@@ -1,4 +1,4 @@
-﻿# 一键可重复构建 Windows 独立发布包脚本（供本地发布与后续 GitHub Releases 使用）
+﻿# BattDock 一键可重复构建与 Release 打包脚本（含旧版 VGNMouseBattery 平滑升级桥接包与 SHA256SUMS.txt）
 param(
     [string]$PythonExe = ""
 )
@@ -7,9 +7,8 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DistTmp = Join-Path $Root "build_dist"
 $WorkTmp = Join-Path $Root "build_tmp"
-$ReleaseDir = Join-Path $Root "release\VGNMouseBattery"
-$UninstallSrc = Join-Path $ReleaseDir "卸载程序.bat"
-$UninstallBackup = Join-Path $WorkTmp "卸载程序.bat.bak"
+$ReleaseDir = Join-Path $Root "release\BattDock"
+$LegacyReleaseDir = Join-Path $Root "release\VGNMouseBattery"
 
 if ([string]::IsNullOrWhiteSpace($PythonExe) -or !(Test-Path $PythonExe)) {
     $DefaultPy = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"
@@ -20,24 +19,27 @@ if ([string]::IsNullOrWhiteSpace($PythonExe) -or !(Test-Path $PythonExe)) {
     }
 }
 
-Write-Host "[1/4] 运行全部自动化单元测试..."
+$AppVersion = (& $PythonExe -c "import sys; sys.path.insert(0, r'$Root'); import brand; print(brand.APP_VERSION)").Trim()
+Write-Host "=== 构建 BattDock v$AppVersion ==="
+
+Write-Host "[1/6] 运行全部自动化单元测试..."
 & $PythonExe -m unittest discover -s (Join-Path $Root "tests") -v
 if ($LASTEXITCODE -ne 0) { throw "单元测试未通过，已中止打包。" }
 
 New-Item -ItemType Directory -Force -Path $WorkTmp | Out-Null
-if (Test-Path $UninstallSrc) {
-    Copy-Item -Force $UninstallSrc $UninstallBackup
-}
 
-Write-Host "[2/4] 使用 PyInstaller 构建独立目录版..."
+Write-Host "[2/6] 使用 PyInstaller 构建 BattDock.exe（含品牌图标与 Windows 版本属性）..."
 & $PythonExe -m PyInstaller --noconfirm --clean --onedir --windowed `
-    --name VGNMouseBattery `
+    --name BattDock `
     --icon (Join-Path $Root "assets\app_icon.ico") `
+    --version-file (Join-Path $Root "version_info.txt") `
     --add-data ((Join-Path $Root "ui") + ";ui") `
     --add-data ((Join-Path $Root "assets") + ";assets") `
     --add-data ((Join-Path $Root "SUPPORTED_DEVICES.md") + ";.") `
     --add-data ((Join-Path $Root "THIRD_PARTY_LICENSES.md") + ";.") `
     --add-data ((Join-Path $Root "CHANGELOG.md") + ";.") `
+    --hidden-import brand `
+    --hidden-import updater `
     --hidden-import pystray._win32 `
     --hidden-import floating_widget `
     --hidden-import providers `
@@ -50,21 +52,107 @@ Write-Host "[2/4] 使用 PyInstaller 构建独立目录版..."
     --specpath $WorkTmp `
     (Join-Path $Root "mouse_battery_app.py")
 
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller 打包失败。" }
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller 构建 BattDock 失败。" }
 
-Write-Host "[3/4] 停止已有进程并部署到 release\VGNMouseBattery（保留卸载脚本）..."
-Get-Process -Name "VGNMouseBattery" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Write-Host "[3/6] 构建旧版 v2.2.0 升级迁移桥接器（VGNMouseBattery.exe）..."
+$BridgeDist = Join-Path $WorkTmp "bridge_dist"
+$BridgeWork = Join-Path $WorkTmp "bridge_work"
+& $PythonExe -m PyInstaller --noconfirm --clean --onefile --windowed `
+    --name VGNMouseBattery `
+    --icon (Join-Path $Root "assets\app_icon.ico") `
+    --version-file (Join-Path $Root "version_info.txt") `
+    --distpath $BridgeDist `
+    --workpath $BridgeWork `
+    --specpath $BridgeWork `
+    (Join-Path $Root "legacy_shim.py")
+
+if ($LASTEXITCODE -ne 0) { throw "构建旧版迁移桥接器失败。" }
+
+Write-Host "[4/6] 生成卸载脚本与快捷方式脚本..."
+$BuiltAppDir = Join-Path $DistTmp "BattDock"
+
+$UninstallBat = @"
+@echo off
+chcp 65001 >nul
+title 卸载 BattDock
+echo 正在停止 BattDock 运行进程...
+taskkill /F /IM BattDock.exe >nul 2>&1
+taskkill /F /IM VGNMouseBattery.exe >nul 2>&1
+echo 正在清理开机自启项...
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "BattDock" /f >nul 2>&1
+reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "VGNMouseBattery" /f >nul 2>&1
+echo 正在清理桌面与开始菜单快捷方式...
+del /F /Q "%USERPROFILE%\Desktop\BattDock.lnk" >nul 2>&1
+del /F /Q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\BattDock.lnk" >nul 2>&1
+echo.
+set /p DELCFG=是否同时删除个人配置文件（%LOCALAPPDATA%\BattDock）？[y/N]: 
+if /I "%DELCFG%"=="y" (
+    rmdir /S /Q "%LOCALAPPDATA%\BattDock" >nul 2>&1
+    echo 已删除个人配置文件。
+)
+echo.
+echo BattDock 自启项与快捷方式已清理完毕，您现在可以直接删除本程序文件夹。
+pause
+"@
+Set-Content -Path (Join-Path $BuiltAppDir "卸载BattDock.bat") -Value $UninstallBat -Encoding UTF8
+
+$ShortcutBat = @"
+@echo off
+chcp 65001 >nul
+title 创建 BattDock 快捷方式
+powershell -NoProfile -ExecutionPolicy Bypass -Command "`$ws = New-Object -ComObject WScript.Shell; `$exe = Join-Path '%~dp0' 'BattDock.exe'; `$ico = Join-Path '%~dp0' '_internal\assets\app_icon.ico'; foreach (`$dst in @((Join-Path ([Environment]::GetFolderPath('Desktop')) 'BattDock.lnk'), (Join-Path ([Environment]::GetFolderPath('Programs')) 'BattDock.lnk'))) { `$s = `$ws.CreateShortcut(`$dst); `$s.TargetPath = `$exe; `$s.WorkingDirectory = '%~dp0'; if (Test-Path `$ico) { `$s.IconLocation = `$ico }; `$s.Description = 'BattDock - 轻量化 Windows 无线外设电量管理工具'; `$s.Save() }"
+echo 已在桌面与开始菜单创建 BattDock 快捷方式！
+pause
+"@
+Set-Content -Path (Join-Path $BuiltAppDir "创建桌面与开始菜单快捷方式.bat") -Value $ShortcutBat -Encoding UTF8
+
+Write-Host "[5/6] 部署到 release\BattDock 并打包正式发布产物..."
+Get-Process -Name "BattDock","VGNMouseBattery" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 600
-if (Test-Path $UninstallBackup) {
-    Copy-Item -Force $UninstallBackup (Join-Path $DistTmp "VGNMouseBattery\卸载程序.bat")
-}
 if (Test-Path $ReleaseDir) {
     Remove-Item -Recurse -Force $ReleaseDir
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReleaseDir) | Out-Null
-Move-Item -Force (Join-Path $DistTmp "VGNMouseBattery") $ReleaseDir
+Move-Item -Force $BuiltAppDir $ReleaseDir
 
-Write-Host "[4/4] 清理构建临时目录..."
+$ReleaseAssetsDir = Join-Path $Root "release\assets_v$AppVersion"
+if (Test-Path $ReleaseAssetsDir) { Remove-Item -Recurse -Force $ReleaseAssetsDir }
+New-Item -ItemType Directory -Force -Path $ReleaseAssetsDir | Out-Null
+
+$PortableZip = Join-Path $ReleaseAssetsDir "BattDock-v$AppVersion-Windows-x64-Portable.zip"
+$BridgeZip = Join-Path $ReleaseAssetsDir "VGNMouseBattery-v$AppVersion-win64-UpgradeBridge.zip"
+$BridgeExe = Join-Path $BridgeDist "VGNMouseBattery.exe"
+
+& $PythonExe -c "
+import hashlib, zipfile
+from pathlib import Path
+rel = Path(r'$ReleaseDir')
+pzip = Path(r'$PortableZip')
+bzip = Path(r'$BridgeZip')
+bexe = Path(r'$BridgeExe')
+
+with zipfile.ZipFile(pzip, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    for f in sorted(rel.rglob('*')):
+        if f.is_file():
+            zf.write(f, 'BattDock/' + f.relative_to(rel).as_posix())
+
+with zipfile.ZipFile(bzip, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    for f in sorted(rel.rglob('*')):
+        if f.is_file():
+            zf.write(f, 'BattDock/' + f.relative_to(rel).as_posix())
+    zf.write(bexe, 'BattDock/VGNMouseBattery.exe')
+
+sums = []
+for fp in (pzip, bzip):
+    h = hashlib.sha256(fp.read_bytes()).hexdigest()
+    sums.append(f'{h}  {fp.name}')
+(pzip.parent / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n', encoding='utf-8')
+print('ASSETS_OK:', pzip.name, round(pzip.stat().st_size/1048576, 2), 'MB |', bzip.name, round(bzip.stat().st_size/1048576, 2), 'MB')
+"
+if ($LASTEXITCODE -ne 0) { throw "打包发布产物 ZIP 失败。" }
+
+Write-Host "[6/6] 清理构建临时目录..."
 Remove-Item -Recurse -Force $DistTmp, $WorkTmp
 
-Write-Host "构建完成：$ReleaseDir\VGNMouseBattery.exe"
+Write-Host "构建完成：$ReleaseDir\BattDock.exe"
+Write-Host "发布产物目录：$ReleaseAssetsDir"

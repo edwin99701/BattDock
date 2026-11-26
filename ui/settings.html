@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>设置</title>
+<title>BattDock 设置</title>
 <link rel="stylesheet" href="./common.css" />
 <style>
   .settings-layout {
@@ -332,6 +332,9 @@
     flex-shrink: 0;
     overflow: hidden;
   }
+  :root[data-theme="dark"] .about-logo {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+  }
   .about-logo img {
     width: 100%;
     height: 100%;
@@ -339,7 +342,7 @@
     display: block;
   }
   .about-meta { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
-  .about-name { font-size: 16px; font-weight: 700; line-height: 1.25; color: var(--text-primary); }
+  .about-name { font-size: 17px; font-weight: 700; line-height: 1.25; color: var(--text-primary); letter-spacing: -0.01em; }
   .about-ver { font-size: 13px; line-height: 1.25; color: var(--text-secondary); }
   .about-actions { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
@@ -1034,15 +1037,15 @@
           <div class="card">
             <div class="about-hero">
               <div class="about-logo">
-                <img src="../assets/app_logo.png" alt="外设电量监控" />
+                <img src="../assets/app_logo.png" alt="BattDock" />
               </div>
               <div class="about-meta">
-                <div class="about-name">外设电量监控</div>
+                <div class="about-name" id="aboutAppName">BattDock</div>
                 <div class="about-ver">版本 <span id="aboutVer"></span></div>
               </div>
             </div>
             <div class="row">
-              <div class="row-text"><span class="row-label">GitHub 开源仓库</span><span class="row-hint">edwin99701/wireless-peripheral-battery-monitor（MIT 开源）</span></div>
+              <div class="row-text"><span class="row-label">GitHub 项目仓库</span><span class="row-hint">edwin99701/wireless-peripheral-battery-monitor（MIT 开源）</span></div>
               <div class="about-actions">
                 <button class="btn btn-sm" onclick="openRepoUrl()">打开仓库</button>
                 <button class="btn btn-sm" onclick="window.pywebview?.api?.open_project_folder()">本地目录</button>
@@ -1124,119 +1127,124 @@
   let toastTimer = null;
   let currentPageId = "page-general";
 
-  // 独立品牌支持目录（仅包含已实际实现协议适配的型号；面向用户隐藏测试状态，底层数据库与文档保留真实状态）
+  // 独立品牌支持目录（仅包含已实际实现协议适配的型号；统一采用官方规范型号名与简洁中文连接方式）
   const BRAND_CATALOG = [
     {
       brand: "VGN",
       items: [
-        { name: "VGN Dragonfly F2 Pro Max", kind: "mouse", conn: "2.4GHz / 有线" },
-        { name: "VGN Dragonfly F2 Master+", kind: "mouse", conn: "2.4GHz" },
-        { name: "VGN Dragonfly F1 Pro / MOBA", kind: "mouse", conn: "2.4GHz / 有线" },
-        { name: "VGN Dragonfly 4K", kind: "mouse", conn: "2.4GHz" },
+        { name: "VGN Dragonfly F2 Pro Max", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "VGN Dragonfly F2 Master+", kind: "mouse", conn: "2.4GHz 无线连接" },
+        { name: "VGN Dragonfly F1 Pro / MOBA", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "VGN Dragonfly 4K", kind: "mouse", conn: "2.4GHz 无线连接" },
       ],
     },
     {
       brand: "VXE",
       items: [
-        { name: "VXE R1 Pro Max", kind: "mouse", conn: "2.4GHz / 有线" },
-        { name: "VXE R1 SE+", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "VXE R1 Pro Max", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "VXE R1 SE+", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "VXE MAD R / MAD R Major+", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
       ],
     },
     {
       brand: "ATK",
       items: [
-        { name: "ATK F1 / X1 系列（CompX 协议）", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "ATK F1 Ultimate / A9 Ultimate", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
       ],
     },
     {
       brand: "MCHOSE 迈从",
       items: [
-        { name: "MCHOSE A5 / G3 / A7 / L7 / K7 系列", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "MCHOSE A7 V2 Pro / Pro+ / Ultra / Ultra+", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "MCHOSE L7 系列", kind: "mouse", conn: "2.4GHz 无线连接" },
       ],
     },
     {
       brand: "LAMZU",
       items: [
-        { name: "LAMZU 系列无线鼠标（CompX 协议）", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "LAMZU Maya / Thorn / Atlantis Mini 4K / Atlantis OG V2", kind: "mouse", conn: "2.4GHz 无线连接" },
       ],
     },
     {
       brand: "Logitech 罗技",
       items: [
-        { name: "G PRO X SUPERLIGHT / SUPERLIGHT 2", kind: "mouse", conn: "LIGHTSPEED / 有线" },
-        { name: "G502 / G304 / G903 无线系列", kind: "mouse", conn: "LIGHTSPEED / 有线" },
-        { name: "MX Master / MX Anywhere 系列", kind: "mouse", conn: "Bolt / Unifying / 蓝牙" },
-        { name: "MX Keys / 无线 HID++ 键盘系列", kind: "keyboard", conn: "Bolt / Unifying / 蓝牙" },
-        { name: "G533 / G535 / G633 / G733 / G935 / G PRO X", kind: "headset", conn: "2.4GHz" },
+        { name: "Logitech G Pro 2 Lightspeed", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Logitech G Pro X Superlight 2", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Logitech G Pro X Superlight / G Pro Wireless", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Logitech G502 / G304 / G305 / G903 无线系列", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Logitech MX Master / MX Anywhere 系列", kind: "mouse", conn: "2.4GHz 无线连接 / 蓝牙连接" },
+        { name: "Logitech MX Keys / MX Mechanical 系列", kind: "keyboard", conn: "2.4GHz 无线连接 / 蓝牙连接" },
+        { name: "Logitech G533 / G535 / G733 / G935 / G Pro X Wireless / G Pro X 2 Lightspeed", kind: "headset", conn: "2.4GHz 无线连接" },
       ],
     },
     {
       brand: "Razer 雷蛇",
       items: [
-        { name: "Viper V3 Pro / V2 Pro / Ultimate", kind: "mouse", conn: "HyperSpeed / 有线" },
-        { name: "DeathAdder V3 Pro / V2 Pro", kind: "mouse", conn: "HyperSpeed / 有线" },
-        { name: "Basilisk V3 Pro / Ultimate", kind: "mouse", conn: "HyperSpeed / 有线" },
-        { name: "Orochi V2 / Naga Pro", kind: "mouse", conn: "HyperSpeed / 蓝牙" },
-        { name: "BlackWidow V3 Pro / DeathStalker V2 Pro", kind: "keyboard", conn: "HyperSpeed / 有线" },
+        { name: "Razer Viper V3 Pro / V2 Pro / Ultimate", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Razer DeathAdder V3 Pro / V2 Pro / V3 HyperSpeed", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Razer Basilisk V3 Pro / Ultimate", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Razer Orochi V2 / Naga Pro / Cobra Pro", kind: "mouse", conn: "2.4GHz 无线连接 / 蓝牙连接" },
+        { name: "Razer BlackWidow V3 Pro / DeathStalker V2 Pro", kind: "keyboard", conn: "2.4GHz 无线连接 / USB 有线连接" },
       ],
     },
     {
       brand: "SteelSeries 赛睿",
       items: [
-        { name: "Aerox 3 / 5 / 9 Wireless（含 Gen 2）", kind: "mouse", conn: "2.4GHz / 有线" },
-        { name: "Prime Wireless / Rival 3 / 650 Wireless", kind: "mouse", conn: "2.4GHz / 有线" },
-        { name: "Arctis Nova Pro / Nova 7 / Nova 5 Wireless", kind: "headset", conn: "2.4GHz / 基站" },
-        { name: "Arctis 7 / 7+ / 9 Wireless", kind: "headset", conn: "2.4GHz" },
-        { name: "Arctis GameBuds", kind: "headset", conn: "2.4GHz" },
+        { name: "SteelSeries Aerox 3 / 5 / 9 Wireless（含 Gen 2）", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "SteelSeries Prime Wireless / Rival 3 / 650 Wireless", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "SteelSeries Arctis Nova Pro / Nova 7 / Nova 5 Wireless", kind: "headset", conn: "2.4GHz 无线连接" },
+        { name: "SteelSeries Arctis 7 / 7+ / 9 Wireless", kind: "headset", conn: "2.4GHz 无线连接" },
+        { name: "SteelSeries Arctis GameBuds", kind: "headset", conn: "2.4GHz 无线连接" },
       ],
     },
     {
       brand: "Corsair 海盗船",
       items: [
-        { name: "SLIPSTREAM 系列无线鼠标（Dark Core / M75 / Sabre 等）", kind: "mouse", conn: "SLIPSTREAM / 有线" },
-        { name: "SLIPSTREAM 系列无线键盘（K57 / K65 / K70 等）", kind: "keyboard", conn: "SLIPSTREAM / 有线" },
-        { name: "Void / HS70 / HS80 / Virtuoso 无线耳机", kind: "headset", conn: "2.4GHz / 有线" },
+        { name: "Corsair Dark Core RGB Pro / M75 / Sabre RGB Pro Wireless", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Corsair K57 / K65 Plus / K70 Pro Mini / K100 Air Wireless", kind: "keyboard", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "Corsair Virtuoso RGB Wireless / Void / HS70 / HS80 系列", kind: "headset", conn: "2.4GHz 无线连接 / USB 有线连接" },
       ],
     },
     {
       brand: "HyperX",
       items: [
-        { name: "Cloud Alpha / Cloud II / Cloud III / II Core Wireless", kind: "headset", conn: "2.4GHz" },
-        { name: "Cloud Stinger 2 Wireless", kind: "headset", conn: "2.4GHz" },
-        { name: "Pulsefire Haste 2 / Haste / Dart Wireless", kind: "mouse", conn: "2.4GHz / 有线" },
+        { name: "HyperX Cloud Alpha / Cloud II / Cloud III / Cloud II Core Wireless", kind: "headset", conn: "2.4GHz 无线连接" },
+        { name: "HyperX Cloud Stinger 2 Wireless", kind: "headset", conn: "2.4GHz 无线连接" },
+        { name: "HyperX Pulsefire Haste 2 / Haste / Dart Wireless", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
       ],
     },
     {
       brand: "ASUS ROG",
       items: [
-        { name: "ROG Harpe Ace / Harpe II Ace / Mini / Extreme", kind: "mouse", conn: "2.4GHz / Omni / 有线" },
-        { name: "ROG Keris Wireless / AimPoint / II Ace / II Origin", kind: "mouse", conn: "2.4GHz / Omni / 有线" },
-        { name: "ROG Gladius III / AimPoint / Chakram X / Spatha X / TUF M4", kind: "mouse", conn: "2.4GHz / 有线" },
-        { name: "ROG Azoth / Falchion / Strix Scope II 96 Wireless", kind: "keyboard", conn: "2.4GHz / Omni / 有线" },
-        { name: "ROG Pelta / Delta II / Cetra SpeedNova / Strix Go 2.4", kind: "headset", conn: "2.4GHz" },
+        { name: "ROG Harpe Ace Aim Lab / Harpe II Ace / Mini / Extreme", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "ROG Keris Wireless / AimPoint / II Ace / II Origin", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "ROG Gladius III / AimPoint / Chakram X / Spatha X / TUF Gaming M4 Wireless", kind: "mouse", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "ROG Azoth / Falchion / Strix Scope II 96 Wireless", kind: "keyboard", conn: "2.4GHz 无线连接 / USB 有线连接" },
+        { name: "ASUS ROG Pelta / Delta II / Cetra SpeedNova / Strix Go 2.4", kind: "headset", conn: "2.4GHz 无线连接" },
       ],
     },
     {
       brand: "Sony 索尼",
       items: [
-        { name: "INZONE H5 / INZONE H9 II", kind: "headset", conn: "2.4GHz" },
-        { name: "INZONE Buds（支持左耳/右耳/充电盒独立电量）", kind: "headset", conn: "2.4GHz" },
+        { name: "Sony INZONE H5 / INZONE H9 II", kind: "headset", conn: "2.4GHz 无线连接" },
+        { name: "Sony INZONE Buds（支持左耳/右耳/充电盒独立电量）", kind: "headset", conn: "2.4GHz 无线连接" },
+        { name: "Sony WH-1000XM5 / WH-1000XM4 / WF-1000XM5（标准蓝牙电量）", kind: "headset", conn: "蓝牙连接" },
       ],
     },
     {
       brand: "Apple / Beats",
       items: [
-        { name: "AirPods 1 / 2 / 3 / 4（含主动降噪版）", kind: "headset", conn: "蓝牙" },
-        { name: "AirPods Pro 1 / 2 / 3（支持左耳/右耳/充电盒独立电量）", kind: "headset", conn: "蓝牙" },
-        { name: "AirPods Max / Beats 无线耳机系列", kind: "headset", conn: "蓝牙" },
+        { name: "Apple AirPods 1 / 2 / 3 / 4（含主动降噪版）", kind: "headset", conn: "蓝牙连接" },
+        { name: "Apple AirPods Pro 1 / 2 / 3（支持左耳/右耳/充电盒独立电量）", kind: "headset", conn: "蓝牙连接" },
+        { name: "Apple AirPods Max / Beats 无线耳机系列", kind: "headset", conn: "蓝牙连接" },
       ],
     },
     {
       brand: "通用蓝牙外设",
       items: [
-        { name: "支持 Windows 标准蓝牙电量服务的无线鼠标", kind: "mouse", conn: "蓝牙" },
-        { name: "支持 Windows 标准蓝牙电量服务的无线耳机", kind: "headset", conn: "蓝牙" },
-        { name: "支持 Windows 标准蓝牙电量服务的无线键盘", kind: "keyboard", conn: "蓝牙" },
+        { name: "支持 Windows 标准蓝牙电量服务的无线鼠标", kind: "mouse", conn: "蓝牙连接" },
+        { name: "支持 Windows 标准蓝牙电量服务的无线耳机", kind: "headset", conn: "蓝牙连接" },
+        { name: "支持 Windows 标准蓝牙电量服务的无线键盘", kind: "keyboard", conn: "蓝牙连接" },
       ],
     },
   ];
@@ -1485,7 +1493,7 @@
                 <div class="model-row">
                   <div class="model-left">
                     <span class="model-kind-ico">${KIND_ICONS[it.kind] || KIND_ICONS.mouse}</span>
-                    <span class="model-name">${esc(it.name)}</span>
+                    <span class="model-name" title="${esc(it.name)}">${esc(it.name)}</span>
                   </div>
                   <div class="model-meta">
                     <span class="neutral-pill">${KIND_LABELS[it.kind] || "外设"}</span>
@@ -1554,9 +1562,9 @@
         <div class="dev-mgr-card">
           <div class="dev-mgr-top">
             <div>
-              <div style="font-weight:600;font-size:13.5px">${esc(d.display_name)} <span style="font-weight:400;font-size:12px;color:var(--text-muted)">(${esc(d.original_name)})</span></div>
+              <div style="font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px" title="${esc(d.display_name)}">${esc(d.display_name)}</div>
               <div class="dev-mgr-badges" style="margin-top:4px">
-                <span class="mini-badge">${esc(d.connection_label)}</span>
+                ${d.subtitle ? `<span class="mini-badge">${esc(d.subtitle)}</span>` : ""}
                 <span class="mini-badge">协议：${esc(d.provider_name || "HID")}</span>
               </div>
             </div>
@@ -1653,6 +1661,7 @@
     setCustomSelectOptions("cs-fltDev", devOpts, flt.device_id || "auto");
 
     renderDeviceManager(state.all_devices || []);
+    if (state.app_name) document.getElementById("aboutAppName").textContent = state.app_name;
     document.getElementById("aboutVer").textContent = state.app_version ? `v${state.app_version}` : "";
     setSw("sw-autoUpdate", cfg.auto_check_updates !== false);
     renderUpdateSection(state.update_state || {});

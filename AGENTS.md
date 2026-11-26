@@ -25,7 +25,7 @@
    - **开机静默自启**：开机自启默认通过 `--background` 参数静默驻留系统托盘，**严禁弹出任何窗口**。
    - **低电量迷你提醒弹窗**：使用原生 WinForms 纯色无边框极速弹窗（无毛玻璃、无描边、`296×68`），最高置顶且不抢游戏/全屏应用焦点，停留 **5 秒**自动关闭；保留托盘右键「测试低电量弹窗」。
    - **三级与自定义低电量提醒**：每个设备独立配置（优先于全局），默认 `30% / 20% / 10%` 三级，带滞回防抖、可选重复提醒间隔、提示音及 Windows 系统通知。
-3. **交付物与发布准备要求**：修改完核心功能后，使用可重复打包脚本 `build_release.ps1` 同步更新 `release\VGNMouseBattery\VGNMouseBattery.exe`（保留 `卸载程序.bat`）；GitHub 现阶段优先私有仓库筹备，未经许可不得公开或上传隐私/凭据。
+3. **交付物与发布规范**：软件正式品牌名为 `BattDock`（集中定义于 `brand.py`，主程序 `BattDock.exe`）；修改核心功能后使用 `build_release.ps1` 构建 `release\BattDock\BattDock.exe`、便携 ZIP 与 `SHA256SUMS.txt`；GitHub 仓库 `edwin99701/wireless-peripheral-battery-monitor` 已公开，保留原仓库路径以确保旧版在线更新兼容，禁止上传任何 Token、隐私路径或敏感日志。
 
 ---
 

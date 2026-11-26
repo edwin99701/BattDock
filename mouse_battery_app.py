@@ -34,12 +34,26 @@ from app_config import (
     get_floating_config,
     is_autostart_enabled,
     load_config,
+    migrate_legacy_autostart,
     normalize_tiers,
     resolve_effective_animations,
     resolve_effective_theme,
     save_config,
     set_autostart,
     set_device_pref,
+)
+from brand import (
+    APP_ALERT_TITLE,
+    APP_MAIN_TITLE,
+    APP_NAME,
+    APP_SETTINGS_TITLE,
+    APP_TRAY_NAME,
+    APP_USER_MODEL_ID,
+    LEGACY_EXE_NAME,
+    LEGACY_MUTEX_NAME,
+    LEGACY_SHOW_EVENT_NAME,
+    MUTEX_NAME,
+    SHOW_EVENT_NAME,
 )
 from updater import (
     GITHUB_REPO_URL,
@@ -48,6 +62,7 @@ from updater import (
     download_update_asset,
     extract_and_verify_update,
     launch_windows_updater,
+    verify_downloaded_sha256,
 )
 from floating_widget import (
     DesktopFloatingWidget,
@@ -67,8 +82,13 @@ from providers import (
     STATUS_UNSUPPORTED,
     STATUS_VERIFIED,
 )
+from providers.device_naming import format_connection_mode_cn, format_device_subtitle
 
 if sys.platform == "win32":
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except Exception:
@@ -81,13 +101,13 @@ UI_MAIN_HTML = RESOURCE_DIR / "ui" / "index.html"
 UI_SETTINGS_HTML = RESOURCE_DIR / "ui" / "settings.html"
 APP_ICON_ICO = RESOURCE_DIR / "assets" / "app_icon.ico"
 
-WINDOW_TITLE = "外设电量"
-SETTINGS_WINDOW_TITLE = "外设电量 - 设置"
-ALERT_WINDOW_TITLE = "外设电量低提醒"
+WINDOW_TITLE = APP_MAIN_TITLE
+SETTINGS_WINDOW_TITLE = APP_SETTINGS_TITLE
+ALERT_WINDOW_TITLE = APP_ALERT_TITLE
 
 MAIN_DEFAULT_SIZE = (760, 480)
 SETTINGS_DEFAULT_SIZE = (840, 742)
-ALERT_SIZE = (296, 68)
+ALERT_SIZE = (324, 68)
 ALERT_DURATION_SEC = 5.0
 
 
@@ -512,16 +532,8 @@ def _kind_cn(kind: str) -> str:
 
 
 def _connection_label(dev: DeviceBattery) -> str:
-    mode = (dev.connection_mode or "").strip()
-    if mode in ("2.4G", "休眠", "检测中", ""):
-        if dev.brand == "Logitech":
-            return "LIGHTSPEED 无线连接"
-        return "2.4GHz 无线连接"
-    if mode == "有线":
-        return "USB 有线连接"
-    if "蓝牙" in mode:
-        return "蓝牙连接"
-    return mode
+    """规范化中文连接方式（绝不展示品牌技术词，无法确认则返回空字符串）。"""
+    return format_connection_mode_cn(dev.connection_mode)
 
 
 def _support_label(status: str) -> str:
@@ -624,6 +636,9 @@ class MouseBatteryApp:
         # 软件在线更新状态（线程安全，推送给主窗口与设置窗口）
         self._update_lock = threading.Lock()
         self._update_cancel = threading.Event()
+        self._last_update_check_mono: float = 0.0
+        self._last_tray_icon_key: Optional[tuple[Any, ...]] = None
+        self._last_tray_title: str = ""
         self._update_state: dict[str, Any] = {
             "status": "idle",  # idle | checking | up_to_date | available | downloading | installing | error
             "current_version": APP_VERSION,
@@ -634,6 +649,7 @@ class MouseBatteryApp:
             "asset_name": "",
             "asset_url": "",
             "asset_size": 0,
+            "sha256_url": "",
             "progress": 0,
             "downloaded_mb": 0.0,
             "total_mb": 0.0,
@@ -671,8 +687,18 @@ class MouseBatteryApp:
             display_name = pref.alias or dev.name
             d = dev.to_dict()
             d["original_name"] = dev.name
+            d["raw_name"] = dev.raw_name or dev.name
             d["display_name"] = display_name
             d["connection_label"] = _connection_label(dev)
+            d["subtitle"] = format_device_subtitle(
+                connection_mode=dev.connection_mode,
+                connected=dev.connected,
+                online=dev.online,
+                asleep=dev.asleep,
+                charging=dev.charging,
+                full=dev.full,
+                percent=dev.percent,
+            )
             d["support_label"] = _support_label(dev.support_status)
             d["pref"] = asdict(pref)
             d["effective_tiers"] = tiers
@@ -741,6 +767,7 @@ class MouseBatteryApp:
             upd_snapshot = dict(self._update_state)
 
         return {
+            "app_name": APP_NAME,
             "app_version": APP_VERSION,
             "app_author": APP_AUTHOR,
             "effective_theme": self._effective_theme(),
@@ -1231,10 +1258,14 @@ class MouseBatteryApp:
         return snap
 
     def check_updates(self, silent: bool = False) -> dict[str, Any]:
-        """后台异步检查 GitHub Releases 最新版本。"""
+        """后台异步检查 GitHub Releases 最新稳定版本（含轻量防高频请求冷却）。"""
+        now_mono = time.monotonic()
         with self._update_lock:
             if self._update_state["status"] in ("checking", "downloading", "installing"):
                 return dict(self._update_state)
+            if not silent and self._last_update_check_mono > 0 and (now_mono - self._last_update_check_mono) < 5.0 and self._update_state["status"] in ("up_to_date", "available"):
+                return dict(self._update_state)
+            self._last_update_check_mono = now_mono
             if not silent:
                 self._update_state["status"] = "checking"
                 self._update_state["message"] = "正在连接 GitHub 检查最新版本..."
@@ -1268,6 +1299,7 @@ class MouseBatteryApp:
                     asset_name=res.asset_name,
                     asset_url=res.asset_url,
                     asset_size=res.asset_size,
+                    sha256_url=res.sha256_url,
                     progress=0,
                     message=f"发现新版本 v{res.latest_version}",
                     checked_at=now_str,
@@ -1282,6 +1314,7 @@ class MouseBatteryApp:
                     asset_name=res.asset_name,
                     asset_url=res.asset_url,
                     asset_size=res.asset_size,
+                    sha256_url=res.sha256_url,
                     progress=0,
                     message=f"当前已是最新版本（v{APP_VERSION}）",
                     checked_at=now_str,
@@ -1292,13 +1325,15 @@ class MouseBatteryApp:
             return dict(self._update_state)
 
     def download_and_install_update(self) -> dict[str, Any]:
-        """下载最新 Release 压缩包并在打包版模式下执行安全覆盖重启更新。"""
+        """下载最新 Release 压缩包、核对 SHA-256 完整性，并在打包版模式下执行安全覆盖重启更新。"""
         with self._update_lock:
             st = dict(self._update_state)
             if st["status"] in ("downloading", "installing"):
                 return st
             asset_url = str(st.get("asset_url") or "")
+            asset_name = str(st.get("asset_name") or "update.zip")
             asset_size = int(st.get("asset_size") or 0)
+            sha256_url = str(st.get("sha256_url") or "")
             release_url = str(st.get("release_url") or RELEASES_PAGE_URL)
             latest_ver = str(st.get("latest_version") or "")
 
@@ -1318,8 +1353,8 @@ class MouseBatteryApp:
         )
 
         def _worker() -> None:
-            work_root = Path(tempfile.gettempdir()) / f"VGNMouseBatteryUpdate_{os.getpid()}"
-            zip_path = work_root / (st.get("asset_name") or "update.zip")
+            work_root = Path(tempfile.gettempdir()) / f"BattDockUpdate_{os.getpid()}"
+            zip_path = work_root / asset_name
             extract_dir = work_root / "extracted"
             last_push = [0.0, -1]
 
@@ -1348,7 +1383,12 @@ class MouseBatteryApp:
                     on_progress=_on_prog,
                     cancel_event=self._update_cancel,
                 )
-                self._set_update_state(status="installing", progress=100, message="正在校验并解压更新包...")
+                if sha256_url:
+                    self._set_update_state(status="installing", progress=100, message="正在校验更新包 SHA-256 完整性...")
+                    sha_ok = verify_downloaded_sha256(zip_path, asset_name, sha256_url)
+                    if sha_ok is False:
+                        raise ValueError("更新包 SHA-256 校验不匹配，已中止安装")
+                self._set_update_state(status="installing", progress=100, message="正在解压并检查更新包...")
                 staged_dir = extract_and_verify_update(zip_path, extract_dir)
                 self._set_update_state(status="installing", progress=100, message="校验通过，正在重启并应用更新...")
                 launch_windows_updater(
@@ -1569,7 +1609,7 @@ class MouseBatteryApp:
         if self.cfg.windows_notify_enabled and self._tray is not None:
             try:
                 tag = "（测试）" if is_test else ""
-                self._tray.notify(f"{device_name} 剩余电量 {percent}%", f"外设电量偏低{tag}")
+                self._tray.notify(f"{device_name} 剩余电量 {percent}%", f"{APP_NAME} 低电量提醒{tag}")
             except Exception:
                 pass
 
@@ -1644,7 +1684,7 @@ class MouseBatteryApp:
         self._dispatch_alert(pref.alias or dev.name, int(dev.percent or 0), dev.kind, is_test=False)
 
     def _update_tray_visual(self) -> None:
-        """托盘栏始终使用动态矢量电池图标，电量条填充长度与颜色随设备实时电量动态变化。"""
+        """托盘栏始终使用动态矢量电池图标，仅在电量或设备状态实际变化时重绘图标与提示文本。"""
         if self._tray is None:
             return
         try:
@@ -1653,40 +1693,50 @@ class MouseBatteryApp:
             t1 = int(rules[0]["threshold"]) if len(rules) > 0 else 30
             t2 = int(rules[1]["threshold"]) if len(rules) > 1 else 20
             t3 = int(rules[2]["threshold"]) if len(rules) > 2 else 10
-            if td is not None:
+            icon_key = (
+                (td.percent, bool(td.charging), bool(td.connected), t1, t2, t3)
+                if td is not None
+                else (None, False, False, t1, t2, t3)
+            )
+            if icon_key != self._last_tray_icon_key:
+                self._last_tray_icon_key = icon_key
                 self._tray.icon = draw_battery_icon(
                     size=64,
-                    percent=td.percent,
-                    charging=td.charging,
-                    connected=td.connected,
+                    percent=icon_key[0],
+                    charging=icon_key[1],
+                    connected=icon_key[2],
                     low_t1=t1,
                     low_t2=t2,
                     low_t3=t3,
                 )
-            else:
-                self._tray.icon = draw_battery_icon(size=64, percent=None, charging=False, connected=False)
 
             if not self.devices:
-                self._tray.title = "外设电量（未检测到外设）"
+                next_title = f"{APP_NAME}（未检测到外设）"
             else:
                 lines = []
                 for d in self.devices[:3]:
                     pref = get_device_pref(self.cfg, d.device_id)
                     nm = pref.alias or d.name
+                    sub = format_device_subtitle(
+                        d.connection_mode, d.connected, d.online, d.asleep, d.charging, d.full, d.percent
+                    )
                     if d.percent is not None:
-                        st = "已充满" if d.full else ("充电中" if d.charging else ("休眠" if d.asleep else d.connection_mode))
-                        lines.append(f"{nm}: {d.percent}% ({st})")
+                        lines.append(f"{nm}: {d.percent}% ({sub})" if sub else f"{nm}: {d.percent}%")
                     else:
-                        lines.append(f"{nm}: {'休眠' if d.asleep else '未知'}")
+                        lines.append(f"{nm}: — ({sub})" if sub else f"{nm}: —")
                 if len(self.devices) > 3:
                     lines.append(f"…共 {len(self.devices)} 台外设")
-                self._tray.title = "\n".join(lines)[:124]
+                next_title = "\n".join(lines)[:124]
+
+            if next_title != self._last_tray_title:
+                self._last_tray_title = next_title
+                self._tray.title = next_title
         except Exception:
             pass
 
     def _start_tray(self) -> None:
         tray_menu = pystray.Menu(
-            pystray.MenuItem("打开主窗口", lambda _i, _m: self.show_main_window(), default=True),
+            pystray.MenuItem(f"打开 {APP_NAME}", lambda _i, _m: self.show_main_window(), default=True),
             pystray.MenuItem("设置", lambda _i, _m: self.open_settings_window("general")),
             pystray.MenuItem(
                 "检查更新",
@@ -1698,9 +1748,9 @@ class MouseBatteryApp:
             pystray.MenuItem("退出程序", lambda _i, _m: self.quit_app()),
         )
         self._tray = pystray.Icon(
-            "VGNMouseBattery",
+            APP_TRAY_NAME,
             draw_battery_icon(size=64, percent=None, charging=False, connected=False),
-            "外设电量监控",
+            APP_NAME,
             tray_menu,
         )
         threading.Thread(target=self._tray.run, daemon=True).start()
@@ -1739,15 +1789,20 @@ class MouseBatteryApp:
         if sys.platform != "win32":
             return
         k32 = ctypes.windll.kernel32
-        ev = k32.CreateEventW(None, False, False, "Local\\VGNMouseBatteryMonitor_ShowEvent")
-        if not ev:
+        ev_new = k32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
+        ev_old = k32.CreateEventW(None, False, False, LEGACY_SHOW_EVENT_NAME)
+        handles = [h for h in (ev_new, ev_old) if h]
+        if not handles:
             return
+        arr = (wintypes.HANDLE * len(handles))(*handles)
         try:
             while not self._stop_event.is_set():
-                if k32.WaitForSingleObject(wintypes.HANDLE(ev), 500) == 0:
+                res = k32.WaitForMultipleObjects(len(handles), arr, False, 500)
+                if 0 <= res < len(handles):
                     self.show_main_window()
         finally:
-            k32.CloseHandle(wintypes.HANDLE(ev))
+            for h in handles:
+                k32.CloseHandle(wintypes.HANDLE(h))
 
     def run(self) -> None:
         _install_flicker_free_patch()
@@ -1857,43 +1912,79 @@ def _activate_existing_window() -> None:
     if sys.platform != "win32":
         return
     k32 = ctypes.windll.kernel32
-    ev = k32.OpenEventW(0x0002, False, "Local\\VGNMouseBatteryMonitor_ShowEvent")
-    if ev:
-        k32.SetEvent(wintypes.HANDLE(ev))
-        k32.CloseHandle(wintypes.HANDLE(ev))
-        return
+    for ev_name in (SHOW_EVENT_NAME, LEGACY_SHOW_EVENT_NAME):
+        ev = k32.OpenEventW(0x0002, False, ev_name)
+        if ev:
+            k32.SetEvent(wintypes.HANDLE(ev))
+            k32.CloseHandle(wintypes.HANDLE(ev))
+            return
     user32 = ctypes.windll.user32
-    hwnd = user32.FindWindowW(None, WINDOW_TITLE)
-    if hwnd:
-        user32.ShowWindow(wintypes.HWND(hwnd), 9)
-        user32.SetForegroundWindow(wintypes.HWND(hwnd))
+    for title in (WINDOW_TITLE, "外设电量"):
+        hwnd = user32.FindWindowW(None, title)
+        if hwnd:
+            user32.ShowWindow(wintypes.HWND(hwnd), 9)
+            user32.SetForegroundWindow(wintypes.HWND(hwnd))
+            return
 
 
-def _acquire_single_instance() -> Optional[int]:
+def _acquire_single_instance() -> Optional[list[int]]:
+    """同时获取新旧单实例互斥量，确保 BattDock 与旧版 VGNMouseBattery 绝不同时运行。"""
     if sys.platform != "win32":
-        return 1
-    kernel32 = ctypes.windll.kernel32
-    mutex = kernel32.CreateMutexW(None, False, "Local\\VGNMouseBatteryMonitor_SingleInstance")
-    if kernel32.GetLastError() == 183:
-        if mutex:
-            kernel32.CloseHandle(mutex)
-        return None
-    return mutex
+        return [1]
+    k32 = ctypes.windll.kernel32
+    acquired: list[int] = []
+    for name in (MUTEX_NAME, LEGACY_MUTEX_NAME):
+        m = k32.CreateMutexW(None, False, name)
+        if k32.GetLastError() == 183:
+            if m:
+                k32.CloseHandle(m)
+            for h in acquired:
+                k32.CloseHandle(h)
+            return None
+        if m:
+            acquired.append(m)
+    return acquired
+
+
+def _schedule_legacy_cleanup() -> None:
+    """从旧版 VGNMouseBattery 升级迁移后，延迟清理同目录下的临时旧版桥接程序。"""
+    if not IS_FROZEN:
+        return
+    cur_exe = Path(sys.executable).resolve()
+    legacy_exe = cur_exe.with_name(LEGACY_EXE_NAME)
+    if legacy_exe == cur_exe or not legacy_exe.is_file():
+        return
+
+    def _clean() -> None:
+        for _ in range(10):
+            try:
+                if legacy_exe.exists():
+                    legacy_exe.unlink()
+                break
+            except OSError:
+                time.sleep(0.5)
+
+    threading.Timer(2.0, _clean).start()
 
 
 def main() -> None:
     start_hidden = "--background" in sys.argv
-    mutex = _acquire_single_instance()
-    if mutex is None:
+    mutexes = _acquire_single_instance()
+    if mutexes is None:
         if not start_hidden:
             _activate_existing_window()
         return
     try:
+        if IS_FROZEN:
+            migrate_legacy_autostart()
+            if "--cleanup-legacy-exe" in sys.argv:
+                _schedule_legacy_cleanup()
         app = MouseBatteryApp(start_hidden=start_hidden)
         app.run()
     finally:
-        if sys.platform == "win32" and mutex:
-            ctypes.windll.kernel32.CloseHandle(mutex)
+        if sys.platform == "win32":
+            for h in mutexes:
+                ctypes.windll.kernel32.CloseHandle(h)
 
 
 if __name__ == "__main__":

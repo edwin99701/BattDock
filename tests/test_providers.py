@@ -437,35 +437,45 @@ class TestUpdater(unittest.TestCase):
     def test_version_compare(self):
         from updater import is_newer_version, parse_version
 
-        self.assertEqual(parse_version("v2.2.0"), (2, 2, 0))
-        self.assertTrue(is_newer_version("v2.2.0", "2.1.0"))
-        self.assertTrue(is_newer_version("2.10.0", "2.2.0"))
-        self.assertFalse(is_newer_version("v2.2.0", "2.2.0"))
-        self.assertFalse(is_newer_version("2.1.9", "2.2.0"))
-        self.assertFalse(is_newer_version("2.2", "2.2.0"))
+        self.assertEqual(parse_version("v2.3.0"), (2, 3, 0))
+        self.assertTrue(is_newer_version("v2.3.0", "2.2.0"))
+        self.assertTrue(is_newer_version("2.10.0", "2.3.0"))
+        self.assertFalse(is_newer_version("v2.3.0", "2.3.0"))
+        self.assertFalse(is_newer_version("2.2.9", "2.3.0"))
+        self.assertFalse(is_newer_version("2.3", "2.3.0"))
 
-    def test_release_payload_and_asset_selection(self):
-        from updater import parse_github_release_payload
+    def test_release_payload_stable_only_and_asset_selection(self):
+        from updater import parse_github_release_payload, parse_sha256_manifest
 
         payload = {
-            "tag_name": "v2.3.0",
-            "html_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/tag/v2.3.0",
+            "tag_name": "v2.4.0",
+            "draft": False,
+            "prerelease": False,
+            "html_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/tag/v2.4.0",
             "body": "## 更新内容\n- 新增设备支持",
             "published_at": "2026-11-26T04:00:00Z",
             "assets": [
-                {"name": "checksums.txt", "browser_download_url": "https://example.com/checksums.txt", "size": 120},
-                {"name": "VGNMouseBattery-v2.3.0-win64.zip", "browser_download_url": "https://example.com/app.zip", "size": 37000000},
+                {"name": "SHA256SUMS.txt", "browser_download_url": "https://example.com/SHA256SUMS.txt", "size": 120},
+                {"name": "VGNMouseBattery-v2.4.0-win64-UpgradeBridge.zip", "browser_download_url": "https://example.com/bridge.zip", "size": 38000000},
+                {"name": "BattDock-v2.4.0-Windows-x64-Portable.zip", "browser_download_url": "https://example.com/BattDock.zip", "size": 37000000},
             ],
         }
-        res = parse_github_release_payload(payload, "2.2.0")
+        res = parse_github_release_payload(payload, "2.3.0")
         self.assertTrue(res.ok)
         self.assertTrue(res.has_update)
-        self.assertEqual(res.latest_version, "2.3.0")
-        self.assertEqual(res.asset_name, "VGNMouseBattery-v2.3.0-win64.zip")
-        self.assertEqual(res.asset_size, 37000000)
+        self.assertEqual(res.latest_version, "2.4.0")
+        # BattDock 优先选择官方便携包，不误选旧版桥接包
+        self.assertEqual(res.asset_name, "BattDock-v2.4.0-Windows-x64-Portable.zip")
+        self.assertEqual(res.sha256_url, "https://example.com/SHA256SUMS.txt")
 
-        same = parse_github_release_payload(payload, "2.3.0")
-        self.assertFalse(same.has_update)
+        # 预发布版与草稿不得误判为正式更新
+        pre = dict(payload, prerelease=True)
+        self.assertFalse(parse_github_release_payload(pre, "2.3.0").has_update)
+        draft = dict(payload, draft=True)
+        self.assertFalse(parse_github_release_payload(draft, "2.3.0").has_update)
+
+        manifest = parse_sha256_manifest("a" * 64 + "  BattDock-v2.4.0-Windows-x64-Portable.zip\n")
+        self.assertEqual(manifest.get("battdock-v2.4.0-windows-x64-portable.zip"), "a" * 64)
 
     def test_extract_and_verify_zip_security(self):
         import tempfile
@@ -474,13 +484,13 @@ class TestUpdater(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             tpath = Path(tmp)
-            # 1. 合法嵌套目录 ZIP
+            # 1. 合法嵌套目录 ZIP（默认校验 BattDock.exe）
             good_zip = tpath / "good.zip"
             with zipfile.ZipFile(good_zip, "w") as zf:
-                zf.writestr("VGNMouseBattery/VGNMouseBattery.exe", b"MZ-test")
-                zf.writestr("VGNMouseBattery/_internal/dummy.txt", b"ok")
+                zf.writestr("BattDock/BattDock.exe", b"MZ-test")
+                zf.writestr("BattDock/_internal/dummy.txt", b"ok")
             staged = extract_and_verify_update(good_zip, tpath / "out_good")
-            self.assertTrue((staged / "VGNMouseBattery.exe").is_file())
+            self.assertTrue((staged / "BattDock.exe").is_file())
 
             # 2. 路径遍历攻击包必须被拦截
             evil_zip = tpath / "evil.zip"
@@ -495,6 +505,62 @@ class TestUpdater(unittest.TestCase):
                 zf.writestr("readme.txt", b"hello")
             with self.assertRaises(FileNotFoundError):
                 extract_and_verify_update(missing_zip, tpath / "out_missing")
+
+
+class TestBrandAndDeviceNaming(unittest.TestCase):
+    def test_official_device_names_and_model_distinction(self):
+        from providers.device_naming import (
+            format_connection_mode_cn,
+            format_device_subtitle,
+            normalize_device_display_name,
+        )
+
+        # 严格区分 Logitech G Pro 2 Lightspeed 与 Logitech G Pro X Superlight 2
+        self.assertEqual(normalize_device_display_name("PRO 2 LIGHTSPEED", brand="Logitech"), "Logitech G Pro 2 Lightspeed")
+        self.assertEqual(normalize_device_display_name("PRO X SUPERLIGHT 2", brand="Logitech"), "Logitech G Pro X Superlight 2")
+        self.assertNotEqual(
+            normalize_device_display_name("PRO 2 LIGHTSPEED", vid=0x046D, pid=0xC0A4, brand="Logitech"),
+            normalize_device_display_name("PRO X SUPERLIGHT 2", vid=0x046D, pid=0xC09B, brand="Logitech"),
+        )
+        self.assertEqual(normalize_device_display_name("RAZER VIPER V3 PRO", brand="Razer"), "Razer Viper V3 Pro")
+        self.assertEqual(normalize_device_display_name("RAZER DEATHADDER V3 PRO", brand="Razer"), "Razer DeathAdder V3 Pro")
+        self.assertEqual(normalize_device_display_name("RAZER VIPER V3 HYPERSPEED", brand="Razer"), "Razer Viper V3 HyperSpeed")
+        self.assertEqual(normalize_device_display_name("WH-1000XM5", brand="Sony"), "Sony WH-1000XM5")
+        self.assertEqual(normalize_device_display_name("VGN DRAGONFLY F2 PRO MAX", vid=0x3554, pid=0xFB3E, brand="VGN"), "VGN Dragonfly F2 Pro Max")
+        # 保留合理缩写与未知型号不编造
+        self.assertEqual(normalize_device_display_name("JBL Quantum 910"), "JBL Quantum 910")
+        self.assertEqual(normalize_device_display_name("ASUS ROG Azoth"), "ASUS ROG Azoth")
+
+        # 连接方式与副标题规范（不展示品牌技术词、正常连接不写已连接、未知连接留空）
+        self.assertEqual(format_connection_mode_cn("LIGHTSPEED"), "2.4GHz 无线连接")
+        self.assertEqual(format_connection_mode_cn("HyperSpeed"), "2.4GHz 无线连接")
+        self.assertEqual(format_connection_mode_cn("Bluetooth"), "蓝牙连接")
+        self.assertEqual(format_connection_mode_cn("USB Wired"), "USB 有线连接")
+        self.assertEqual(format_connection_mode_cn("wireless"), "无线连接")
+        self.assertEqual(format_connection_mode_cn(""), "")
+        self.assertEqual(format_device_subtitle("2.4G", True, True, False, False, False, 82), "2.4GHz 无线连接")
+        self.assertEqual(format_device_subtitle("2.4G", True, False, True, False, False, None), "2.4GHz 无线连接 · 休眠中")
+        self.assertEqual(format_device_subtitle("Bluetooth", True, True, False, True, False, 65), "蓝牙连接 · 充电中")
+        self.assertEqual(format_device_subtitle("USB Wired", True, True, False, True, True, 100), "USB 有线连接 · 已充满")
+        self.assertEqual(format_device_subtitle("Bluetooth", False, False, False, False, False, None), "蓝牙连接 · 未连接")
+
+    def test_legacy_config_migration_preserves_settings(self):
+        import json
+        import tempfile
+        from app_config import migrate_legacy_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tpath = Path(tmp)
+            legacy_cfg = tpath / "VGNMouseBattery" / "config.json"
+            new_cfg = tpath / "BattDock" / "config.json"
+            legacy_cfg.parent.mkdir(parents=True)
+            legacy_cfg.write_text(json.dumps({"theme": "dark", "poll_interval_sec": 15}), encoding="utf-8")
+
+            self.assertTrue(migrate_legacy_config(target_path=new_cfg, legacy_path=legacy_cfg))
+            self.assertTrue(new_cfg.exists())
+            self.assertEqual(json.loads(new_cfg.read_text(encoding="utf-8"))["theme"], "dark")
+            # 二次调用不覆盖已存在的新配置
+            self.assertFalse(migrate_legacy_config(target_path=new_cfg, legacy_path=legacy_cfg))
 
 
 if __name__ == "__main__":

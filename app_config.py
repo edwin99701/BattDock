@@ -4,32 +4,45 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import winreg
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-APP_VERSION = "2.2.0"
-APP_AUTHOR = "Ed"
+from brand import (
+    APP_NAME,
+    APP_VERSION,
+    CONFIG_DIR_NAME,
+    LEGACY_CONFIG_DIR_NAME,
+    LEGACY_RUN_VALUE_NAME,
+    RUN_REG_PATH,
+    RUN_VALUE_NAME,
+)
+
+APP_AUTHOR = ""
 
 IS_FROZEN = getattr(sys, "frozen", False)
 
 if IS_FROZEN:
     APP_DIR = Path(sys.executable).resolve().parent
     RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
-    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(APP_DIR))) / "VGNMouseBattery"
+    _LOCAL_APP = Path(os.environ.get("LOCALAPPDATA", str(APP_DIR)))
+    DATA_DIR = _LOCAL_APP / CONFIG_DIR_NAME
+    LEGACY_DATA_DIR = _LOCAL_APP / LEGACY_CONFIG_DIR_NAME
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH = DATA_DIR / "config.json"
+    LEGACY_CONFIG_PATH = LEGACY_DATA_DIR / "config.json"
 else:
     APP_DIR = Path(__file__).resolve().parent
     RESOURCE_DIR = APP_DIR
     DATA_DIR = APP_DIR
+    LEGACY_DATA_DIR = APP_DIR
     CONFIG_PATH = APP_DIR / "config.json"
+    LEGACY_CONFIG_PATH = APP_DIR / "config.json"
 
 APP_SCRIPT = APP_DIR / "mouse_battery_app.py"
-RUN_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_VALUE_NAME = "VGNMouseBattery"
 
 DEFAULT_ALERT_TIERS: list[int] = [30, 20, 10]
 
@@ -247,7 +260,25 @@ def resolve_effective_animations(user_enabled: bool) -> bool:
     return bool(user_enabled) and detect_windows_animations_enabled()
 
 
+def migrate_legacy_config(
+    target_path: Optional[Path] = None,
+    legacy_path: Optional[Path] = None,
+) -> bool:
+    """若新版 BattDock 配置尚不存在且存在旧版 VGNMouseBattery 配置，则无损复制迁移。"""
+    dst = target_path or CONFIG_PATH
+    src = legacy_path or LEGACY_CONFIG_PATH
+    if dst == src or dst.exists() or not src.exists():
+        return False
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        return True
+    except OSError:
+        return False
+
+
 def load_config() -> AppConfig:
+    migrate_legacy_config()
     if not CONFIG_PATH.exists():
         return AppConfig()
     try:
@@ -293,20 +324,50 @@ def _get_autostart_command(minimized: bool = True) -> str:
     return f'"{launcher}" "{APP_SCRIPT}"{flag}'
 
 
+def migrate_legacy_autostart(start_minimized: bool = True) -> bool:
+    """将旧版 VGNMouseBattery 开机自启项自动迁移至 BattDock 并删除旧键，避免重复自启。"""
+    if sys.platform != "win32":
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+            try:
+                old_val, _ = winreg.QueryValueEx(key, LEGACY_RUN_VALUE_NAME)
+            except FileNotFoundError:
+                return False
+            use_bg = "--background" in str(old_val).lower() or bool(start_minimized)
+            winreg.SetValueEx(key, RUN_VALUE_NAME, 0, winreg.REG_SZ, _get_autostart_command(use_bg))
+            try:
+                winreg.DeleteValue(key, LEGACY_RUN_VALUE_NAME)
+            except FileNotFoundError:
+                pass
+            return True
+    except OSError:
+        return False
+
+
 def is_autostart_enabled() -> bool:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_READ) as key:
-            val, _ = winreg.QueryValueEx(key, RUN_VALUE_NAME)
-            val_low = str(val).lower()
-            if IS_FROZEN:
-                return str(Path(sys.executable).resolve()).lower() in val_low
-            return str(APP_SCRIPT).lower() in val_low
+            for reg_name in (RUN_VALUE_NAME, LEGACY_RUN_VALUE_NAME):
+                try:
+                    val, _ = winreg.QueryValueEx(key, reg_name)
+                except FileNotFoundError:
+                    continue
+                val_low = str(val).lower()
+                if IS_FROZEN:
+                    if str(Path(sys.executable).resolve()).lower() in val_low:
+                        return True
+                    if reg_name == LEGACY_RUN_VALUE_NAME and "vgnmousebattery.exe" in val_low:
+                        return True
+                elif str(APP_SCRIPT).lower() in val_low:
+                    return True
+            return False
     except OSError:
         return False
 
 
 def set_autostart(enabled: bool, start_minimized: bool = True) -> bool:
-    """配置 Windows 开机自启（默认带 --background 静默驻留托盘）。"""
+    """配置 Windows 开机自启（统一写入 BattDock 键并清理旧版 VGNMouseBattery 键，默认 --background 静默启动）。"""
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_SET_VALUE) as key:
             if enabled:
@@ -316,6 +377,11 @@ def set_autostart(enabled: bool, start_minimized: bool = True) -> bool:
                     winreg.DeleteValue(key, RUN_VALUE_NAME)
                 except FileNotFoundError:
                     pass
+            # 无论开启或关闭，均顺手清理旧版残留注册表项，杜绝重复自启
+            try:
+                winreg.DeleteValue(key, LEGACY_RUN_VALUE_NAME)
+            except FileNotFoundError:
+                pass
         return True
     except OSError:
         return False

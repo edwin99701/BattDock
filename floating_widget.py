@@ -12,6 +12,7 @@ from typing import Callable, Optional
 from PIL import Image, ImageDraw
 
 from app_config import FloatingWidgetConfig
+from brand import APP_FLOATING_TITLE
 from providers import DeviceBattery, KIND_EARBUDS, KIND_HEADSET, KIND_KEYBOARD, KIND_MOUSE
 
 EDGE_MARGIN = 16
@@ -42,21 +43,22 @@ def draw_battery_icon(
     low_t1: int = 30,
     low_t2: int = 20,
     low_t3: int = 10,
+    light_bg: bool = False,
 ) -> Image.Image:
-    """高对比度矢量电池图标（用于托盘、悬浮窗与低电量迷你弹窗，兼容深浅任务栏）。"""
+    """高对比度矢量电池图标（用于托盘、悬浮窗与低电量迷你弹窗，兼容深浅背景）。"""
     scale = 4
     s = size * scale
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     if not connected or percent is None:
-        outline_col = (160, 170, 185, 230)
-        inner_bg = (15, 23, 42, 85)
+        outline_col = (100, 116, 139, 235) if light_bg else (160, 170, 185, 230)
+        inner_bg = (226, 232, 240, 180) if light_bg else (15, 23, 42, 85)
         fill_col = (148, 163, 184, 180)
         pct = 0
     else:
-        outline_col = (248, 250, 252, 255)
-        inner_bg = (15, 23, 42, 130)
+        outline_col = (51, 65, 85, 245) if light_bg else (248, 250, 252, 255)
+        inner_bg = (226, 232, 240, 200) if light_bg else (15, 23, 42, 130)
         pct = max(0, min(100, int(percent)))
         if charging:
             fill_col = (34, 197, 94, 255)
@@ -133,9 +135,9 @@ class DesktopFloatingWidget:
     """轻量桌面悬浮窗（使用主窗体 UI 线程的原生 WinForms 控件，Win10/11 通用，内存占用极低）。"""
 
     SIZE_MAP = {
-        "small": (168, 46),
-        "medium": (204, 54),
-        "large": (244, 62),
+        "small": (208, 46),
+        "medium": (256, 54),
+        "large": (296, 62),
     }
 
     def __init__(
@@ -234,7 +236,7 @@ class DesktopFloatingWidget:
         online = bool(device.online) if device else False
         asleep = bool(device.asleep) if device else False
         title = display_name or (device.name if device else "未连接外设")
-        pct_text = f"{pct}%" if pct is not None else ("休眠" if asleep else "未知")
+        pct_text = f"{pct}%" if pct is not None else "—"
         if charging and pct is not None:
             pct_text = f"⚡{pct}%"
 
@@ -248,7 +250,7 @@ class DesktopFloatingWidget:
 
                 if self._form is None or self._form.IsDisposed:
                     form = WinForms.Form()
-                    form.Text = "外设电量悬浮窗"
+                    form.Text = APP_FLOATING_TITLE
                     form.FormBorderStyle = getattr(WinForms.FormBorderStyle, "None")
                     form.ShowInTaskbar = False
                     form.StartPosition = WinForms.FormStartPosition.Manual
@@ -323,14 +325,20 @@ class DesktopFloatingWidget:
                 icon_px = int(round(22 * scale))
                 self._pic.Size = Size(icon_px, icon_px)
                 self._pic.Location = Point(pad, (h - icon_px) // 2)
-                pil_ic = draw_battery_icon(size=icon_px, percent=pct, charging=charging, connected=online or asleep)
+                pil_ic = draw_battery_icon(
+                    size=icon_px,
+                    percent=pct,
+                    charging=charging,
+                    connected=online or asleep,
+                    light_bg=(not is_dark),
+                )
                 buf = io.BytesIO()
                 pil_ic.save(buf, format="PNG")
                 self._pic.Image = GdiImage.FromStream(MemoryStream(buf.getvalue()))
 
-                pct_w = int(round(56 * scale))
+                pct_w = int(round(48 * scale))
                 text_x = pad + icon_px + int(round(8 * scale))
-                text_w = max(40, w - text_x - pct_w - pad)
+                text_w = max(60, w - text_x - pct_w - pad)
 
                 self._name_lbl.Text = title
                 self._name_lbl.ForeColor = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(26, 29, 36)

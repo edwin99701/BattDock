@@ -1,5 +1,26 @@
 # 更新日志（CHANGELOG）
 
+## BattDock v2.3.0（2026-11-26）— 品牌升级、黑白 Logo、设备名称与状态规范化
+
+### 品牌升级与视觉焕新
+- **正式更名为 BattDock**：集中定义 `brand.py` 品牌常量单一真值来源，统一主窗口标题、设置窗口标题、托盘名称、系统通知来源、桌面悬浮窗标题、Windows AppUserModelID（`BattDock.App`）、EXE 名称（`BattDock.exe`）、Windows 文件版本属性（`ProductName=BattDock`）与卸载/快捷方式脚本。
+- **更换全新黑白品牌 Logo**：提取纯黑圆角底 + 纯白耳机/无线波/鼠标高清透明 PNG（`512×512`）及 9 规格多分辨率 Windows ICO（`16 / 20 / 24 / 32 / 40 / 48 / 64 / 128 / 256` px），统一应用于主窗口标题栏、关于软件页面、EXE 嵌入式图标、任务栏、Alt+Tab 及 GitHub 项目主页。
+- **保留并优化系统托盘动态电池图标**：系统托盘继续使用随实时电量与三级阈值变化的动态矢量电池，新增状态缓存，仅在电量或设备状态真实变动时重绘，消除冗余资源开销。
+
+### 设备显示规范与关于页优化
+- **独立设备名称规范化映射层（`providers/device_naming.py`）**：保留底层原始硬件名称（`raw_name`）供诊断追溯，按精确 VID/PID 与官方型号表规范显示（如 `PRO → Pro`、`SUPERLIGHT → Superlight`、`LIGHTSPEED → Lightspeed`、`DEATHADDER → DeathAdder`、`HYPERSPEED → HyperSpeed`，保留 `VGN / VXE / ATK / ASUS / ROG / JBL / HyperX / SteelSeries / AirPods / WH-1000XM5`，严格区分 `Logitech G Pro 2 Lightspeed` 与 `Logitech G Pro X Superlight 2`）；同步规范支持设备清单，长名称支持单行省略与鼠标悬停完整展示。
+- **设备副标题与状态统一**：副标题仅展示简洁中文连接方式（`2.4GHz 无线连接` / `蓝牙连接` / `USB 有线连接` / `无线连接`）及必要特殊状态（`休眠中` / `充电中` / `已充满` / `未连接`），不再展示 `LIGHTSPEED` / `HyperSpeed` 等品牌技术词，正常连接不重复显示「已连接」；未知/休眠电量统一显示 `—`，绝不伪造 `0%`。
+- **关于软件页面完善**：顶部精简为黑白 Logo + `BattDock` + 动态版本号（无作者与冗余描述），保留 GitHub 仓库直达、在线检查更新、支持设备清单、开源许可与脱敏诊断导出。
+
+### 在线更新完善与旧版本无缝升级兼容
+- **在线更新增强（`updater.py`）**：严格过滤草稿与预发布版（仅识别稳定正式版），仅允许 HTTPS 下载，支持 `SHA256SUMS.txt` 完整性校验、覆盖失败自动回滚及防高频请求冷却；绝不误删用户目录中的无关文件。
+- **旧版 `VGNMouseBattery` 平滑迁移**：
+  - 首次启动自动从 `%LOCALAPPDATA%\VGNMouseBattery\config.json` 无损迁移配置至 `%LOCALAPPDATA%\BattDock\config.json`；
+  - 自动迁移开机自启注册表项并清理旧键，双互斥量防止新旧版本同时运行；
+  - Release 随附旧版 `v2.2.0` 升级桥接包（`VGNMouseBattery-v2.3.0-win64-UpgradeBridge.zip`），旧版一键更新后自动切换为纯 `BattDock.exe` 并清理桥接残留。
+
+---
+
 ## v2.2.0（2026-11-26）— GitHub 公开开源与内置一键在线更新
 
 ### 新增功能

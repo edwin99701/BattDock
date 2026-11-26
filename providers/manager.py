@@ -18,6 +18,7 @@ from .base import (
 )
 from .bluetooth_provider import BluetoothBatteryProvider
 from .corsair_hid import CorsairHidProvider
+from .device_naming import normalize_device_display_name
 from .extra_brands import ExtraBrandsProvider
 from .hyperx_hid import HyperXHidProvider
 from .logitech_hidpp import LogitechHidppProvider
@@ -37,7 +38,15 @@ def _device_score(dev: DeviceBattery) -> tuple[int, int, int, int]:
 
 
 def sanitize_device_reading(dev: DeviceBattery) -> DeviceBattery:
-    """强制数据一致性不变量：离线或未知设备绝不允许伪造 0% 电量。"""
+    """强制数据一致性与标准显示名称规范：保留原始硬件名，离线/未知绝不伪造 0%。"""
+    if not dev.raw_name:
+        dev.raw_name = dev.name
+    dev.name = normalize_device_display_name(
+        dev.raw_name,
+        vid=dev.vid,
+        pid=dev.pid,
+        brand=dev.brand,
+    )
     if not dev.connected or (not dev.online and not dev.asleep):
         if dev.percent == 0:
             dev.percent = None

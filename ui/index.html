@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>外设电量</title>
+<title>BattDock</title>
 <link rel="stylesheet" href="./common.css" />
 <style>
   .main-body {
@@ -387,9 +387,9 @@
     <div id="titlebar" class="titlebar">
       <div class="titlebar-left">
         <div class="app-logo" aria-hidden="true">
-          <img src="../assets/app_logo.png" alt="外设电量" />
+          <img src="../assets/app_logo.png" alt="BattDock" />
         </div>
-        <span class="app-title">外设电量</span>
+        <span class="app-title">BattDock</span>
       </div>
       <div class="titlebar-controls">
         <button class="win-btn" title="设置" onclick="openSettings()">
@@ -547,13 +547,24 @@
   function patchCardElement(el, dev) {
     const lvl = dev.alert_level || "normal";
     el.className = `device-card level-${lvl}`;
-    el.querySelector(".dev-name").textContent = dev.display_name || dev.name;
+    const fullName = dev.display_name || dev.name || "";
+    const nameEl = el.querySelector(".dev-name");
+    nameEl.textContent = fullName;
+    nameEl.title = fullName;
 
-    const conn = escHtml(dev.connection_label || dev.connection_mode || "无线连接");
+    const conn = escHtml(dev.connection_label || "");
     const hasPct = dev.percent !== null && dev.percent !== undefined;
 
     if (dev.sub_batteries) {
-      el.querySelector(".dev-sub").innerHTML = `<span>${conn}</span>${dev.charging ? `<span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>` : ""}`;
+      let subHtml = "";
+      if (dev.charging) {
+        subHtml = conn ? `<span>${conn}</span><span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>` : `<span class="chg-inline">${ICONS.bolt}充电中</span>`;
+      } else if (!dev.connected) {
+        subHtml = conn ? `<span>${conn}</span><span>·</span><span>未连接</span>` : `<span>未连接</span>`;
+      } else if (conn) {
+        subHtml = `<span>${conn}</span>`;
+      }
+      el.querySelector(".dev-sub").innerHTML = subHtml;
       const sb = dev.sub_batteries;
       const parts = [
         ["left", sb.left_percent, sb.left_charging],
@@ -565,7 +576,7 @@
         const known = pct !== null && pct !== undefined;
         const pctEl = item.querySelector(".sub-pct");
         pctEl.className = known ? "sub-pct" : "sub-pct unknown";
-        pctEl.textContent = known ? `${pct}%${chg ? " ⚡" : ""}` : "未知";
+        pctEl.textContent = known ? `${pct}%${chg ? " ⚡" : ""}` : "—";
         const fill = item.querySelector(".progress-fill");
         fill.className = `progress-fill ${subBarClass(pct, chg)}`;
         const nextW = `${known ? Math.max(0, Math.min(100, pct)) : 0}%`;
@@ -581,14 +592,17 @@
       iconBox.dataset.kind = dev.kind || "other";
     }
 
-    let subExtra = "";
-    if (dev.full) subExtra = `<span>·</span><span class="chg-inline">${ICONS.bolt}已充满</span>`;
-    else if (dev.charging) subExtra = `<span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>`;
-    else if (dev.asleep) subExtra = `<span>·</span><span>休眠中</span>`;
-    else if (!dev.online) subExtra = `<span>·</span><span>离线 / 未响应</span>`;
-    else if (dev.voltage_mv) subExtra = `<span>·</span><span>${(dev.voltage_mv / 1000).toFixed(2)} V</span>`;
+    // 副标题规范：“连接方式” 或 “连接方式 · 特殊状态”（正常连接不重复写“已连接”，左右不重复状态文案）
+    let statePart = "";
+    if (!dev.connected) statePart = `<span>未连接</span>`;
+    else if (dev.asleep) statePart = `<span>休眠中</span>`;
+    else if (dev.full || (dev.charging && hasPct && dev.percent >= 100)) statePart = `<span class="chg-inline">${ICONS.bolt}已充满</span>`;
+    else if (dev.charging) statePart = `<span class="chg-inline">${ICONS.bolt}充电中</span>`;
+    else if (!dev.online && !hasPct) statePart = `<span>未连接</span>`;
 
-    const subHtml = `<span>${conn}</span>${subExtra}`;
+    const subHtml = conn && statePart
+      ? `<span>${conn}</span><span>·</span>${statePart}`
+      : (conn ? `<span>${conn}</span>` : statePart);
     const subEl = el.querySelector(".dev-sub");
     if (subEl.dataset.sig !== subHtml) {
       subEl.innerHTML = subHtml;
@@ -603,7 +617,7 @@
 
     let rightHtml = "";
     if (!hasPct) {
-      rightHtml = `<span class="dev-pct muted">${dev.asleep ? "休眠中" : "未知"}</span>`;
+      rightHtml = `<span class="dev-pct muted">—</span>`;
     } else if (lvl === "tier3") {
       rightHtml = `<span style="color:var(--crit-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill crit">电量紧急</span><span class="dev-pct crit">${dev.percent}%</span>`;
     } else if (lvl === "tier2") {

@@ -27,16 +27,16 @@
 | MCHOSE 迈从 | A5 / G3 / A7 / L7 / K7 等支持 Feature Report `0x11` (XOR 0xFF) 型号 | `0x35A4` / `0x248A` | 2.4G / 有线 | 协议已实现待实测 |
 | LAMZU / Zaopin / Scyrox | 采用标准 CompX `0xFF02:0x0002` 17 字节协议的型号 | `0x3554` / `0x373B` | 2.4G / 有线 | 协议已实现待实测 |
 
-### 2. Logitech 罗技
+### 2. Logitech 罗技（官网参考：[logitechg.com](https://www.logitechg.com/)）
 | 类型 | 覆盖型号 / 协议 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| 鼠标 / 键盘 | 支持 HID++ 2.0 电池特性（`0x1004` UnifiedBattery、`0x1000` BatteryStatus、`0x1001` BatteryVoltage、`0x1F20` ADC）的 G Pro X Superlight、G502/G304/G903、MX Master / Anywhere / Keys 等 | `0x046D` | Unifying / Bolt / Lightspeed 接收器（槽位 1–6）及有线 | 协议已实现待实测 |
-| 无线耳机 | G533、G535、G633、G635、G733、G933、G935、G PRO / PRO X Wireless | `0x046D` | 2.4G USB 接收器 | 协议已实现待实测 |
+| 鼠标 / 键盘 | 支持 HID++ 2.0 电池特性（`0x1004` UnifiedBattery、`0x1000` BatteryStatus、`0x1001` BatteryVoltage、`0x1F20` ADC）的 **Logitech G Pro 2 Lightspeed**、**Logitech G Pro X Superlight 2**、Logitech G Pro X Superlight、G502 / G304 / G305 / G903、MX Master / MX Anywhere / MX Keys 等（注：G Pro 2 Lightspeed 与 G Pro X Superlight 2 为不同型号，底层独立映射） | `0x046D` | 2.4GHz 无线连接（Unifying / Bolt / Lightspeed 接收器槽位 1–6）/ USB 有线连接 | 协议已实现待实测 |
+| 无线耳机 | Logitech G533、G535、G633、G635、G733、G933、G935、G Pro Wireless Headset、G Pro X Wireless、G Pro X 2 Lightspeed | `0x046D` | 2.4GHz 无线连接 | 协议已实现待实测 |
 
-### 3. Razer 雷蛇
+### 3. Razer 雷蛇（官网参考：[razer.com](https://www.razer.com/)）
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| 无线鼠标 / 键盘 | Viper V2 Pro / V3 Pro / Ultimate、DeathAdder V2 Pro / V3 Pro、Basilisk V3 Pro / Ultimate、Orochi V2、Naga Pro、BlackWidow V3 Pro、DeathStalker V2 Pro（需支持 91 字节 Feature Report） | `0x1532` | 2.4G HyperSpeed 接收器 / 有线 | 协议已实现待实测 |
+| 无线鼠标 / 键盘 | Razer Viper V3 Pro / V2 Pro / Ultimate、DeathAdder V3 Pro / V2 Pro / V3 HyperSpeed、Basilisk V3 Pro / Ultimate、Orochi V2、Naga Pro、BlackWidow V3 Pro、DeathStalker V2 Pro（需支持 91 字节 Feature Report） | `0x1532` | 2.4GHz 无线连接 / USB 有线连接 | 协议已实现待实测 |
 
 ### 4. SteelSeries 赛睿
 | 类型 | 覆盖型号示例 | VID | 连接方式 | 验证状态 |

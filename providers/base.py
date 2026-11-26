@@ -62,6 +62,7 @@ class DeviceBattery:
     support_status: str = STATUS_PROTOCOL
     status_detail: str = ""
     provider_name: str = ""
+    raw_name: str = ""  # 底层硬件/协议原始上报名称（保留用于诊断与追溯）
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:

@@ -1,103 +1,158 @@
-# 外设电量监控工具（Windows 10 / 11）
+<div align="center">
 
-> **当前版本**：v2.2.0  
-> **适用平台**：Windows 10 22H2 x64 及以上 / Windows 11 x64（不依赖 Win11 专属特效，统一架构）  
-> **硬件验证基线**：完整保留并实机回归验证 `VGN Dragonfly F2 Pro Max (3554:FB3E)`  
-> **最新版下载**：前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases) 下载 `VGNMouseBattery-vX.Y.Z-win64.zip` 解压即用
+<img src="assets/app_logo.png" width="96" height="96" alt="BattDock Logo" />
 
-一款轻量、免安装官方驱动的 Windows 无线外设电量监控工具。采用现代化浅灰白 / 深色 / 跟随系统双窗口界面（主窗口 + 独立设置窗口）与原生轻量桌面悬浮窗，支持同时监控多台无线鼠标、无线耳机、分体式耳塞与无线键盘的实时电量与状态，并内置 GitHub Releases 一键在线更新。
+# BattDock
 
----
+**轻量化 Windows 无线外设电量管理工具**
 
-## 核心特性
+[![Release](https://img.shields.io/github/v/release/edwin99701/wireless-peripheral-battery-monitor?label=Release&style=flat-square&color=111827)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=flat-square)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest)
+[![License](https://img.shields.io/github/license/edwin99701/wireless-peripheral-battery-monitor?label=Open%20Source&style=flat-square&color=16A34A)](./LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/edwin99701/wireless-peripheral-battery-monitor/total?label=Downloads&style=flat-square&color=2563EB)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases)
 
-- **原版 VGN 协议 100% 兼容**：完整保留 `vgn_battery.py` 中经过真机验证的 17 字节 HID 查询协议（VID `0x3554`, PID `0xFB3E` / `0xFB3D`，Interface 1，Usage Page `0xFF02`，Usage `0x0002`）。
-- **模块化多品牌适配器架构（8 大 Provider）**：
-  - `VgnCompxProvider`：VGN / VXE / ATK / CompX / MCHOSE / Rapoo / LAMZU / Zaopin / Scyrox
-  - `LogitechHidppProvider`：Logitech 罗技 HID++ 2.0（Unifying / Bolt / Lightspeed 接收器及有线）+ G 系列无线耳机
-  - `RazerHidProvider`：Razer 雷蛇 91 字节 Feature Report 无线鼠标与键盘
-  - `SteelSeriesHidProvider`：SteelSeries 赛睿 Aerox / Prime / Rival 鼠标 + Arctis / Nova / GameBuds 耳机
-  - `CorsairHidProvider`：Corsair 海盗船 SLIPSTREAM Bragi 鼠键 + Void / HS70 无线耳机
-  - `HyperXHidProvider`：HyperX Cloud Alpha / II / III / Core / Stinger 耳机 + Pulsefire Haste 2 / Haste / Dart 鼠标
-  - `ExtraBrandsProvider`：ASUS ROG / TUF 鼠键与 Omni 接收器、ROG 耳机 + Sony INZONE H5 / H9 II / Buds
-  - `BluetoothBatteryProvider`：标准 Windows 蓝牙电量服务（SetupAPI `DEVPKEY_Device_BatteryLevel`）+ Apple AirPods / Beats Continuity BLE 广播解析（支持左耳 / 右耳 / 充电盒独立电量）
-- **多设备同时监控与热插拔**：单次共享 HID 快照轮询，异常隔离、智能去重；离线或未响应设备绝不伪造 `0%`，准确显示「休眠中」或「未知 / 未响应」。
-- **每设备独立三级低电量提醒**：默认启用 **30% / 20% / 10%** 三级提醒，支持对每台设备分别开关任意档位；内置滞回防抖与充电重置，同一放电周期不重复轰炸。
-- **最高置顶极速迷你提醒弹窗**：原生 WinForms 纯色无边框迷你弹窗，0ms 即时弹出、不抢游戏或全屏应用焦点、停留 5 秒自动关闭；托盘右键支持一键「测试低电量弹窗」。
-- **设备诊断报告导出**：一键导出脱敏 JSON 诊断文件（不含隐私路径与序列号），便于排查新设备兼容问题。
-- **在线检查与一键更新**：内置零依赖更新器（`updater.py`），支持启动静默检查、手动检查、实时进度条下载、ZIP 安全校验与覆盖重启升级（个人配置保存在 `%LOCALAPPDATA%\VGNMouseBattery\config.json`，升级不丢失设置）。
-- **现代化双窗口与静默自启**：支持浅色 / 深色 / 跟随系统主题与原生 WinForms 桌面悬浮窗，开机自启自动以 `--background` 静默驻留系统托盘，托盘图标随实时电量动态变化。
+**简体中文** · [English](./README_EN.md)
+
+<br />
+
+<a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.3.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
+</a>
+
+</div>
 
 ---
 
-## 运行方式
+## 软件简介
 
-### 方式一：直接运行已打包程序（推荐）
+**BattDock** 致力于在一处轻量、简洁的界面中统一管理多个品牌无线外设的实时电量，让您无需为了查看电量而同时在后台常驻多套庞大的官方驱动软件。
 
-双击运行独立打包程序（无需安装 Python）：
+- **免装第三方驱动**：通过标准 Windows HID 与只读蓝牙系统接口获取电量，绝不安装内核驱动或修改设备 DPI / 灯光 / 固件设置。
+- **使用边界说明**：
+  - 蓝牙电量读取依赖本机蓝牙适配器及 Windows 蓝牙电量服务（无蓝牙硬件时自动静默跳过，不影响 2.4GHz USB 设备）；
+  - 极少数仅通过闭源加密驱动通信的设备无法免驱读取；离线或休眠设备会明确显示「休眠中」或「—」，绝不伪造 `0%` 电量。
 
-```text
-release\VGNMouseBattery\VGNMouseBattery.exe
-```
+---
 
-- 配置文件保存位置：`%LOCALAPPDATA%\VGNMouseBattery\config.json`
-- 如需彻底卸载（含清理自启项与配置）：运行 `release\VGNMouseBattery\卸载程序.bat`。
+## Features · 核心功能
 
-### 方式二：源码运行与自动化测试
+| | |
+| :--- | :--- |
+| **实时电量监控**<br>多品牌无线鼠标、耳机、分体耳塞与键盘统一管理，自动热插拔检测与规范设备命名 | **智能电量提醒**<br>默认 `30% / 20% / 10%` 三级提醒与自定义阈值、滞回防抖、不抢游戏焦点的 5 秒迷你弹窗 |
+| **动态托盘电池**<br>系统托盘图标随实际电量填充与低电量色阶联动，仅状态变化时刷新，零冗余后台开销 | **桌面悬浮窗**<br>基于原生 WinForms 的轻量悬浮窗（零额外浏览器内存），支持置顶、透明度、尺寸与位置锁定 |
+| **浅色与深色主题**<br>融合 Win11 与 macOS 的简洁设计语言，支持浅色 / 深色 / 跟随系统与轻量平滑动效，原生兼容 Win10/11 | **在线检查与一键更新**<br>内置免 Token GitHub Releases 更新检查、SHA-256 完整性校验与自动覆盖升级，完整保留个人配置 |
+
+---
+
+## 界面截图
+
+> 以下均为 **BattDock v2.3.0** 实际运行截取画面。主窗口深色模式为展示多设备卡片、低电量警示与分体耳塞独立电量的**演示界面**，不代表对应全部外设均已完成实体硬件测试（真实硬件验证状态见下方表格与 [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md)）。
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/main-light.png" alt="BattDock 主窗口浅色模式（本机实机实拍）" /><br />
+      <sub><b>主窗口 · 浅色模式</b>（本机 VGN Dragonfly F2 Pro Max 实拍）</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/main-dark.png" alt="BattDock 主窗口深色模式（多设备演示界面）" /><br />
+      <sub><b>主窗口 · 深色模式</b>（多设备卡片与分体耳塞演示界面）</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/settings.png" alt="BattDock 设置页面" /><br />
+      <sub><b>设置中心</b>（常规 / 设备管理 / 电量提醒 / 外观 / 悬浮窗 / 关于）</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/supported-devices.png" alt="BattDock 支持设备清单" /><br />
+      <sub><b>支持设备清单</b>（独立品牌折叠列表、类型筛选与实时搜索）</sub>
+    </td>
+  </tr>
+</table>
+
+<div align="center">
+  <img src="docs/screenshots/tray-battery.png" width="640" alt="系统托盘动态电池图标多状态展示" /><br />
+  <sub><b>系统托盘动态电池图标</b>（正常 / 充电 / 三级低电量 / 离线休眠）</sub>
+  <br /><br />
+  <img src="docs/screenshots/floating-widget.png" alt="BattDock 桌面悬浮窗" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/low-battery-alert.png" alt="BattDock 低电量提醒弹窗" /><br />
+  <sub><b>桌面悬浮窗</b>（左）与 <b>5 秒不抢焦点低电量迷你弹窗</b>（右）</sub>
+</div>
+
+---
+
+## 支持设备概览
+
+完整型号、VID/PID、协议来源及官网核实依据请查阅 [**支持设备清单（SUPPORTED_DEVICES.md）**](./SUPPORTED_DEVICES.md)。
+
+| 品牌 | 覆盖设备类型 | 连接方式 | 当前验证状态 |
+| :--- | :--- | :--- | :--- |
+| **VGN**（Dragonfly F2 Pro Max） | 无线鼠标 | 2.4GHz 无线连接 / USB 有线连接 | **已实机验证** |
+| **VGN / VXE / ATK / MCHOSE / LAMZU** | 无线鼠标 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Logitech 罗技** | 无线鼠标、键盘、G 系列耳机 | 2.4GHz 无线连接 / 蓝牙连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Razer 雷蛇** | 无线鼠标、无线键盘 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **SteelSeries 赛睿** | 无线鼠标、Arctis / Nova 耳机与耳塞 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Corsair 海盗船** | SLIPSTREAM 鼠键、Void / HS / Virtuoso 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **HyperX** | Cloud 无线耳机、Pulsefire 无线鼠标 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **ASUS ROG / TUF** | 无线鼠标、键盘、Omni 接收器、ROG 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Sony 索尼** | INZONE H5 / H9 II / Buds、WH-1000XM5 等 | 2.4GHz 无线连接 / 蓝牙连接 | 协议已适配，待实机验证 |
+| **Apple / Beats & 标准蓝牙外设** | AirPods 全系、Beats 及标准蓝牙鼠键耳机 | 蓝牙连接 | 协议已适配，待实机验证 |
+
+> 实际兼容性可能因设备固件版本与连接方式而异；部分旧款雷柏（Rapoo）私有加密协议设备目前暂不支持。
+
+---
+
+## 下载与安装
+
+### 系统要求
+- **操作系统**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时，无需安装 Python）。
+
+### 发布产物说明
+前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载：
+- **`BattDock-v2.3.0-Windows-x64-Portable.zip`**（**推荐，便携免安装版**）：解压至任意本地目录，双击 `BattDock.exe` 即可运行；如需创建快捷方式，可运行目录内的 `创建桌面与开始菜单快捷方式.bat`。
+- **`SHA256SUMS.txt`**：所有发布压缩包的 SHA-256 校验值清单，用于核对文件完整性。
+- **`VGNMouseBattery-v2.3.0-win64-UpgradeBridge.zip`**：仅供旧版 `v2.2.0` 软件内一键自动升级平滑迁移使用，新用户无需手动下载。
+
+### 首次启动与在线更新
+1. **开机静默自启**：在「设置 → 常规设置」中开启开机自启，默认以 `--background` 静默驻留系统托盘，不弹出窗口。
+2. **在线检查与自动升级**：在「设置 → 关于软件」或托盘右键点击「检查更新」；发现新版本后点击「立即更新」即可自动下载、校验 SHA-256 完整性并重启完成升级。
+3. **配置保存与卸载**：个人配置保存于 `%LOCALAPPDATA%\BattDock\config.json`（旧版 `VGNMouseBattery` 配置首次启动时自动无损迁移）；如需卸载，运行目录内的 `卸载BattDock.bat` 即可一键清理自启项与快捷方式。
+
+### 常见问题与排查
+- **未显示设备或显示 `—`**：请确认 2.4GHz 接收器已插稳或设备未进入深度休眠（晃动鼠标即可自动唤醒并刷新）。
+- **在线更新下载缓慢或失败**：软件自动遵循 Windows 系统代理；如网络无法直连 GitHub，可点击更新面板中的「前往下载页」手动下载压缩包覆盖程序目录（个人配置不会丢失）。
+- **提交新设备兼容反馈**：点击「设置 → 关于软件 → 导出诊断」生成脱敏 `diagnostics_*.json`，对照设备适配模板提交 Issue 即可。
+
+---
+
+## 开发与贡献
+
+### 本地运行与构建
 
 ```powershell
-# 安装依赖
+# 1. 安装依赖（Python 3.12+）
 pip install -r requirements.txt
 
-# 运行全部协议与状态机单元测试
+# 2. 运行全部单元测试（28 项）
 python -m unittest discover -s tests -v
 
-# 启动主程序（显示窗口）
+# 3. 源码启动 BattDock
 python mouse_battery_app.py
 
-# 静默驻留系统托盘（无启动弹窗）
-pythonw mouse_battery_app.py --background
+# 4. 一键测试并构建 Windows 便携版与 SHA256SUMS.txt
+powershell -ExecutionPolicy Bypass -File .\build_release.ps1
 ```
+
+### 参与贡献
+欢迎提交 Issue 与 Pull Request：
+- 遇到问题请使用 [Bug 反馈模板](./.github/ISSUE_TEMPLATE/bug_report.md)；
+- 申请适配新外设请使用 [设备适配申请模板](./.github/ISSUE_TEMPLATE/device_support.md)。
+- **隐私提醒**：在公开 Issue 中反馈问题时，请**不要**上传包含个人用户名、本地绝对路径、设备序列号或其他敏感信息的完整日志。
 
 ---
 
-## 目录结构
+## 开源许可
 
-```text
-vgn-mouse-battery/
-├── mouse_battery_app.py          # 主程序：双窗口管理、托盘、三级提醒状态机、JS 桥接
-├── floating_widget.py            # 原生 WinForms 轻量桌面悬浮窗与提示音
-├── updater.py                    # GitHub Releases 在线检查与一键覆盖升级模块
-├── app_config.py                 # 多设备独立阈值持久化与开机自启管理
-├── vgn_battery.py                # 原版真机验证的 VGN 17 字节 HID 协议模块（保持零破坏）
-├── providers/                    # 模块化品牌协议适配器包
-│   ├── base.py                   # DeviceBattery / SubBattery / BatteryProvider 基类与只读 HID 工具
-│   ├── manager.py                # DeviceManager 统一设备管理层与诊断导出
-│   ├── vgn_provider.py           # VGN / VXE / ATK / CompX / MCHOSE / Rapoo 适配器
-│   ├── logitech_hidpp.py         # Logitech HID++ 2.0 & G 耳机适配器
-│   ├── razer_hid.py              # Razer 91 字节 Feature Report 适配器
-│   ├── steelseries_hid.py        # SteelSeries 鼠标与 Arctis/Nova 耳机适配器
-│   ├── corsair_hid.py            # Corsair Bragi 与 Void/HS70 适配器
-│   ├── hyperx_hid.py             # HyperX Cloud 耳机与 Pulsefire 鼠标适配器
-│   ├── extra_brands.py           # ASUS ROG/TUF 与 Sony INZONE 适配器
-│   └── bluetooth_provider.py     # Windows 蓝牙电量服务 + Apple AirPods Continuity 解析器
-├── tests/
-│   └── test_providers.py         # 26 项协议解析、防抖状态机与更新安全校验单元测试
-├── ui/
-│   ├── common.css                # 浅/深/跟随系统统一设计令牌与动效系统
-│   ├── index.html                # 主窗口（多设备卡片、分体耳塞卡片、更新提示胶囊）
-│   └── settings.html             # 设置窗口（6 分类配置、可折叠支持设备子页、在线更新面板）
-├── build_release.ps1             # 一键测试 + PyInstaller 打包脚本
-├── release/VGNMouseBattery/      # PyInstaller 打包产物与卸载脚本（不提交至 Git）
-├── SUPPORTED_DEVICES.md          # 设备支持清单与验证状态说明
-├── CHANGELOG.md                  # 版本更新日志
-└── THIRD_PARTY_LICENSES.md       # 开源协议参考与第三方许可证声明
-```
-
----
-
-## 文档导航
-
-- 完整支持设备列表与验证等级（已真机验证 / 协议已实现待实测 / 暂不支持）：见 [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md)
-- 开源协议合规与许可证声明：见 [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md)
-- 变更记录：见 [`CHANGELOG.md`](./CHANGELOG.md)
+本项目代码基于 [**MIT License**](./LICENSE) 开源发布。第三方运行库与公开硬件协议参考的详细许可证合规声明请参阅 [**THIRD_PARTY_LICENSES.md**](./THIRD_PARTY_LICENSES.md)。

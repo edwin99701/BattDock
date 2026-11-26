@@ -17,10 +17,12 @@
 ## 二、模块架构
 
 ```text
+brand.py                   BattDock 品牌名、版本号、EXE 标识、AppUserModelID、互斥量与 GitHub 地址单一真值来源
 mouse_battery_app.py       主控制器、主窗口(760x480) + 独立设置窗口(840x742)、WinForms 迷你提醒窗、托盘、状态机、JS 桥
 floating_widget.py         原生 WinForms 轻量桌面悬浮窗（零 WebView2 开销，Win10/11 通用）与系统提示音
-updater.py                 零依赖 GitHub Releases 在线检查更新与 Windows 安全覆盖重启升级模块
-app_config.py              配置持久化（AppConfig / DevicePreference / FloatingWidgetConfig）与自启注册表（v2.2.0）
+updater.py                 零依赖 GitHub Releases 在线检查更新（仅稳定版 + SHA-256 校验 + 失败自动回滚）
+legacy_shim.py             旧版 VGNMouseBattery v2.2.0 自动升级至 BattDock 的平滑迁移桥接启动器
+app_config.py              配置持久化（AppConfig / DevicePreference / FloatingWidgetConfig）、旧版配置/自启无缝迁移
 vgn_battery.py             已真机验证的 VGN 17 字节 HID 读取器（保持原样，不破坏）
 ui/
   ├── common.css           统一设计令牌与组件样式（浅色/深色/跟随系统、配色方案、步进器、蓝色胶囊开关）
@@ -28,6 +30,7 @@ ui/
   └── settings.html        设置窗口（左 6 分类导航 + 右分组设置卡片：常规/设备管理/电量提醒/外观/悬浮窗/关于）
 providers/
   ├── base.py              DeviceBattery / SubBattery / BatteryProvider + 只读 HidP_GetCaps 报表长度检测
+  ├── device_naming.py     独立官方设备显示名称规范化、连接方式与副标题状态映射层
   ├── manager.py           DeviceManager（单次 hid.enumerate 共享、异常隔离、去重、禁伪造 0%、脱敏诊断导出）
   ├── vgn_provider.py      VGN（封装 vgn_battery）/ VXE / ATK / CompX / MCHOSE / Rapoo
   ├── logitech_hidpp.py    Logitech HID++ 2.0 (0x1004/0x1000/0x1001/0x1F20 + 0x0005) & G 耳机
@@ -37,8 +40,8 @@ providers/
   ├── hyperx_hid.py        HyperX Cloud 耳机 & Pulsefire 鼠标
   ├── extra_brands.py      ASUS ROG/TUF 鼠键/Omni/SpeedNova/耳机 & Sony INZONE H5/H9 II/Buds
   └── bluetooth_provider.py Windows SetupAPI DEVPKEY_Device_BatteryLevel + Apple AirPods Continuity BLE 解析
-tests/test_providers.py    26 项单元测试（全协议模拟报文 + 去重 + 禁伪造 0% + 提醒状态机 + 在线更新与安全解压校验）
-build_release.ps1          可重复执行的一键测试 + PyInstaller 打包发布脚本
+tests/test_providers.py    28 项单元测试（全协议模拟报文 + 去重 + 禁伪造 0% + 提醒状态机 + 品牌命名 + 迁移 + 更新安全校验）
+build_release.ps1          一键测试 + 构建 BattDock.exe / 旧版升级桥接包 / Portable ZIP / SHA256SUMS.txt 脚本
 ```
 
 ---

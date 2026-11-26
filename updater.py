@@ -1,15 +1,18 @@
-"""基于 GitHub Releases 的轻量在线检查更新与 Windows 免安装一键覆盖更新模块。
+"""BattDock 基于 GitHub Releases 的轻量在线检查更新与 Windows 安全原地升级模块。
 
 设计原则：
-1. 零第三方依赖，仅使用 Python 标准库（兼容 Win10/11 与 PyInstaller 打包）。
-2. 自动兼容系统代理；网络异常、超时或离线时静默降级，绝不影响主程序监控。
-3. 下载后校验 ZIP 完整性并防路径遍历（Zip Slip），仅在校验通过后执行覆盖更新。
-4. 通过独立隐藏 PowerShell 辅助脚本（UTF-8 BOM，完美支持中文安装目录）在主进程退出后
-   安全替换 `_internal/` 与 `VGNMouseBattery.exe`，保留 `卸载程序.bat` 与用户配置并自动重启。
+1. 零第三方依赖，仅使用 Python 标准库（兼容 Win10/11 与 PyInstaller 打包），不要求 GitHub Token。
+2. 默认仅识别稳定正式版（跳过 draft 与 prerelease），自动兼容系统代理，断网优雅降级。
+3. 仅通过 HTTPS 下载，优先匹配 BattDock Windows 便携包，支持 SHA256SUMS.txt 完整性校验与防 Zip Slip 校验。
+4. 通过独立隐藏 PowerShell 辅助脚本（UTF-8 BOM，完美支持中文路径）在主进程退出后安全覆盖升级：
+   - 失败时自动回滚原有程序文件；
+   - 不删除用户目录中的其他无关文件，保留个人配置（%LOCALAPPDATA%\\BattDock\\config.json）与卸载脚本；
+   - 自动清理旧版 VGNMouseBattery.exe 及重复开机自启项，重启新版本 BattDock.exe。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -25,11 +28,19 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-GITHUB_OWNER = "edwin99701"
-GITHUB_REPO = "wireless-peripheral-battery-monitor"
-GITHUB_REPO_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
-RELEASES_PAGE_URL = f"{GITHUB_REPO_URL}/releases"
-LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+from brand import (
+    APP_EXE_NAME,
+    APP_NAME,
+    GITHUB_OWNER,
+    GITHUB_REPO,
+    GITHUB_REPO_URL,
+    LATEST_RELEASE_API,
+    LEGACY_EXE_NAME,
+    LEGACY_RUN_VALUE_NAME,
+    RELEASES_PAGE_URL,
+    RUN_REG_PATH,
+    RUN_VALUE_NAME,
+)
 
 
 @dataclass
@@ -43,6 +54,7 @@ class UpdateCheckResult:
     asset_name: str = ""
     asset_url: str = ""
     asset_size: int = 0
+    sha256_url: str = ""
     published_at: str = ""
     error: str = ""
 
@@ -59,11 +71,10 @@ def normalize_version_str(raw: str) -> str:
 
 
 def parse_version(raw: str) -> tuple[int, ...]:
-    """将版本号（如 'v2.2.0' 或 '2.1.0-beta1'）解析为可比较的整数元组。"""
+    """将版本号（如 'v2.3.0' 或 '2.1.0-beta1'）解析为可比较的整数元组。"""
     clean = normalize_version_str(raw)
     if not clean:
         return (0,)
-    # 截取主版本段（丢弃 -rc1 / +build 等后缀）
     core = re.split(r"[-+]", clean, maxsplit=1)[0]
     nums = [int(m) for m in re.findall(r"\d+", core)]
     return tuple(nums) if nums else (0,)
@@ -80,31 +91,110 @@ def is_newer_version(latest: str, current: str) -> bool:
 
 
 def select_release_asset(assets: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    """从 GitHub Release assets 中挑选最合适的 Windows 免安装 ZIP 包。"""
+    """从 GitHub Release assets 中挑选 BattDock 的 Windows 便携版 HTTPS ZIP 包（排除旧版桥接包）。"""
     zip_assets = [
         a for a in (assets or [])
         if isinstance(a, dict)
         and str(a.get("name", "")).lower().endswith(".zip")
-        and str(a.get("browser_download_url", "")).startswith(("https://", "http://"))
+        and str(a.get("browser_download_url", "")).startswith("https://")
     ]
     if not zip_assets:
         return None
+    # 1. 最优先匹配官方 BattDock Windows 便携包
     for a in zip_assets:
         name = str(a.get("name", "")).lower()
-        if "win64" in name or "vgnmousebattery" in name:
+        if "battdock" in name and "portable" in name and "bridge" not in name:
+            return a
+    # 2. 其次匹配任意 BattDock ZIP
+    for a in zip_assets:
+        name = str(a.get("name", "")).lower()
+        if "battdock" in name and "bridge" not in name:
+            return a
+    # 3. 兼容历史命名
+    for a in zip_assets:
+        name = str(a.get("name", "")).lower()
+        if "win64" in name or "windows" in name:
             return a
     return zip_assets[0]
 
 
+def select_checksum_asset(assets: list[dict[str, Any]]) -> str:
+    """查找 Release 中随附的 SHA256SUMS.txt 校验文件 HTTPS 地址。"""
+    for a in (assets or []):
+        if not isinstance(a, dict):
+            continue
+        name = str(a.get("name", "")).lower()
+        url = str(a.get("browser_download_url", ""))
+        if name in ("sha256sums.txt", "checksums.txt") and url.startswith("https://"):
+            return url
+    return ""
+
+
+def parse_sha256_manifest(text: str) -> dict[str, str]:
+    """解析标准 `sha256  filename` 校验清单，返回 {小写文件名: 小写64位hex}。"""
+    result: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^([0-9a-fA-F]{64})\s+\*?(.+)$", line)
+        if m:
+            digest = m.group(1).lower()
+            fname = Path(m.group(2).strip()).name.lower()
+            result[fname] = digest
+    return result
+
+
+def compute_file_sha256(file_path: Path) -> str:
+    h = hashlib.sha256()
+    with file_path.open("rb") as f:
+        while True:
+            chunk = f.read(131072)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest().lower()
+
+
+def verify_downloaded_sha256(file_path: Path, asset_name: str, sha256_url: str, timeout: float = 10.0) -> Optional[bool]:
+    """如存在 SHA256SUMS.txt，则核对下载文件哈希。返回 True=校验通过，False=哈希不匹配，None=未提供清单。"""
+    if not sha256_url or not sha256_url.startswith("https://"):
+        return None
+    req = urllib.request.Request(sha256_url, headers={"User-Agent": f"{APP_NAME}-Updater/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            manifest_text = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    table = parse_sha256_manifest(manifest_text)
+    expected = table.get(Path(asset_name or file_path.name).name.lower())
+    if not expected:
+        return None
+    actual = compute_file_sha256(file_path)
+    return actual == expected
+
+
 def parse_github_release_payload(payload: dict[str, Any], current_version: str) -> UpdateCheckResult:
-    """解析 GitHub Releases API JSON 负载为 UpdateCheckResult（纯函数，便于单元测试）。"""
+    """解析 GitHub Releases API JSON 负载（自动过滤 draft 与 prerelease）。"""
     cur = normalize_version_str(current_version)
+    if payload.get("draft") or payload.get("prerelease"):
+        return UpdateCheckResult(
+            ok=True,
+            current_version=cur,
+            latest_version=cur,
+            has_update=False,
+            release_url=RELEASES_PAGE_URL,
+            error="",
+        )
+
     tag = str(payload.get("tag_name") or payload.get("name") or "").strip()
     latest = normalize_version_str(tag)
     html_url = str(payload.get("html_url") or RELEASES_PAGE_URL).strip() or RELEASES_PAGE_URL
     body = str(payload.get("body") or "").strip()
     published_at = str(payload.get("published_at") or "").strip()
-    asset = select_release_asset(payload.get("assets") or [])
+    assets = payload.get("assets") or []
+    asset = select_release_asset(assets)
+    sha256_url = select_checksum_asset(assets)
     has_upd = bool(latest) and is_newer_version(latest, cur)
 
     return UpdateCheckResult(
@@ -117,18 +207,19 @@ def parse_github_release_payload(payload: dict[str, Any], current_version: str) 
         asset_name=str(asset.get("name", "")) if asset else "",
         asset_url=str(asset.get("browser_download_url", "")) if asset else "",
         asset_size=int(asset.get("size", 0) or 0) if asset else 0,
+        sha256_url=sha256_url,
         published_at=published_at,
         error="",
     )
 
 
 def check_for_update(current_version: str, timeout: float = 10.0) -> UpdateCheckResult:
-    """请求 GitHub Releases 最新版本信息，网络失败时返回友好中文提示。"""
+    """请求 GitHub Releases 最新稳定版本信息，网络失败时返回友好中文提示。"""
     cur = normalize_version_str(current_version)
     req = urllib.request.Request(
         LATEST_RELEASE_API,
         headers={
-            "User-Agent": f"WirelessPeripheralBatteryMonitor/{cur or '2.0'}",
+            "User-Agent": f"{APP_NAME}/{cur or '2.3'}",
             "Accept": "application/vnd.github+json",
         },
     )
@@ -159,15 +250,15 @@ def download_update_asset(
     cancel_event: Optional[threading.Event] = None,
     timeout: float = 30.0,
 ) -> Path:
-    """流式下载 Release ZIP 压缩包并持续回调进度。"""
-    if not asset_url.startswith(("https://", "http://")):
-        raise ValueError("无效的下载地址")
+    """仅通过 HTTPS 流式下载 Release ZIP 压缩包并持续回调进度。"""
+    if not asset_url.startswith("https://"):
+        raise ValueError("出于安全限制，仅允许通过 HTTPS 下载更新包")
 
     dest_zip.parent.mkdir(parents=True, exist_ok=True)
     part_path = dest_zip.with_suffix(".zip.part")
     req = urllib.request.Request(
         asset_url,
-        headers={"User-Agent": "WirelessPeripheralBatteryMonitor-Updater/1.0"},
+        headers={"User-Agent": f"{APP_NAME}-Updater/1.0"},
     )
     downloaded = 0
     try:
@@ -186,8 +277,8 @@ def download_update_asset(
                 downloaded += len(chunk)
                 if on_progress:
                     on_progress(downloaded, total)
-        if downloaded <= 0:
-            raise RuntimeError("下载的更新包为空")
+        if downloaded <= 0 or (expected_size > 0 and downloaded < int(expected_size * 0.9)):
+            raise RuntimeError("更新包下载不完整，请重试")
         if dest_zip.exists():
             dest_zip.unlink()
         part_path.replace(dest_zip)
@@ -204,7 +295,7 @@ def download_update_asset(
 def extract_and_verify_update(
     zip_path: Path,
     extract_dir: Path,
-    exe_name: str = "VGNMouseBattery.exe",
+    exe_name: str = APP_EXE_NAME,
 ) -> Path:
     """校验 ZIP 完整性与路径安全性（防 Zip Slip），解压并返回包含主程序的根目录。"""
     if extract_dir.exists():
@@ -222,7 +313,6 @@ def extract_and_verify_update(
                 raise ValueError(f"检测到不安全的压缩包路径：{info.filename}")
         zf.extractall(extract_dir)
 
-    # 定位主程序所在目录（兼容顶层直接打包或嵌套单层文件夹）
     direct_exe = extract_dir / exe_name
     if direct_exe.is_file():
         return extract_dir
@@ -236,15 +326,15 @@ def launch_windows_updater(
     staged_dir: Path,
     target_dir: Path,
     pid: int,
-    exe_name: str = "VGNMouseBattery.exe",
+    exe_name: str = APP_EXE_NAME,
     work_root: Optional[Path] = None,
 ) -> Path:
-    """生成并启动隐藏 PowerShell 覆盖更新脚本（UTF-8 BOM，兼容中文路径），主进程退出后自动替换并重启。"""
+    """生成并启动隐藏 PowerShell 覆盖更新脚本（支持失败回滚、不误删无关文件、清理旧版残留并重启 BattDock）。"""
     if sys.platform != "win32":
         raise RuntimeError("仅支持 Windows 平台执行原地自动更新")
 
     cleanup_root = work_root or staged_dir.parent
-    script_path = Path(tempfile.gettempdir()) / f"vgn_apply_update_{os.getpid()}.ps1"
+    script_path = Path(tempfile.gettempdir()) / f"battdock_apply_update_{os.getpid()}.ps1"
 
     def _ps_quote(p: Path) -> str:
         return "'" + str(p.resolve()).replace("'", "''") + "'"
@@ -255,7 +345,9 @@ $StagedDir = {_ps_quote(staged_dir)}
 $TargetDir = {_ps_quote(target_dir)}
 $CleanupDir = {_ps_quote(cleanup_root)}
 $ExeName = '{exe_name}'
-$LogFile = Join-Path $env:TEMP 'vgn_updater.log'
+$LegacyExeName = '{LEGACY_EXE_NAME}'
+$LogFile = Join-Path $env:TEMP 'battdock_updater.log'
+$RollbackDir = Join-Path $env:TEMP ('battdock_rollback_' + $TargetPid)
 
 function Write-Log([string]$msg) {{
     try {{
@@ -263,7 +355,7 @@ function Write-Log([string]$msg) {{
     }} catch {{}}
 }}
 
-Write-Log "开始应用更新：$StagedDir -> $TargetDir (等待 PID=$TargetPid 退出)"
+Write-Log "开始应用 BattDock 更新：$StagedDir -> $TargetDir (等待 PID=$TargetPid 退出)"
 
 # 1. 等待旧进程退出（最多 12 秒，超时则强制结束）
 for ($i = 0; $i -lt 48; $i++) {{
@@ -277,27 +369,21 @@ if ($proc) {{
     Start-Sleep -Milliseconds 600
 }}
 
-# 2. 备份现有卸载脚本（如新版未包含则保留）
-$UninstSrc = Join-Path $TargetDir '卸载程序.bat'
-$UninstBak = Join-Path $env:TEMP ('vgn_uninstall_upd_' + $TargetPid + '.bat')
-$HasUninstBak = $false
-if (Test-Path $UninstSrc) {{
-    try {{
-        Copy-Item $UninstSrc $UninstBak -Force
-        $HasUninstBak = $true
-    }} catch {{}}
-}}
+# 2. 为可替换核心文件建立临时回滚备份（仅备份程序自身与 _internal，绝不触碰用户目录中的其他无关文件）
+New-Item -ItemType Directory -Path $RollbackDir -Force | Out-Null
+$CurExe = Join-Path $TargetDir $ExeName
+$CurInternal = Join-Path $TargetDir '_internal'
+if (Test-Path $CurExe) {{ Copy-Item $CurExe (Join-Path $RollbackDir $ExeName) -Force }}
+if (Test-Path $CurInternal) {{ Move-Item $CurInternal (Join-Path $RollbackDir '_internal') -Force }}
 
-# 3. 清理旧 _internal 目录并复制新版本文件（带重试以避开杀软短暂占用）
-$OldInternal = Join-Path $TargetDir '_internal'
+# 3. 复制新版程序文件（带重试，失败则自动回滚旧版本）
+$Applied = $false
 for ($try = 0; $try -lt 10; $try++) {{
     try {{
-        if (Test-Path $OldInternal) {{
-            Remove-Item -Path $OldInternal -Recurse -Force
-        }}
         Get-ChildItem -Path $StagedDir -Force | ForEach-Object {{
             Copy-Item -Path $_.FullName -Destination $TargetDir -Recurse -Force
         }}
+        $Applied = $true
         Write-Log "文件替换成功（尝试第 $($try + 1) 次）"
         break
     }} catch {{
@@ -306,26 +392,46 @@ for ($try = 0; $try -lt 10; $try++) {{
     }}
 }}
 
-if ($HasUninstBak -and (-not (Test-Path $UninstSrc))) {{
-    try {{ Move-Item $UninstBak $UninstSrc -Force }} catch {{}}
-}} elseif (Test-Path $UninstBak) {{
-    Remove-Item $UninstBak -Force -ErrorAction SilentlyContinue
+if (-not $Applied) {{
+    Write-Log "更新失败，正在回滚至旧版本..."
+    try {{
+        $FailedInternal = Join-Path $TargetDir '_internal'
+        if (Test-Path $FailedInternal) {{ Remove-Item $FailedInternal -Recurse -Force -ErrorAction SilentlyContinue }}
+        if (Test-Path (Join-Path $RollbackDir '_internal')) {{ Move-Item (Join-Path $RollbackDir '_internal') $CurInternal -Force }}
+        if (Test-Path (Join-Path $RollbackDir $ExeName)) {{ Copy-Item (Join-Path $RollbackDir $ExeName) $CurExe -Force }}
+    }} catch {{}}
+}} else {{
+    # 清理历史遗留的旧版主程序（若存在），避免新旧版本共存
+    $LegacyExe = Join-Path $TargetDir $LegacyExeName
+    if (Test-Path $LegacyExe) {{
+        Remove-Item $LegacyExe -Force -ErrorAction SilentlyContinue
+    }}
+    # 同步检查注册表，防止残留旧版重复开机自启项
+    try {{
+        $RunKey = 'HKCU:\\{RUN_REG_PATH}'
+        $oldRun = Get-ItemProperty -Path $RunKey -Name '{LEGACY_RUN_VALUE_NAME}' -ErrorAction SilentlyContinue
+        if ($oldRun) {{
+            $isBg = $oldRun.'{LEGACY_RUN_VALUE_NAME}' -like '*--background*'
+            $newExePath = Join-Path $TargetDir $ExeName
+            $cmd = if ($isBg) {{ '"' + $newExePath + '" --background' }} else {{ '"' + $newExePath + '"' }}
+            Set-ItemProperty -Path $RunKey -Name '{RUN_VALUE_NAME}' -Value $cmd
+            Remove-ItemProperty -Path $RunKey -Name '{LEGACY_RUN_VALUE_NAME}' -ErrorAction SilentlyContinue
+        }}
+    }} catch {{}}
 }}
 
-# 4. 启动新版主程序
+# 4. 启动新版 BattDock.exe
 $NewExe = Join-Path $TargetDir $ExeName
 if (Test-Path $NewExe) {{
     Write-Log "正在启动新版本：$NewExe"
     Start-Process -FilePath $NewExe -WorkingDirectory $TargetDir
 }}
 
-# 5. 清理临时目录与脚本自身
-try {{
-    if (Test-Path $CleanupDir) {{ Remove-Item -Path $CleanupDir -Recurse -Force -ErrorAction SilentlyContinue }}
-}} catch {{}}
+# 5. 清理临时目录、回滚缓存与脚本自身
+try {{ if (Test-Path $RollbackDir) {{ Remove-Item -Path $RollbackDir -Recurse -Force -ErrorAction SilentlyContinue }} }} catch {{}}
+try {{ if (Test-Path $CleanupDir) {{ Remove-Item -Path $CleanupDir -Recurse -Force -ErrorAction SilentlyContinue }} }} catch {{}}
 try {{ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue }} catch {{}}
 """
-    # 使用 utf-8-sig（带 BOM）确保 Windows PowerShell 5.1 正确解析中文路径与中文注释
     script_path.write_text(ps_script, encoding="utf-8-sig")
 
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
