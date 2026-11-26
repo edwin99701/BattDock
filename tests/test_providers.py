@@ -659,6 +659,13 @@ class TestBrandAndDeviceNaming(unittest.TestCase):
         self.assertIn("返回主窗口", titlebar_block)  # 保留返回箭头
         self.assertIn('data-sec="general"', settings_html)  # 保留左侧导航栏
 
+        # 5. Windows 10 防 1px 白色直角外框回归校验
+        app_py = (Path(__file__).resolve().parent.parent / "mouse_battery_app.py").read_text(encoding="utf-8")
+        self.assertGreaterEqual(app_py.count("shadow=is_windows_11()"), 2)
+        flt_py = (Path(__file__).resolve().parent.parent / "floating_widget.py").read_text(encoding="utf-8")
+        self.assertIn("DWMNCRP_DISABLED", flt_py)
+        self.assertIn("DwmExtendFrameIntoClientArea", flt_py)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 # PROGRESS.md — 项目真实开发进度看板
 
 > 最后更新：2026-11-26  
-> 当前版本：BattDock v2.5.0 ｜ 升级前单设备基线：`8075917` ｜ v2.0 底层多品牌基线：`45e9cd4`
+> 当前版本：BattDock v2.5.1 ｜ 升级前单设备基线：`8075917` ｜ v2.0 底层多品牌基线：`45e9cd4`
 
 ---
 
@@ -22,7 +22,8 @@
 - [x] **v2.2.0 公开开源与在线自动更新**：经用户确认将 GitHub 仓库 `edwin99701/wireless-peripheral-battery-monitor` 转为公开；新增 `updater.py` 零依赖在线检查更新与 Windows 一键下载/校验/覆盖重启升级，接入主窗口新版本提示胶囊、设置关于页更新面板、托盘右键检查更新及 26 项全通过单元测试
 - [x] **BattDock v2.3.0 品牌升级与正式发布**：集中定义 `brand.py` 完成全链路更名至 `BattDock`（含 `BattDock.exe`、Windows 文件属性、`BattDock.App` 标识与新旧单实例/配置/自启无缝迁移）；换用纯黑白圆角品牌 Logo（透明 PNG + 9 规格 ICO），系统托盘保留动态矢量电池并仅状态变更时重绘；新增 `providers/device_naming.py` 规范设备显示名与中文连接副标题/状态（`—` 替代未知，不重复状态文案）；强化 `updater.py`（仅稳定版、HTTPS、SHA-256 校验、失败回滚与 `v2.2.0` 升级桥接包）；通过 28/28 单元测试、实机截图、旧版升级桥接校验并全面升级 GitHub 仓库主页与中英双语 README
 - [x] **BattDock v2.4.0 图标统一、悬浮窗精简、Win10 圆角与自动更新全链路修复**：建立 `device_icons.py` 与 `assets/icons/*.svg` 全局统一黑白实心设备图标库并同步应用至全部 5 大界面（严格保留设置左导航、主 Logo 与动态电池托盘）；悬浮窗精简为品牌名 + 悬停完整详情 + 同品牌多设备区分 + 自定义名；低电量提醒切换为统一实心设备图标与动态三级黄/橙/红配色文案；新增 Win10 `CreateRoundRectRgn + SetWindowRgn` 跨版本外轮廓圆角；彻底修复跨盘 `Move-Item` 导致自动更新无法覆盖重启的根因，并重构软件内简明更新摘要面板
-- [x] **BattDock v2.5.0 设备管理重构、Win10 四角零残留修复、紧凑自适应提醒弹窗与标准安装程序**：重构设备管理为可折叠行式设置卡片 + 左侧六点拖拽排序（单设备隐藏手柄、独立三级数值步进器、移除底层协议名）；修复 Win10 四角像素残留（8 倍角部放大核验零残留）与全窗口 `SizeChanged/Resize/VisibleChanged/DpiChanged` 同步裁剪；优化设置窗口最大化自适应居中与移除顶部标题栏齿轮图标；重构低电量提醒弹窗为 250–360×56 自适应紧凑布局并展示完整标准设备名；接入 Inno Setup 6 标准中文安装程序 `BattDock-v2.5.0-Setup.exe`（支持任意盘符安装与目录读写授权）
+- [x] **BattDock v2.5.0 设备管理重构、Win10 四角零残留修复、紧凑自适应提醒弹窗与标准安装程序**：重构设备管理为可折叠行式设置卡片 + 左侧六点拖拽排序（单设备隐藏手柄、独立三级数值步进器、移除底层协议名）；修复 Win10 四角像素残留与全窗口 `SizeChanged/Resize/VisibleChanged/DpiChanged` 同步裁剪；优化设置窗口最大化自适应居中与移除顶部标题栏齿轮图标；重构低电量提醒弹窗为 250–360×56 自适应紧凑布局并展示完整标准设备名；接入 Inno Setup 6 标准中文安装程序 `BattDock-v2.5.0-Setup.exe`
+- [x] **BattDock v2.5.1 Windows 10 1px 白色直角外框根治**：在 Win10 下对主窗口与设置窗口禁用 `pywebview` 默认的 `shadow=True`（`DwmExtendFrameIntoClientArea(1,1,1,1)` + `DWMNCRP_ENABLED`），并在 `apply_window_rounded_corners()` 中显式设置 `DWMNCRP_DISABLED` 与零扩展边距，彻底消除圆角外 1px 白色直角框
 
 ### 第一阶段：VGN 单设备监控工具（基线 `8075917`）
 - [x] VGN Dragonfly F2 Pro Max（`3554:FB3E`）17 字节 HID 协议实现与真机验证（`vgn_battery.py`）

@@ -74,6 +74,28 @@ def apply_window_rounded_corners(
             pass
 
     try:
+        # Windows 10 根治圆角外出现 1px 白色直角框（pywebview 默认 ExtendFrameIntoClientArea + DWMNCRP_ENABLED 所致）：
+        # 显式关闭 DWM 非客户区矩形外框渲染并归零扩展边距，再应用对称 SetWindowRgn 裁切
+        try:
+            dwmapi = ctypes.windll.dwmapi
+            ncrp_disabled = ctypes.c_int(1)  # DWMNCRP_DISABLED
+            dwmapi.DwmSetWindowAttribute(
+                wintypes.HWND(hwnd), 2, ctypes.byref(ncrp_disabled), ctypes.sizeof(ncrp_disabled)
+            )
+
+            class _DwmMargins(ctypes.Structure):
+                _fields_ = [
+                    ("cxLeftWidth", ctypes.c_int),
+                    ("cxRightWidth", ctypes.c_int),
+                    ("cyTopHeight", ctypes.c_int),
+                    ("cyBottomHeight", ctypes.c_int),
+                ]
+
+            zero_margins = _DwmMargins(0, 0, 0, 0)
+            dwmapi.DwmExtendFrameIntoClientArea(wintypes.HWND(hwnd), ctypes.byref(zero_margins))
+        except Exception:
+            pass
+
         user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
         user32.SetWindowRgn.restype = ctypes.c_int
 
