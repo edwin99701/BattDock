@@ -200,6 +200,8 @@ JBL_INFO_MODELS: dict[int, tuple[str, str, bool]] = {
     0x2140: ("jbl-quantum-950x", "JBL Quantum 950X Wireless", True),
     0x218D: ("jbl-quantum-520", "JBL Quantum 520 Wireless", False),
     0x218E: ("jbl-quantum-520", "JBL Quantum 520 Wireless", True),
+    0x21A7: ("jbl-quantum-520x", "JBL Quantum 520X Wireless", False),
+    0x21A9: ("jbl-quantum-520x", "JBL Quantum 520X Wireless", True),
     0x219A: ("jbl-quantum-850", "JBL Quantum 850 Wireless", False),
     0x219B: ("jbl-quantum-850", "JBL Quantum 850 Wireless", True),
 }
@@ -323,6 +325,93 @@ def parse_mchose_v9_pro_2_reply(raw: list[int] | bytes) -> Optional[tuple[bool, 
     if level <= 100:
         return (True, int(level), bool(d[9] & 0x80))
     return None
+
+
+def parse_alienware_aw920h_reply(raw: list[int] | bytes) -> Optional[tuple[bool, Optional[int], bool]]:
+    """解析 Alienware AW920H Report 0x07 电量帧（含 XOR 校验）-> (online, percent, charging)。"""
+    d = list(raw)
+    if len(d) < 14 or d[:4] != [0x07, 0xC0, 0x0A, 0x09] or d[6] == 0:
+        return None
+    if _xor_bytes(d[3:13]) != d[13]:
+        return None
+    if d[5] == 0:
+        return (False, None, False)
+    lvl = int(d[11] if d[8] == 1 else d[6])
+    if lvl <= 100:
+        return (True, lvl, d[7] == 1)
+    return None
+
+
+def parse_poly_bt600_reply(raw: list[int] | bytes) -> Optional[tuple[int, bool]]:
+    """解析 Poly Voyager (BT600) GET 0A/1A 电量回包 -> (percent, charging)。"""
+    d = list(raw)
+    if len(d) < 14 or d[:4] != [0x07, 0x01, 0x01, 0x10] or d[5] != 0x02 or d[8:11] != [0x03, 0x0A, 0x1A]:
+        return None
+    level, levels = int(d[11]), int(d[12])
+    if levels >= 2 and level < levels:
+        return (int(level * 100 // (levels - 1)), d[13] != 0)
+    return None
+
+
+def parse_jabra_gn_battery(raw: list[int] | bytes, expected_from: int, seq: int) -> Optional[tuple[Optional[int], bool]]:
+    """解析 Jabra GN 协议 Report 0x05 GET 12/02 回包 -> (percent, charging)。"""
+    d = list(raw)
+    if len(d) < 9 or d[0] != 0x05 or d[1] != 0x00 or d[3] != (seq & 0xFF) or (d[4] >> 6) != 3:
+        return None
+    if d[5] == 0xFE or d[2] != expected_from or d[5] != 0x12 or d[6] != 0x02:
+        return None
+    length = d[4] & 0x3F
+    if length < 8 or len(d) < 1 + length:
+        return None
+    flags, pct = int(d[7]), int(d[8])
+    return (pct if pct <= 100 else None, bool(flags & 0x01))
+
+
+def parse_fractal_scape_reply(raw: list[int] | bytes) -> Optional[tuple[int, bool]]:
+    """解析 Fractal Design Scape 耳机状态回包 -> (percent, charging)。"""
+    d = list(raw)
+    if len(d) >= 24 and d[:3] == [0x02, 0xF1, 0x21] and d[15] <= 100:
+        return (int(d[15]), d[23] == 1)
+    return None
+
+
+def parse_moondrop_gm01_reply(raw: list[int] | bytes) -> Optional[int]:
+    """解析 MOONDROP 水月雨 GM01 Pro 电量回包 -> percent。"""
+    d = list(raw)
+    if len(d) >= 10 and d[:3] == [0x4B, 0x80, 0x27] and d[3] >= 6 and d[8] != 0 and d[9] <= 100:
+        return int(d[9])
+    return None
+
+
+def parse_sony_pulse3d_report(raw: list[int] | bytes) -> Optional[tuple[bool, Optional[int], bool]]:
+    """解析 Sony PULSE 3D 异步状态报告 0xB0 -> (connected, percent, charging)。"""
+    r = list(raw)
+    if len(r) < 8 or r[0] != 0xB0:
+        return None
+    connected = bool(r[4] & 0x08)
+    if r[3] == 0x80:
+        return (connected, None, True)
+    if r[3] <= 100:
+        return (connected, int(r[3]), False)
+    return (connected, None, False)
+
+
+JABRA_HEADSETS: dict[int, tuple[str, str, int, int]] = {
+    0x24C7: ("jabra-link-380", "Jabra Headset (Link 380)", 0x0001, 0x04),
+    0x24C8: ("jabra-link-380", "Jabra Headset (Link 380)", 0x0001, 0x04),
+    0x24C9: ("jabra-link-380", "Jabra Headset (Link 380)", 0x0001, 0x04),
+    0x24CA: ("jabra-link-380", "Jabra Headset (Link 380)", 0x0001, 0x04),
+    0x2E50: ("jabra-link-390", "Jabra Headset (Link 390)", 0x0005, 0x04),
+    0x2E51: ("jabra-link-390", "Jabra Headset (Link 390)", 0x0005, 0x04),
+    0x2E56: ("jabra-link-390", "Jabra Headset (Link 390)", 0x0005, 0x04),
+    0x2E57: ("jabra-link-390", "Jabra Headset (Link 390)", 0x0005, 0x04),
+    0x2517: ("jabra-evolve2-65-flex", "Jabra Evolve2 65 Flex", 0x0001, 0x08),
+    0x2518: ("jabra-evolve2-65-flex", "Jabra Evolve2 65 Flex", 0x0001, 0x08),
+    0x2519: ("jabra-evolve2-65-flex", "Jabra Evolve2 65 Flex", 0x0001, 0x08),
+    0x2546: ("jabra-evolve3-75", "Jabra Evolve3 75", 0x0005, 0x08),
+    0x2547: ("jabra-evolve3-75", "Jabra Evolve3 75", 0x0005, 0x08),
+    0x2548: ("jabra-evolve3-75", "Jabra Evolve3 75", 0x0005, 0x08),
+}
 
 
 CMEDIA_5565_HEADSETS: dict[tuple[int, int], tuple[str, str, str, int, bool]] = {
@@ -1058,6 +1147,291 @@ class WirelessHeadsetsProvider(BatteryProvider):
                         percent=pct,
                         support_status=STATUS_PROTOCOL,
                         status_detail="" if online else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+            # 9. Alienware AW920H (413C:A515, FF13:0001, Interface 5)
+            elif vid == 0x413C and pid == 0xA515 and up == 0xFF13 and u == 0x0001 and iface in (-1, 5):
+                seen.add((vid, pid))
+                parsed = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, 62, 4, 5)
+                    dev.write(pad_report(62, [0x06, 0xC0, 0x0A]))
+                    for _ in range(6):
+                        time.sleep(0.025)
+                        raw = dev.read(62, 120)
+                        if raw:
+                            parsed = parse_alienware_aw920h_reply(raw)
+                            if parsed is not None:
+                                break
+                except OSError:
+                    parsed = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                online, pct, chg = parsed if parsed else (False, None, False)
+                out.append(
+                    DeviceBattery(
+                        device_id="headset:alienware-aw920h",
+                        name="Alienware AW920H",
+                        brand="Alienware",
+                        kind=KIND_HEADSET,
+                        connection_mode="有线" if chg else "2.4G",
+                        vid=vid,
+                        pid=pid,
+                        connected=True,
+                        online=online,
+                        asleep=not online,
+                        percent=pct,
+                        charging=chg,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if online else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+
+            # 10. Poly Voyager / BT600 (047F:02EE / 02F7, FFA2:0003)
+            elif vid == 0x047F and pid in (0x02EE, 0x02F7) and up == 0xFFA2 and u == 0x0003:
+                seen.add((vid, pid))
+                parsed = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, 64, 4, 5)
+                    dev.write([0x06, 0x01])
+                    dev.write(pad_report(64, [0x07, 0x01, 0x01, 0x10, 0x07, 0x00, 0x00, 0x00, 0x01, 0x01, 0x02]))
+                    dev.write(pad_report(64, [0x07, 0x01, 0x01, 0x10, 0x07, 0x20, 0x00, 0x00, 0x01, 0x01, 0x02]))
+                    hid_drain(dev, 64, 8, 20)
+                    dev.write(pad_report(64, [0x07, 0x01, 0x01, 0x10, 0x06, 0x20, 0x00, 0x00, 0x02, 0x0A, 0x1A]))
+                    for _ in range(12):
+                        raw = dev.read(64, 150)
+                        if not raw:
+                            break
+                        parsed = parse_poly_bt600_reply(raw)
+                        if parsed is not None:
+                            break
+                except OSError:
+                    parsed = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                pct, chg = parsed if parsed else (None, False)
+                out.append(
+                    DeviceBattery(
+                        device_id="headset:poly-bt600",
+                        name="Poly Voyager (BT600)",
+                        brand="Poly",
+                        kind=KIND_HEADSET,
+                        connection_mode="2.4G",
+                        vid=vid,
+                        pid=pid,
+                        connected=True,
+                        online=parsed is not None,
+                        asleep=parsed is None,
+                        percent=pct,
+                        charging=chg,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if parsed else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+
+            # 11. Jabra Link 380 / 390 & Evolve2 / Evolve3 (0B0E, FF00)
+            elif vid == 0x0B0E and pid in JABRA_HEADSETS and up == 0xFF00:
+                key, name, req_u, target_addr = JABRA_HEADSETS[pid]
+                if u != req_u:
+                    continue
+                seen.add((vid, pid))
+                parsed = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, 64, 4, 5)
+                    seq = 0x40 | (self._next_seq() & 0x3F)
+                    dev.write(pad_report(64, [0x05, target_addr, 0x00, seq, 0x46, 0x12, 0x02]))
+                    for _ in range(10):
+                        raw = dev.read(64, 180)
+                        if not raw:
+                            break
+                        parsed = parse_jabra_gn_battery(raw, target_addr, seq)
+                        if parsed is not None:
+                            break
+                except OSError:
+                    parsed = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                pct, chg = parsed if parsed else (None, False)
+                out.append(
+                    DeviceBattery(
+                        device_id=f"headset:{key}",
+                        name=name,
+                        brand="Jabra",
+                        kind=KIND_HEADSET,
+                        connection_mode="有线" if (target_addr == 0x08 or chg) else "2.4G",
+                        vid=vid,
+                        pid=pid,
+                        connected=True,
+                        online=parsed is not None,
+                        asleep=parsed is None,
+                        percent=pct,
+                        charging=chg,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if parsed else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+
+            # 12. Fractal Design Scape (36BC:0001 / 2001, FF00:0001)
+            elif vid == 0x36BC and pid in (0x0001, 0x2001) and up == 0xFF00 and u == 0x0001 and out_len >= 4 and in_len >= 24:
+                seen.add((vid, pid))
+                is_dongle = pid == 0x0001
+                parsed = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, max(64, in_len), 4, 5)
+                    linked = True
+                    if is_dongle:
+                        linked = False
+                        dev.write(pad_report(max(64, out_len), [0x02, 0x11, 0x21]))
+                        for _ in range(6):
+                            raw = dev.read(max(64, in_len), 180)
+                            if not raw:
+                                break
+                            r = list(raw)
+                            if len(r) >= 24 and r[:3] == [0x02, 0x11, 0x21]:
+                                linked = r[4] == 1
+                                break
+                    if linked:
+                        dev.write(pad_report(max(64, out_len), [0x02, 0xF1, 0x21]))
+                        for _ in range(6):
+                            raw = dev.read(max(64, in_len), 180)
+                            if not raw:
+                                break
+                            parsed = parse_fractal_scape_reply(raw)
+                            if parsed is not None:
+                                break
+                except OSError:
+                    parsed = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                pct, chg = parsed if parsed else (None, False)
+                out.append(
+                    DeviceBattery(
+                        device_id="headset:fractal-scape",
+                        name="Fractal Design Scape",
+                        brand="Fractal Design",
+                        kind=KIND_HEADSET,
+                        connection_mode="有线" if (not is_dongle or chg) else "2.4G",
+                        vid=vid,
+                        pid=pid,
+                        connected=True,
+                        online=parsed is not None,
+                        asleep=parsed is None,
+                        percent=pct,
+                        charging=chg,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if parsed else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+
+            # 13. MOONDROP 水月雨 GM01 Pro (35D8:0133, Interface 3, 000C)
+            elif vid == 0x35D8 and pid == 0x0133 and up == 0x000C and iface in (-1, 3) and out_len >= 4 and in_len >= 10:
+                seen.add((vid, pid))
+                pct = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, max(64, in_len), 4, 5)
+                    dev.write(pad_report(max(64, out_len), [0x4B, 0x80, 0x27, 0x00]))
+                    for _ in range(4):
+                        raw = dev.read(max(64, in_len), 160)
+                        if not raw:
+                            break
+                        pct = parse_moondrop_gm01_reply(raw)
+                        if pct is not None:
+                            break
+                except OSError:
+                    pct = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                out.append(
+                    DeviceBattery(
+                        device_id="headset:moondrop-gm01-pro",
+                        name="MOONDROP GM01 Pro",
+                        brand="MOONDROP",
+                        kind=KIND_HEADSET,
+                        connection_mode="2.4G",
+                        vid=vid,
+                        pid=pid,
+                        connected=True,
+                        online=pct is not None,
+                        asleep=pct is None,
+                        percent=pct,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if pct is not None else "耳机离线或休眠",
+                        provider_name=self.name,
+                    )
+                )
+
+            # 14. Sony PULSE 3D (054C:0D5E, FF01:0020, 被动非阻塞读取 0xB0 状态报告)
+            elif vid == 0x054C and pid == 0x0D5E and up == 0xFF01 and u == 0x0020:
+                seen.add((vid, pid))
+                parsed = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    dev.set_nonblocking(1)
+                    for _ in range(16):
+                        raw = dev.read(64)
+                        if not raw:
+                            break
+                        cand = parse_sony_pulse3d_report(raw)
+                        if cand is not None:
+                            parsed = cand
+                except OSError:
+                    parsed = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                if parsed is not None:
+                    self._pulse3d_last = parsed
+                last = getattr(self, "_pulse3d_last", None)
+                online, pct, chg = last if last else (False, None, False)
+                out.append(
+                    DeviceBattery(
+                        device_id="headset:sony-pulse-3d",
+                        name="Sony PULSE 3D",
+                        brand="Sony",
+                        kind=KIND_HEADSET,
+                        connection_mode="有线" if chg else "2.4G",
+                        vid=vid,
+                        pid=pid,
+                        connected=True,
+                        online=online,
+                        asleep=not online,
+                        percent=pct,
+                        charging=chg,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="" if online else "耳机离线或等待状态上报",
                         provider_name=self.name,
                     )
                 )

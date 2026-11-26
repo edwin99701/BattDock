@@ -20,6 +20,7 @@ from .hyperx_hid import HyperXHidProvider
 from .logitech_hidpp import LogitechHidppProvider
 from .manager import DeviceManager, sanitize_device_reading
 from .razer_hid import RazerHidProvider
+from .standard_hid import StandardHidBatteryProvider
 from .steelseries_hid import SteelSeriesHidProvider
 from .vgn_provider import VgnCompxProvider
 from .wireless_headsets import WirelessHeadsetsProvider
@@ -40,6 +41,7 @@ __all__ = [
     "ExtraBrandsProvider",
     "WirelessHeadsetsProvider",
     "WirelessKeyboardsProvider",
+    "StandardHidBatteryProvider",
     "BluetoothBatteryProvider",
     "parse_airpods_continuity",
     "KIND_MOUSE",

@@ -293,6 +293,57 @@ def parse_alienware_kb_reply(raw: list[int] | bytes) -> Optional[tuple[int, bool
     return None
 
 
+# ================= 5. Rongyuan (荣元) 2.4G 无线键盘平台 (Feature 0xF7, FFFF:0002) & URX Core75 (VIA 08 00 07) =================
+RONGYUAN_RECEIVERS: set[tuple[int, int]] = {
+    (0x0DB0, 0x197E), (0x0DB0, 0x8E9A), (0x145F, 0x0376), (0x145F, 0x038D), (0x14A5, 0xC045),
+    (0x25AA, 0x2008), (0x25AA, 0x4008), (0x25AA, 0x4018),
+    (0x3151, 0x4011), (0x3151, 0x4014), (0x3151, 0x4017), (0x3151, 0x4021), (0x3151, 0x4027), (0x3151, 0x402D), (0x3151, 0x4038),
+    (0x3151, 0x5006), (0x3151, 0x5007), (0x3151, 0x5008), (0x3151, 0x5020), (0x3151, 0x5026), (0x3151, 0x502B), (0x3151, 0x5031),
+    (0x3151, 0x5037), (0x3151, 0x5038), (0x3151, 0x503D), (0x3151, 0x503F), (0x3151, 0x5040), (0x3151, 0x5042), (0x3151, 0x5045),
+    (0x3151, 0x504B), (0x3151, 0x504E), (0x3151, 0x5050), (0x3151, 0x5052), (0x3151, 0x5055), (0x3151, 0x505A),
+    (0x342D, 0xE3E0), (0x342D, 0xE3E1), (0x342D, 0xE3E2), (0x342D, 0xE3E6), (0x342D, 0xE3E7), (0x342D, 0xE3E8),
+    (0x342D, 0xE3F5), (0x342D, 0xE3F6), (0x342D, 0xE3F7), (0x342D, 0xE3FB), (0x342D, 0xE3FC), (0x342D, 0xE3FD),
+    (0x347A, 0xA302), (0x347A, 0xA305),
+    (0x374A, 0xA205), (0x374A, 0xA217), (0x374A, 0xA220), (0x374A, 0xA223), (0x374A, 0xA226), (0x374A, 0xA229),
+    (0x374A, 0xA234), (0x374A, 0xA237), (0x374A, 0xA251), (0x374A, 0xA263), (0x374A, 0xA268),
+    (0x374A, 0xA311), (0x374A, 0xA314), (0x374A, 0xA319), (0x374A, 0xA322), (0x374A, 0xA329), (0x374A, 0xA355),
+    (0x379A, 0x1804), (0x379A, 0x1807), (0x38A9, 0x0002),
+    (0x38EE, 0x0000), (0x38EE, 0x0002), (0x38EE, 0x0004), (0x38EE, 0x0039),
+    (0x391D, 0x1A04), (0x391D, 0x1A08), (0x391D, 0x1A0E), (0x391D, 0x1A13), (0x391D, 0x1A25), (0x391D, 0x1A2B),
+    (0x391D, 0x1A34), (0x391D, 0x2017), (0x391D, 0x2A05),
+    (0x39AB, 0x7000), (0x39AB, 0x7003), (0x39AB, 0x7006), (0x39AB, 0x7007), (0x39AB, 0x7008), (0x39AB, 0x7009),
+}
+
+
+def parse_rongyuan_status(raw: list[int] | bytes) -> Optional[dict[str, Optional[int] | bool]]:
+    """解析荣元 2.4G 接收器 Feature 0xF7 回包 `[00, canRead, kbBat, mouseBat, kbOffline, mouseOffline, canSend]`。"""
+    r = list(raw)
+    if len(r) < 7:
+        return None
+    if not any(r[2:7]):
+        return None
+    kb_online = r[4] == 0
+    mouse_online = r[5] == 0
+    kb_pct = int(r[2]) if (kb_online and 1 <= r[2] <= 100) else None
+    mouse_pct = int(r[3]) if (mouse_online and 1 <= r[3] <= 100) else None
+    return {
+        "kb_online": kb_online,
+        "kb_percent": kb_pct,
+        "mouse_online": mouse_online,
+        "mouse_percent": mouse_pct,
+    }
+
+
+def parse_urx_via_battery(raw: list[int] | bytes) -> Optional[int]:
+    """解析 URX Core75 VIA `08 00 07 LL` 回包 -> percent。"""
+    r = list(raw)
+    off = 1 if (len(r) >= 5 and r[0] == 0x00 and r[1] == 0x08) else 0
+    if len(r) < off + 4 or r[off : off + 3] != [0x08, 0x00, 0x07]:
+        return None
+    lvl = int(r[off + 3])
+    return lvl if 1 <= lvl <= 100 else None
+
+
 APPLE_MAGIC_KB_PIDS: dict[int, str] = {
     0x0267: "Apple Magic Keyboard",
     0x026C: "Apple Magic Keyboard with Numeric Keypad",
@@ -914,6 +965,140 @@ class WirelessKeyboardsProvider(BatteryProvider):
                                 charging=chg,
                                 full=full,
                                 support_status=STATUS_PROTOCOL,
+                                provider_name=self.name,
+                            ),
+                            now_mono,
+                        )
+                    )
+            # 5. URX Core75 VIA 2.4G 键盘 (36B0:3002, Interface 1, FF60:0061, 仅限产品名匹配 URX Core75)
+            elif vid == 0x36B0 and pid == 0x3002:
+                prod_str = str(d.get("product_string") or "").strip()
+                if (
+                    int(d.get("interface_number", -1)) != 1
+                    or int(d.get("usage_page", 0)) != 0xFF60
+                    or int(d.get("usage", 0)) != 0x0061
+                    or not prod_str.lower().startswith("urx core75")
+                ):
+                    continue
+                in_len, out_len, _ = get_hid_report_lengths(path)
+                if in_len != 33 or out_len != 33:
+                    continue
+                dev_id = "kb-urx:core75"
+                if dev_id in seen:
+                    continue
+                seen.add(dev_id)
+                cached = self._get_throttled(dev_id, now_mono, force)
+                if cached is not None:
+                    out.append(cached)
+                    continue
+                pct = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    hid_drain(dev, 33, 4, 5)
+                    dev.write(pad_report(33, [0x00, 0x08, 0x00, 0x07]))
+                    for _ in range(4):
+                        raw = dev.read(33, 250)
+                        if not raw:
+                            break
+                        pct = parse_urx_via_battery(raw)
+                        if pct is not None:
+                            break
+                except OSError:
+                    pct = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                if pct is not None:
+                    self._proven_shared.add(dev_id)
+                elif dev_id not in self._proven_shared:
+                    continue
+                out.append(
+                    self._remember(
+                        DeviceBattery(
+                            device_id=dev_id,
+                            name="URX Core75",
+                            brand="URX",
+                            kind=KIND_KEYBOARD,
+                            connection_mode="2.4G" if pct is not None else "休眠",
+                            vid=vid,
+                            pid=pid,
+                            connected=True,
+                            online=pct is not None,
+                            asleep=pct is None,
+                            percent=pct,
+                            support_status=STATUS_PROTOCOL,
+                            status_detail="" if pct is not None else "休眠中",
+                            provider_name=self.name,
+                        ),
+                        now_mono,
+                    )
+                )
+
+            # 6. Rongyuan (荣元) 2.4G 无线键盘/双槽接收器平台 (Interface 2, FFFF:0002, Feature 0xF7)
+            elif (vid, pid) in RONGYUAN_RECEIVERS:
+                if (
+                    int(d.get("interface_number", -1)) != 2
+                    or int(d.get("usage_page", 0)) != 0xFFFF
+                    or int(d.get("usage", 0)) != 0x0002
+                ):
+                    continue
+                _, _, feat_len = get_hid_report_lengths(path)
+                if feat_len < 7:
+                    continue
+                kb_id = f"kb-rongyuan:{vid:04x}:{pid:04x}"
+                if kb_id in seen:
+                    continue
+                seen.add(kb_id)
+                cached = self._get_throttled(kb_id, now_mono, force)
+                if cached is not None:
+                    out.append(cached)
+                    continue
+                status = None
+                dev = hid.device()
+                try:
+                    dev.open_path(path)
+                    req = [0x00] * feat_len
+                    req[1] = 0xF7
+                    for _ in range(2):
+                        if dev.send_feature_report(req) > 0:
+                            time.sleep(0.025)
+                            rep = dev.get_feature_report(0, feat_len)
+                            status = parse_rongyuan_status(rep) if rep else None
+                            if status is not None:
+                                break
+                except OSError:
+                    status = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
+                if status and status["kb_online"]:
+                    self._proven_shared.add(kb_id)
+                if kb_id in self._proven_shared:
+                    kb_on = bool(status and status["kb_online"])
+                    kb_pct = status["kb_percent"] if (status and kb_on) else None
+                    prod = str(d.get("product_string") or "").strip()
+                    name = prod if (prod and prod.lower() not in ("2.4g wireless receiver", "2.4g dongle", "usb receiver")) else "Rongyuan 2.4G 无线键盘"
+                    out.append(
+                        self._remember(
+                            DeviceBattery(
+                                device_id=kb_id,
+                                name=name,
+                                brand=_infer_kb_brand(name, "Akko" if vid == 0x38EE else "Attack Shark"),
+                                kind=KIND_KEYBOARD,
+                                connection_mode="2.4G" if kb_on else "休眠",
+                                vid=vid,
+                                pid=pid,
+                                connected=True,
+                                online=kb_on,
+                                asleep=not kb_on,
+                                percent=kb_pct if isinstance(kb_pct, int) else None,
+                                support_status=STATUS_PROTOCOL,
+                                status_detail="" if kb_on else "休眠中",
                                 provider_name=self.name,
                             ),
                             now_mono,

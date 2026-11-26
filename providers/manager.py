@@ -30,6 +30,7 @@ from .extra_brands import ExtraBrandsProvider
 from .hyperx_hid import HyperXHidProvider
 from .logitech_hidpp import LogitechHidppProvider
 from .razer_hid import RazerHidProvider
+from .standard_hid import StandardHidBatteryProvider
 from .steelseries_hid import SteelSeriesHidProvider
 from .vgn_provider import VgnCompxProvider
 from .wireless_headsets import WirelessHeadsetsProvider
@@ -89,6 +90,7 @@ class DeviceManager:
             ExtraBrandsProvider(),
             WirelessHeadsetsProvider(),
             WirelessKeyboardsProvider(),
+            StandardHidBatteryProvider(),
             BluetoothBatteryProvider(),
         ]
         self._poll_lock = threading.RLock()

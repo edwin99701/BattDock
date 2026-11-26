@@ -1,5 +1,21 @@
 # 更新日志（CHANGELOG）
 
+## BattDock v2.7.0（2026-11-26）— 修复 iKF 与蓝牙耳机漏识别、新增标准 HID 通用电池读取与多品牌耳机/键盘扩展
+
+### 修复 iKF 与 Windows 蓝牙耳机/键盘漏识别
+- **重构 Windows 蓝牙 PnP MAC 跨节点聚合（`providers/bluetooth_provider.py`）**：定位并修复包括 **iKF**、漫步者 Edifier、水月雨、Bose、Sony 及蓝牙无线键盘在 Windows 下经常无法识别的根因——Windows 通常将真实型号名与 `IsConnected` 挂在 `DEV_<MAC>` 根节点，而将电量属性挂在 HFP 音频子节点（名称为泛化服务名 `Microsoft Bluetooth Hands-Free Profile Audio Device`）或 BLE `Battery Service` 子节点。新版按 12 位蓝牙 MAC 地址跨节点聚合型号名、在线状态、HFP/A2DP 音频类型与电量，自动过滤离线节点并新增 iKF、漫步者、Keychron、NuPhy、Royal Kludge、Akko、DAREU、MelGeek、Lofree 等 25+ 品牌智能归类。
+- **说明（iKF 2.4G 接收器边界）**：若 iKF 2.4G 接收器在 HID 描述符中暴露标准 `Battery Strength (0x06:0x20)` 将自动识别；对仅注册为纯 USB Audio 音频设备而未公开私有 HID 通道的 2.4G 接收器型号（如部分 `0E6A:0110` 方案），建议切换蓝牙模式连接或导出脱敏诊断报告协助适配。
+
+### 新增标准 USB HID 通用电池兜底适配器（`providers/standard_hid.py`）
+- **零写操作、免驱读取标准 HID `0x06:0x20` 电量**：通过 Win32 只读 `HidD_GetPreparsedData` / `HidP_GetSpecificValueCaps` / `HidD_GetFeature` 自动发现并读取所有遵循 USB HID Generic Device Controls `Battery Strength (0x06:0x20)` 规范的 2.4G/有线无线耳机、无线键盘与鼠标，自动按报告描述符 `LogicalMin..LogicalMax` 归一化并跳过已有专用适配器的品牌与蓝牙 HID，内置 120 秒节流且绝不伪造 `0%`。
+
+### 新增无线耳机与无线键盘品牌协议支持（协议已实现待实测）
+- **新增无线耳机只读协议（`providers/wireless_headsets.py`）**：新增 **Alienware AW920H**（`413C:A515`）、**Poly Voyager (BT600)**（`047F`）、**Jabra Link 380 / Link 390 / Evolve2 65 Flex / Evolve3 75**（`0B0E`）、**Fractal Design Scape**（`36BC`）、**MOONDROP 水月雨 GM01 Pro**（`35D8:0133`）、**Sony PULSE 3D**（`054C:0D5E`，被动只读 `0xB0` 报告）及 **JBL Quantum 520X**（`0ECB:21A7/21A9`）。
+- **新增无线键盘只读协议（`providers/wireless_keyboards.py`）**：新增 **荣元（Rongyuan）2.4G 接收器平台**（`Feature 0xF7`，覆盖 Attack Shark / Akko / Royuan / MSI / Trust 等 80+ 无线键盘/双通道接收器 PID）与 **URX Core75**（`36B0:3002`，VIA `08 00 07` 仅严格匹配产品名）。
+- **同步更新设置页品牌目录、命名规范与单元测试**：扩展 `providers/device_naming.py` 规范品牌映射与设置页支持设备目录；全量 38 项单元测试全部通过。
+
+---
+
 ## BattDock v2.6.1（2026-11-26）— 新增国内多节点更新加速与故障自动切换
 
 ### 在线更新加速与稳定性优化

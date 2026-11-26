@@ -191,21 +191,128 @@ _PKEY_IS_CONNECTED = _DEVPROPKEY(_make_guid(0x83DA6326, 0x97A6, 0x4088, "9453A19
 _PKEY_FRIENDLY_NAME = _DEVPROPKEY(_make_guid(0xA45C254E, 0xDF1C, 0x4EFD, "802067D146A850E0"), 14)
 # DEVPKEY_NAME: {B725F130-47EF-101A-A5F1-02608C9EEBAC}, 10 (STRING)
 _PKEY_NAME = _DEVPROPKEY(_make_guid(0xB725F130, 0x47EF, 0x101A, "A5F102608C9EEBAC"), 10)
+# DEVPKEY_Device_DeviceDesc: {A45C254E-DF1C-4EFD-8020-67D146A850E0}, 2 (STRING)
+_PKEY_DEVICE_DESC = _DEVPROPKEY(_make_guid(0xA45C254E, 0xDF1C, 0x4EFD, "802067D146A850E0"), 2)
+
+# Windows 蓝牙服务通用占位名（绝不能直接当作设备型号名，应从同 MAC 的根设备节点获取真实型号）
+_GENERIC_BT_SERVICE_NAMES = {
+    "bluetooth hands-free audio device",
+    "bluetooth hands-free ag audio",
+    "microsoft bluetooth hands-free profile audio device",
+    "microsoft 蓝牙免提配置文件音频设备",
+    "蓝牙免提音频设备",
+    "免提 ag 音频",
+    "bluetooth avrcp transport driver",
+    "microsoft bluetooth avrcp transport driver",
+    "bluetooth device",
+    "bluetooth low energy gatt compliant hid device",
+    "generic attribute profile",
+    "battery service",
+    "电池服务",
+    "device information service",
+    "hid over gatt",
+    "bluetooth hid device",
+    "蓝牙 hid 设备",
+    "bluetooth le generic attribute service",
+}
 
 
-def _infer_bt_brand_and_kind(name: str) -> tuple[str, str]:
-    low = name.lower()
+def parse_bluetooth_address(instance_id: str) -> str:
+    """从 Windows 蓝牙设备 InstanceId 提取 12 位十六进制 MAC 地址（取最后一组恰好 12 位 hex）。"""
+    s = (instance_id or "").strip()
+    last = ""
+    i = 0
+    n = len(s)
+    while i < n:
+        if s[i] not in "0123456789abcdefABCDEF":
+            i += 1
+            continue
+        start = i
+        while i < n and s[i] in "0123456789abcdefABCDEF":
+            i += 1
+        if i - start == 12:
+            last = s[start:i].upper()
+    return last
+
+
+def _clean_bt_device_name(raw_name: str) -> str:
+    name = (raw_name or "").strip()
+    for suffix in (
+        " Hands-Free AG Audio",
+        " Hands-Free AG",
+        " Hands-Free Audio",
+        " Hands-Free",
+        " Stereo",
+        " Avrcp Transport",
+        " 免提 AG 音频",
+        " 免提",
+        " 立体声",
+    ):
+        if name.lower().endswith(suffix.lower()):
+            name = name[: -len(suffix)].strip()
+    return name
+
+
+def _is_generic_bt_service_name(name: str) -> bool:
+    low = (name or "").strip().lower()
+    if not low:
+        return True
+    if low in _GENERIC_BT_SERVICE_NAMES:
+        return True
+    if low.startswith(("microsoft bluetooth", "bluetooth generic", "bluetooth le ", "标准蓝牙")):
+        return True
+    return False
+
+
+def _infer_bt_brand_and_kind(name: str, has_audio_profile: bool = False) -> tuple[str, str]:
+    low = (name or "").lower()
     brand = "Bluetooth"
     for kw, b in (
+        ("ikf", "iKF"),
         ("airpods", "Apple"),
+        ("magic keyboard", "Apple"),
+        ("magic mouse", "Apple"),
         ("beats", "Apple"),
+        ("edifier", "Edifier"),
+        ("hecate", "Edifier"),
+        ("漫步者", "Edifier"),
+        ("moondrop", "MOONDROP"),
+        ("水月雨", "MOONDROP"),
         ("sony", "Sony"),
         ("wh-", "Sony"),
         ("wf-", "Sony"),
         ("inzone", "Sony"),
+        ("bose", "Bose"),
+        ("sennheiser", "Sennheiser"),
+        ("momentum", "Sennheiser"),
+        ("marshall", "Marshall"),
+        ("jbl", "JBL"),
+        ("akg", "AKG"),
+        ("soundcore", "Anker"),
+        ("anker", "Anker"),
+        ("shokz", "Shokz"),
+        ("openrun", "Shokz"),
+        ("audio-technica", "Audio-Technica"),
+        ("ath-", "Audio-Technica"),
+        ("jabra", "Jabra"),
+        ("poly", "Poly"),
+        ("epos", "EPOS"),
+        ("audeze", "Audeze"),
+        ("skullcandy", "Skullcandy"),
+        ("xiaomi", "Xiaomi"),
+        ("redmi", "Xiaomi"),
+        ("huawei", "HUAWEI"),
+        ("freebuds", "HUAWEI"),
+        ("oppo", "OPPO"),
+        ("enco", "OPPO"),
+        ("samsung", "Samsung"),
+        ("galaxy buds", "Samsung"),
+        ("nothing", "Nothing"),
         ("logitech", "Logitech"),
         ("mx master", "Logitech"),
         ("mx anywhere", "Logitech"),
+        ("mx keys", "Logitech"),
+        ("mx mechanical", "Logitech"),
         ("razer", "Razer"),
         ("steelseries", "SteelSeries"),
         ("arctis", "SteelSeries"),
@@ -213,6 +320,23 @@ def _infer_bt_brand_and_kind(name: str) -> tuple[str, str]:
         ("hyperx", "HyperX"),
         ("rog ", "ASUS ROG"),
         ("asus", "ASUS ROG"),
+        ("keychron", "Keychron"),
+        ("nuphy", "NuPhy"),
+        ("royal kludge", "Royal Kludge"),
+        ("rk ", "Royal Kludge"),
+        ("rk-", "Royal Kludge"),
+        ("akko", "Akko"),
+        ("dareu", "DAREU"),
+        ("melgeek", "MelGeek"),
+        ("lofree", "Lofree"),
+        ("wobkey", "WOBKEY"),
+        ("cidoo", "CIDOO"),
+        ("leobog", "LEOBOG"),
+        ("aula", "AULA"),
+        ("ajazz", "AJAZZ"),
+        ("attack shark", "Attack Shark"),
+        ("epomaker", "EPOMAKER"),
+        ("cherry", "CHERRY"),
         ("vgn", "VGN"),
         ("vxe", "VXE"),
         ("atk", "ATK"),
@@ -225,23 +349,181 @@ def _infer_bt_brand_and_kind(name: str) -> tuple[str, str]:
             break
 
     kind = KIND_OTHER
-    if any(k in low for k in ("airpods", "buds", "wf-", "earbud", "freebuds", "pods")):
+    if any(k in low for k in ("airpods", "buds", "wf-", "earbud", "freebuds", "enco", "pods", "tws", "t3", "nano")):
         kind = KIND_EARBUDS
-    elif any(k in low for k in ("headset", "headphone", "arctis", "wh-", "cloud", "void", "hs", "audio", "耳机", "max")):
+    elif any(
+        k in low
+        for k in (
+            "ikf",
+            "headset",
+            "headphone",
+            "arctis",
+            "wh-",
+            "cloud",
+            "void",
+            "hs70",
+            "hs80",
+            "virtuoso",
+            "quantum",
+            "blackshark",
+            "kraken",
+            "barracuda",
+            "audio",
+            "edifier",
+            "hecate",
+            "bose",
+            "sennheiser",
+            "marshall",
+            "soundcore",
+            "shokz",
+            "moondrop",
+            "jabra",
+            "epos",
+            "audeze",
+            "skullcandy",
+            "耳机",
+            "耳麦",
+            "max",
+        )
+    ):
         kind = KIND_HEADSET
     elif any(k in low for k in ("mouse", "master", "anywhere", "viper", "deathadder", "aerox", "鼠标", "dragonfly")):
         kind = KIND_MOUSE
-    elif any(k in low for k in ("keyboard", "keychron", "azoth", "falchion", "键盘")):
+    elif any(
+        k in low
+        for k in (
+            "keyboard",
+            "keychron",
+            "nuphy",
+            "royal kludge",
+            "rk ",
+            "rk-",
+            "azoth",
+            "falchion",
+            "mx keys",
+            "mx mechanical",
+            "akko",
+            "lofree",
+            "melgeek",
+            "wobkey",
+            "cidoo",
+            "leobog",
+            "hhkb",
+            "niz",
+            "键盘",
+        )
+    ):
         kind = KIND_KEYBOARD
+    elif has_audio_profile:
+        kind = KIND_HEADSET
     return brand, kind
 
 
+def aggregate_bluetooth_pnp_nodes(
+    raw_nodes: list[dict],
+    provider_name: str = "bluetooth",
+) -> list[DeviceBattery]:
+    """按 12 位蓝牙 MAC 地址聚合同一设备的主节点与 HFP/A2DP/BLE GATT 子节点。
+
+    彻底解决 Windows 上蓝牙耳机（如 iKF、漫步者、Sony 等）电量挂在 HFP 子节点、
+    而真实型号名与 IsConnected 挂在 DEV_<MAC> 根节点的漏识别问题。
+    """
+    groups: dict[str, dict] = {}
+    for node in raw_nodes:
+        inst_id = str(node.get("instance_id") or "")
+        mac = parse_bluetooth_address(inst_id)
+        if not mac:
+            continue
+        grp = groups.setdefault(
+            mac,
+            {
+                "mac": mac,
+                "root_name": "",
+                "best_name": "",
+                "battery": None,
+                "root_connected": None,
+                "any_connected": False,
+                "any_conn_reported": False,
+                "has_audio_profile": False,
+            },
+        )
+        inst_up = inst_id.upper()
+        is_root = "\\DEV_" in inst_up
+        if any(guid in inst_up for guid in ("0000111E-", "0000110B-", "00001108-", "0000111F-")):
+            grp["has_audio_profile"] = True
+
+        pct = node.get("battery")
+        if pct is not None and 0 <= int(pct) <= 100:
+            # 优先保留非 0 的有效读数，或尚未有读数时记录
+            if grp["battery"] is None or (grp["battery"] == 0 and int(pct) > 0):
+                grp["battery"] = int(pct)
+
+        conn = node.get("is_connected")
+        if conn is not None:
+            grp["any_conn_reported"] = True
+            if bool(conn):
+                grp["any_connected"] = True
+            if is_root:
+                grp["root_connected"] = bool(conn)
+
+        cleaned = _clean_bt_device_name(str(node.get("name") or ""))
+        if cleaned and not _is_generic_bt_service_name(cleaned):
+            if is_root and not grp["root_name"]:
+                grp["root_name"] = cleaned
+            if not grp["best_name"]:
+                grp["best_name"] = cleaned
+
+    devices: list[DeviceBattery] = []
+    seen_ids: set[str] = set()
+    for mac, grp in groups.items():
+        if grp["battery"] is None:
+            continue
+        # 若主节点或任一服务节点明确在线则视为在线；若系统未提供 IsConnected 属性默认在线；若全为离线则跳过
+        if grp["root_connected"] is True or grp["any_connected"]:
+            is_online = True
+        elif grp["root_connected"] is False and not grp["any_connected"]:
+            is_online = False
+        elif grp["any_conn_reported"]:
+            is_online = False
+        else:
+            is_online = True
+        if not is_online:
+            continue
+
+        name = grp["root_name"] or grp["best_name"]
+        if not name:
+            continue
+        dev_id = f"bt:{mac.lower()}"
+        if dev_id in seen_ids:
+            continue
+        seen_ids.add(dev_id)
+
+        brand, kind = _infer_bt_brand_and_kind(name, has_audio_profile=grp["has_audio_profile"])
+        devices.append(
+            DeviceBattery(
+                device_id=dev_id,
+                name=name,
+                brand=brand,
+                kind=kind,
+                connection_mode="蓝牙",
+                connected=True,
+                online=True,
+                asleep=False,
+                percent=int(grp["battery"]),
+                charging=False,
+                support_status=STATUS_PROTOCOL,
+                status_detail="Windows 蓝牙电量服务",
+                provider_name=provider_name,
+            )
+        )
+    return devices
+
+
 def query_windows_bluetooth_pnp_batteries(provider_name: str = "bluetooth") -> list[DeviceBattery]:
-    """通过 Windows SetupAPI 只读枚举带 DEVPKEY_Device_BatteryLevel 的蓝牙设备。"""
+    """通过 Windows SetupAPI 只读枚举 BTHENUM / BTHLE / BTHLEDEVICE 节点并按蓝牙 MAC 聚合电量。"""
     if sys.platform != "win32":
         return []
-    devices: list[DeviceBattery] = []
-    seen_names: set[str] = set()
+    raw_nodes: list[dict] = []
     try:
         setupapi = ctypes.windll.setupapi
         DIGCF_PRESENT = 0x00000002
@@ -287,31 +569,42 @@ def query_windows_bluetooth_pnp_batteries(provider_name: str = "bluetooth") -> l
                         break
                     idx += 1
 
-                    # 读取电量属性（1 字节 0..100）
+                    inst_buf = ctypes.create_unicode_buffer(512)
+                    inst_req = wintypes.DWORD(0)
+                    if not setupapi.SetupDiGetDeviceInstanceIdW(
+                        hdev, ctypes.byref(dev_data), inst_buf, 512, ctypes.byref(inst_req)
+                    ):
+                        continue
+                    inst_id = inst_buf.value.strip()
+                    if not inst_id:
+                        continue
+
+                    # 1. 读取电量属性（可选：根节点通常没有，HFP/GATT 子节点才有）
+                    pct: Optional[int] = None
                     prop_type = wintypes.ULONG(0)
                     bat_buf = (ctypes.c_ubyte * 4)()
                     req_size = wintypes.DWORD(0)
-                    ok = setupapi.SetupDiGetDevicePropertyW(
-                        hdev,
-                        ctypes.byref(dev_data),
-                        ctypes.byref(_PKEY_BATTERY_LEVEL),
-                        ctypes.byref(prop_type),
-                        bat_buf,
-                        4,
-                        ctypes.byref(req_size),
-                        0,
-                    )
-                    if not ok or req_size.value < 1:
-                        continue
-                    pct = int(bat_buf[0])
-                    if not (0 <= pct <= 100):
-                        continue
+                    if (
+                        setupapi.SetupDiGetDevicePropertyW(
+                            hdev,
+                            ctypes.byref(dev_data),
+                            ctypes.byref(_PKEY_BATTERY_LEVEL),
+                            ctypes.byref(prop_type),
+                            bat_buf,
+                            4,
+                            ctypes.byref(req_size),
+                            0,
+                        )
+                        and req_size.value >= 1
+                        and 0 <= int(bat_buf[0]) <= 100
+                    ):
+                        pct = int(bat_buf[0])
 
-                    # 检查是否在线（若无 IsConnected 属性，则默认在线）
+                    # 2. 读取在线状态
+                    is_conn: Optional[bool] = None
                     conn_buf = (ctypes.c_ubyte * 4)()
                     conn_type = wintypes.ULONG(0)
                     conn_req = wintypes.DWORD(0)
-                    is_online = True
                     if setupapi.SetupDiGetDevicePropertyW(
                         hdev,
                         ctypes.byref(dev_data),
@@ -322,13 +615,11 @@ def query_windows_bluetooth_pnp_batteries(provider_name: str = "bluetooth") -> l
                         ctypes.byref(conn_req),
                         0,
                     ):
-                        is_online = conn_buf[0] != 0
-                    if not is_online:
-                        continue
+                        is_conn = conn_buf[0] != 0
 
-                    # 读取设备名称
+                    # 3. 读取设备名称（FriendlyName -> DEVPKEY_NAME -> DeviceDesc）
                     name = ""
-                    for pkey in (_PKEY_FRIENDLY_NAME, _PKEY_NAME):
+                    for pkey in (_PKEY_FRIENDLY_NAME, _PKEY_NAME, _PKEY_DEVICE_DESC):
                         str_buf = ctypes.create_unicode_buffer(256)
                         st_type = wintypes.ULONG(0)
                         st_req = wintypes.DWORD(0)
@@ -343,52 +634,25 @@ def query_windows_bluetooth_pnp_batteries(provider_name: str = "bluetooth") -> l
                             0,
                         ):
                             cand = str_buf.value.strip()
-                            if cand:
+                            if cand and not _is_generic_bt_service_name(_clean_bt_device_name(cand)):
                                 name = cand
                                 break
-                    if not name:
-                        continue
-                    # 清理 Windows HFP 后缀
-                    for suffix in (" Hands-Free AG", " Hands-Free", " Stereo", " Avrcp Transport"):
-                        if name.endswith(suffix):
-                            name = name[: -len(suffix)].strip()
+                            if cand and not name:
+                                name = cand
 
-                    inst_buf = ctypes.create_unicode_buffer(256)
-                    inst_req = wintypes.DWORD(0)
-                    inst_id = name
-                    if setupapi.SetupDiGetDeviceInstanceIdW(
-                        hdev, ctypes.byref(dev_data), inst_buf, 256, ctypes.byref(inst_req)
-                    ):
-                        inst_id = inst_buf.value.strip() or name
-
-                    norm_key = name.lower()
-                    if norm_key in seen_names:
-                        continue
-                    seen_names.add(norm_key)
-
-                    brand, kind = _infer_bt_brand_and_kind(name)
-                    devices.append(
-                        DeviceBattery(
-                            device_id=f"bt:{norm_key}",
-                            name=name,
-                            brand=brand,
-                            kind=kind,
-                            connection_mode="蓝牙",
-                            connected=True,
-                            online=True,
-                            asleep=False,
-                            percent=pct,
-                            charging=False,
-                            support_status=STATUS_PROTOCOL,
-                            status_detail="Windows 蓝牙电量服务",
-                            provider_name=provider_name,
-                        )
+                    raw_nodes.append(
+                        {
+                            "instance_id": inst_id,
+                            "name": name,
+                            "battery": pct,
+                            "is_connected": is_conn,
+                        }
                     )
             finally:
                 setupapi.SetupDiDestroyDeviceInfoList(hdev)
     except Exception:
         return []
-    return devices
+    return aggregate_bluetooth_pnp_nodes(raw_nodes, provider_name=provider_name)
 
 
 class BluetoothBatteryProvider(BatteryProvider):

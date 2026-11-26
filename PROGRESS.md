@@ -1,8 +1,8 @@
 # PROGRESS.md — BattDock 项目真实开发进度看板
 
 > 最后更新：2026-11-26  
-> 当前最新正式版本：**BattDock v2.6.1**（国内多节点更新加速与自动切源）  
-> 关键历史基线：v1 单设备基线 `8075917` ｜ v2.0 多品牌底层基线 `45e9cd4` ｜ v2.3.0 品牌升级 `7a3bb61` ｜ v2.4.0 图标与更新重构 `7efafee` ｜ v2.5.0 体验升级 `448cd83` ｜ v2.5.1 Win10 圆角修复 `4e7df67` ｜ v2.5.2 稳定性修复 `1432b35` ｜ v2.6.0 无线键鼠耳机扩展 `e20a534`
+> 当前最新正式版本：**BattDock v2.7.0**（iKF 与蓝牙耳机 MAC 聚合修复、标准 USB HID 通用电池与多品牌耳机/键盘扩展）  
+> 关键历史基线：v1 单设备基线 `8075917` ｜ v2.0 多品牌底层基线 `45e9cd4` ｜ v2.3.0 品牌升级 `7a3bb61` ｜ v2.4.0 图标与更新重构 `7efafee` ｜ v2.5.0 体验升级 `448cd83` ｜ v2.5.1 Win10 圆角修复 `4e7df67` ｜ v2.5.2 稳定性修复 `1432b35` ｜ v2.6.0 无线键鼠耳机扩展 `e20a534` ｜ v2.6.1 国内更新加速 `757abf6`
 
 ---
 
@@ -42,13 +42,18 @@
 - [x] **根治主窗口重开后关闭按钮红色 `:hover` 残留**：将 2 帧自动撤销改为 `:root.ui-await-pointer` 持久压制（不阻挡点击与键盘导航），直到重开 120ms 后检测到真实位移 >3px 的 `pointermove` 或 `pointerdown` 才解除，同时通过 `EnumChildWindows` 递归向深层 `Chrome_RenderWidgetHostHWND` 发送 `WM_CANCELMODE` / `WM_MOUSELEAVE`，已通过真实 Edge WebView2 DOM 验证。
 - [x] **新增无线键盘与无线耳机独立只读适配器**：新增 `providers/wireless_keyboards.py`（CompX BY / SONiX 含 QMK/VIA 隔离 / Evision / Semico / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard，内置 180s 在线节流）与 `providers/wireless_headsets.py`（Razer Audio / Logitech Centurion / ASTRO A50 / JBL Quantum / EPOS / Airoha RACE / C-Media / MCHOSE V9 Pro 2 / VGN OMNISOUND / Lenovo VoIP），并同步升级 Razer、Corsair、SteelSeries、HyperX 现有适配器及设置页支持设备目录；36/36 单元测试通过。
 
-- [x] **新增国内多节点更新加速与故障自动切换（v2.6.1）**：内置 4 个实测可用国内 HTTPS 加速节点，支持并发测速择优、故障无缝切源、纯国内免 `api.github.com` 检查更新、SHA-256 强制校验与设置页自定义 HTTPS 加速前缀；37/37 单元测试通过。
+- [x] **新增国内多节点更新加速与故障自动切换（v2.6.1）**：内置 4 个实测可用国内 HTTPS 加速节点，支持并发测速择优、故障无缝切源、纯国内免 `api.github.com` 检查更新、SHA-256 强制校验与设置页自定义 HTTPS 加速前缀；37/37 单元测试通过并已正式发布。
+
+### 阶段 7：iKF 与蓝牙漏识别修复、标准 USB HID 通用电池与耳机/键盘再扩展（v2.7.0）
+- [x] **修复 iKF 与 Windows 蓝牙耳机/键盘漏识别**：在 `providers/bluetooth_provider.py` 实现按 12 位蓝牙 MAC 跨节点聚合主节点型号/在线态与 HFP/BLE 子节点电量，自动识别 HFP/A2DP 音频耳机类型并新增 iKF / 漫步者 / 水月雨 / Bose / Sennheiser / Marshall / Soundcore / Shokz / Keychron / NuPhy / RK / Akko / DAREU / MelGeek / Lofree 等 25+ 品牌智能归类。
+- [x] **新增标准 USB HID 通用电池兜底适配器（`providers/standard_hid.py`）**：零写操作只读读取 USB HID `Battery Strength (0x06:0x20)` 特征报告，广谱覆盖所有遵循标准 HID 电量规范的无线耳机、键盘与鼠标。
+- [x] **继续扩充无线耳机与无线键盘品牌协议**：新增 Alienware AW920H、Poly Voyager (BT600)、Jabra Link 380/390/Evolve2/3、Fractal Design Scape、MOONDROP 水月雨 GM01 Pro、Sony PULSE 3D、JBL Quantum 520X 无线耳机以及荣元（Rongyuan）2.4G 键盘接收器平台（80+ PID）与 URX Core75 无线键盘；全量 38/38 单元测试通过。
 
 ---
 
 ## 二、当前状态
 
-- **BattDock v2.6.1** 已完成国内更新加速改造、全量单测（37/37）与国内实测下载校验，正在构建发布至 GitHub Releases（Latest）。
+- **BattDock v2.7.0** 已完成编码、文档同步与 38/38 单元测试，正在打包构建并发布至 GitHub Releases（Latest）。
 
 ---
 
@@ -64,7 +69,6 @@
 
 ## 四、待做事项与后续迭代计划
 
-1. **【高优先级待做】适配 iKF 无线耳机并解决无法识别问题**：排查 iKF 系列无线耳机（含 2.4G 接收器与蓝牙模式）在 Windows 下的 HID VID/PID、Usage Page、蓝牙 GATT / HFP 电量接口，调研同类开源项目及用户导出的脱敏 `diagnostics_*.json`，补充只读电量读取支持。
-2. **【高优先级待做】继续拓展无线耳机与无线键盘支持品牌**：持续跟进主流 MIT 开源项目与社区反馈，进一步扩充国产品牌与国际品牌无线耳机（如漫步者 Edifier、西伯利亚、雷神、漫步者 HECATE、黑爵、ATK/VXE 耳机等）及无线键盘（如 Keychron、NuPhy、RK Royal Kludge、达尔优、雷柏、罗技/海盗船/雷蛇新款等）的只读协议适配。
-3. 收集用户升级至 `v2.6.1` 后在国内更新加速、日常高频移动鼠标场景及 Windows 10 22H2 实体机上的实测反馈；
-4. 结合用户提交的新品牌无线外设 `diagnostics_*.json`，逐步扩充并实机验证 `SUPPORTED_DEVICES.md` 中的设备列表。
+1. **收集 iKF 2.4G 纯音频接收器脱敏诊断报告**：若用户使用不暴露标准 HID `0x06:0x20` 的特定 iKF 2.4G 接收器（如部分 Megawin `0E6A:0110` 型号），欢迎通过「设置 → 关于软件 → 导出诊断」提交 `diagnostics_*.json` 以便后续研究是否存在公开安全的只读接口（当前推荐使用蓝牙模式读取电量）。
+2. **收集用户升级至 `v2.7.0` 后的多品牌真机反馈**：持续跟进 iKF / 漫步者 / Keychron / NuPhy / 荣元 2.4G / 新耳机与键盘品牌实测反馈，以及国内更新加速、日常高频移动鼠标场景与 Windows 10 22H2 实体机目视复核。
+3. **持续补充新品牌只读协议**：结合社区提交的脱敏 `diagnostics_*.json` 与 MIT 开源协议资料，逐步扩充并实机验证 `SUPPORTED_DEVICES.md` 中的设备列表（含雷柏 2.4G 私有协议调研）。

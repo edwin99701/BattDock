@@ -1098,6 +1098,124 @@ class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
             self.assertEqual(res.summary_items, ["国内加速下载"])
             self.assertEqual(res.asset_size, 37000000)
 
+    def test_v270_ikf_bluetooth_aggregation_standard_hid_and_new_brands(self):
+        from providers.base import KIND_HEADSET, KIND_KEYBOARD
+        from providers.bluetooth_provider import aggregate_bluetooth_pnp_nodes, parse_bluetooth_address
+        from providers.device_naming import canonical_brand_name, normalize_device_display_name
+        from providers.manager import DeviceManager
+        from providers.standard_hid import infer_standard_hid_brand_and_kind, scale_hid_battery_value
+        from providers.wireless_headsets import (
+            parse_alienware_aw920h_reply,
+            parse_fractal_scape_reply,
+            parse_jabra_gn_battery,
+            parse_moondrop_gm01_reply,
+            parse_poly_bt600_reply,
+            parse_sony_pulse3d_report,
+        )
+        from providers.wireless_keyboards import parse_rongyuan_status, parse_urx_via_battery
+
+        # 1. iKF 蓝牙耳机按 MAC 聚合主节点名与 HFP 子节点电量（彻底解决漏识别）
+        self.assertEqual(
+            parse_bluetooth_address(r"BTHENUM\{0000111E-0000-1000-8000-00805F9B34FB}_VID&00010094_PID&0001\7&1234&0&AABBCCDDEEFF_C00000000"),
+            "AABBCCDDEEFF",
+        )
+        raw_nodes = [
+            {
+                "instance_id": r"BTHENUM\DEV_AABBCCDDEEFF\7&1234&0&BLUETOOTHDEVICE_AABBCCDDEEFF",
+                "name": "iKF-King",
+                "battery": None,
+                "is_connected": True,
+            },
+            {
+                "instance_id": r"BTHENUM\{0000111E-0000-1000-8000-00805F9B34FB}_LOCALMFG&0002\7&1234&0&AABBCCDDEEFF_C00000000",
+                "name": "Microsoft Bluetooth Hands-Free Profile Audio Device",
+                "battery": 85,
+                "is_connected": False,
+            },
+            # BLE Keychron 无线键盘（名称在根节点，电量在 Battery Service 0x180F 子节点）
+            {
+                "instance_id": r"BTHLE\DEV_112233445566\8&ABCD&0&112233445566",
+                "name": "Keychron K2 Pro",
+                "battery": None,
+                "is_connected": True,
+            },
+            {
+                "instance_id": r"BTHLEDEVICE\{0000180F-0000-1000-8000-00805F9B34FB}_DEV_VID&0205AC_PID&024F_REV&0001_112233445566\9&1111&0&001E",
+                "name": "Battery Service",
+                "battery": 64,
+                "is_connected": None,
+            },
+            # 离线蓝牙设备应过滤，绝不显示虚假电量
+            {
+                "instance_id": r"BTHENUM\DEV_FFEEDDCCBBAA\7&9999&0&BLUETOOTHDEVICE_FFEEDDCCBBAA",
+                "name": "iKF-Solo",
+                "battery": 50,
+                "is_connected": False,
+            },
+        ]
+        bt_devs = aggregate_bluetooth_pnp_nodes(raw_nodes)
+        self.assertEqual(len(bt_devs), 2)
+        by_id = {d.device_id: d for d in bt_devs}
+        ikf = by_id["bt:aabbccddeeff"]
+        self.assertEqual(ikf.name, "iKF-King")
+        self.assertEqual(ikf.brand, "iKF")
+        self.assertEqual(ikf.kind, KIND_HEADSET)
+        self.assertEqual(ikf.percent, 85)
+        self.assertEqual(canonical_brand_name(ikf.brand, ikf.name), "iKF")
+        self.assertEqual(normalize_device_display_name(ikf.name, brand=ikf.brand), "iKF-King")
+
+        kc = by_id["bt:112233445566"]
+        self.assertEqual(kc.brand, "Keychron")
+        self.assertEqual(kc.kind, KIND_KEYBOARD)
+        self.assertEqual(kc.percent, 64)
+
+        # 2. 标准 USB HID Battery Strength (0x06:0x20) 缩放与品牌推断
+        self.assertEqual(scale_hid_battery_value(75, 0, 100), 75)
+        self.assertEqual(scale_hid_battery_value(3, 0, 4), 75)
+        self.assertIsNone(scale_hid_battery_value(0, 0, 100))
+        self.assertEqual(infer_standard_hid_brand_and_kind("iKF-V11 Pro 2.4G"), ("iKF", KIND_HEADSET))
+        self.assertEqual(infer_standard_hid_brand_and_kind("NuPhy Air75 V2"), ("NuPhy", KIND_KEYBOARD))
+
+        # 3. 新增耳机协议解析器验证
+        aw = [0x07, 0xC0, 0x0A, 0x09, 0x00, 0x01, 78, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        xor_v = 0
+        for b in aw[3:13]:
+            xor_v ^= b
+        aw[13] = xor_v
+        self.assertEqual(parse_alienware_aw920h_reply(aw), (True, 78, True))
+
+        poly = [0x07, 0x01, 0x01, 0x10, 0x00, 0x02, 0x00, 0x00, 0x03, 0x0A, 0x1A, 4, 6, 1]
+        self.assertEqual(parse_poly_bt600_reply(poly), (80, True))
+
+        jabra = [0x05, 0x00, 0x01, 0x07, (3 << 6) | 8, 0x12, 0x02, 0x01, 92]
+        self.assertEqual(parse_jabra_gn_battery(jabra, expected_from=0x01, seq=0x07), (92, True))
+
+        scape = [0x02, 0xF1, 0x21] + [0x00] * 12 + [66] + [0x00] * 7 + [1]
+        self.assertEqual(parse_fractal_scape_reply(scape), (66, True))
+
+        moondrop = [0x4B, 0x80, 0x27, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 88]
+        self.assertEqual(parse_moondrop_gm01_reply(moondrop), 88)
+
+        self.assertEqual(parse_sony_pulse3d_report([0xB0, 0, 0, 70, 0x08, 0, 0, 0]), (True, 70, False))
+        self.assertEqual(parse_sony_pulse3d_report([0xB0, 0, 0, 0x80, 0x08, 0, 0, 0]), (True, None, True))
+
+        # 4. 新增无线键盘协议解析器验证（荣元 2.4G + URX Core75）
+        ry = parse_rongyuan_status([0x00, 0x01, 82, 0x00, 0x00, 0x01, 0x01])
+        self.assertIsNotNone(ry)
+        self.assertTrue(ry["kb_online"])
+        self.assertEqual(ry["kb_percent"], 82)
+        self.assertFalse(ry["mouse_online"])
+        self.assertIsNone(ry["mouse_percent"])
+
+        self.assertEqual(parse_urx_via_battery([0x08, 0x00, 0x07, 91]), 91)
+        self.assertEqual(parse_urx_via_battery([0x00, 0x08, 0x00, 0x07, 45]), 45)
+
+        # 5. DeviceManager 已注册 StandardHidBatteryProvider（共 11 个适配器）
+        mgr = DeviceManager()
+        names = [p.name for p in mgr.providers]
+        self.assertIn("standard_hid", names)
+        self.assertEqual(len(names), 11)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.6.1-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.7.0-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
 </a>
 
 </div>
@@ -94,16 +94,16 @@
 | :--- | :--- | :--- | :--- |
 | **VGN**（Dragonfly F2 Pro Max） | 无线鼠标 | 2.4GHz 无线连接 / USB 有线连接 | **已实机验证** |
 | **VGN / VXE / ATK / MCHOSE / LAMZU** | 无线鼠标、无线键盘、无线耳机（OMNISOUND / X9 / V9 Pro 等） | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **AULA / AJAZZ / Attack Shark / CHERRY / EPOMAKER / Redragon / Alienware** | 2.4GHz / 三模无线键盘（CompX BY / SONiX / Evision / Semico 等方案） | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **AULA / AJAZZ / Attack Shark / CHERRY / EPOMAKER / Redragon / Alienware / URX** | 2.4GHz / 三模无线键盘（CompX BY / SONiX / Evision / Semico / 荣元 2.4G / URX Core75） | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **Logitech 罗技 / ASTRO** | 无线鼠标、键盘、G 系列与 Centurion / ASTRO A50 / A20 X 无线耳机 | 2.4GHz 无线连接 / 蓝牙连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **Razer 雷蛇** | 无线鼠标、无线键盘（11 款）、BlackShark / Kraken / Barracuda 无线耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **SteelSeries 赛睿** | 无线鼠标、Arctis 1/7/9/Pro / Nova 5/7/Pro/Elite 无线耳机与 GameBuds | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **Corsair 海盗船** | SLIPSTREAM 鼠键（含 K70 Core TKL / MAKR 75）、Void / HS70 / HS80 / Virtuoso 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **HyperX** | Cloud Alpha / Alpha 2 / II / III / III S / Flight / Stinger 耳机、Pulsefire 鼠标 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
 | **ASUS ROG / TUF** | 无线鼠标、键盘、Omni 接收器、ROG 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **JBL / EPOS / Audeze / AKG / Skullcandy / FIFINE / Lenovo** | Quantum 全系、H3PRO Hybrid、Maxwell / 2、N9 Hybrid、PLYR、HT6、VoIP 耳机 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
-| **Sony 索尼** | INZONE H5 / H9 II / Buds、WH-1000XM5 等 | 2.4GHz 无线连接 / 蓝牙连接 | 协议已适配，待实机验证 |
-| **Apple / Beats & 标准蓝牙外设** | AirPods 全系、Beats、Apple Magic Keyboard 及标准蓝牙鼠键耳机 | 蓝牙连接 | 协议已适配，待实机验证 |
+| **JBL / EPOS / Audeze / AKG / Skullcandy / Jabra / Poly / Fractal / 水月雨 / Alienware** | Quantum 全系（含 520X）、H3PRO、Maxwell / 2、N9、PLYR、Jabra Link、Poly BT600、Scape、GM01 Pro、AW920H 等 | 2.4GHz 无线连接 / USB 有线连接 | 协议已适配，待实机验证 |
+| **Sony 索尼** | INZONE H5 / H9 II / Buds、PULSE 3D、WH-1000XM5 等 | 2.4GHz 无线连接 / 蓝牙连接 | 协议已适配，待实机验证 |
+| **iKF / 漫步者 / Keychron / NuPhy / Apple & 标准蓝牙 / 标准 HID 通用设备** | iKF / 漫步者 / Bose / Sennheiser / Marshall / Shokz 蓝牙耳机，Keychron / NuPhy / RK / Akko / DAREU / Lofree 蓝牙键盘，AirPods / Magic Keyboard 及标准 USB HID `0x06:0x20` 通用外设 | 蓝牙连接 / 2.4GHz / USB 标准 HID | 协议已适配，待实机验证 |
 
 > 实际兼容性可能因设备固件版本与连接方式而异；部分旧款雷柏（Rapoo）私有加密协议设备目前暂不支持。
 
@@ -116,15 +116,15 @@
 
 ### 发布产物说明
 前往 [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载（国内用户可直接点击下方国内加速直链）：
-- **`BattDock-v2.6.1-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
-  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Setup.exe) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Setup.exe)
-- **`BattDock-v2.6.1-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
-  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Windows-x64-Portable.zip) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.1/BattDock-v2.6.1-Windows-x64-Portable.zip)
+- **`BattDock-v2.7.0-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内一键自动覆盖更新。
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.0/BattDock-v2.7.0-Setup.exe) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.0/BattDock-v2.7.0-Setup.exe)
+- **`BattDock-v2.7.0-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.0/BattDock-v2.7.0-Windows-x64-Portable.zip) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.0/BattDock-v2.7.0-Windows-x64-Portable.zip)
 - **`SHA256SUMS.txt`**：所有发布文件的 SHA-256 校验值清单，用于核对文件完整性。
 - **`update-summary.json`**：供软件内部直接读取的简明中文更新摘要。
-- **`VGNMouseBattery-v2.6.1-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
+- **`VGNMouseBattery-v2.7.0-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
 
-> **升级说明**：软件内默认已开启**国内加速自动优选**（支持多节点测速择优、失败自动切源、自定义 HTTPS 加速前缀与 SHA-256 强制校验），可在「设置 → 关于软件 → 更新下载线路」随时切换。已安装 `v2.4.0`–`v2.6.0` 的用户可直接点击软件内「立即更新」一键升级。
+> **升级说明**：软件内默认已开启**国内加速自动优选**（支持多节点测速择优、失败自动切源、自定义 HTTPS 加速前缀与 SHA-256 强制校验），可在「设置 → 关于软件 → 更新下载线路」随时切换。已安装 `v2.4.0`–`v2.6.1` 的用户可直接点击软件内「立即更新」一键升级。
 
 ### 首次启动与在线更新
 1. **开机静默自启**：在安装向导或「设置 → 常规设置」中开启开机自启，默认以 `--background` 静默驻留系统托盘，不弹出窗口。
@@ -146,7 +146,7 @@
 # 1. 安装依赖（Python 3.12+）
 pip install -r requirements.txt
 
-# 2. 运行全部单元测试（37 项）
+# 2. 运行全部单元测试（38 项）
 python -m unittest discover -s tests -v
 
 # 3. 源码启动 BattDock
