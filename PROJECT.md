@@ -7,7 +7,7 @@
 | 字段 | 说明 |
 | :--- | :--- |
 | **项目名称** | VGN 鼠标电量显示工具（VGNMouseBattery） |
-| **目录路径** | `e:\反重力\vgn-mouse-battery` |
+| **目录路径** | 项目根目录（`vgn-mouse-battery`） |
 | **开发状态** | 活跃开发中（Active） |
 | **当前版本** | v6（以 `archive/history-backups/*.v5.bak` 之后的当前源码与 `release/VGNMouseBattery/VGNMouseBattery.exe` 为准） |
 | **版本控制** | 暂无 `.git` 仓库（已配置 `.gitignore`，历史版本归档于 `archive/history-backups/`） |
@@ -55,7 +55,7 @@
 
 ## 已知问题与待办
 
-- **旧路径自启项与运行中进程**：整理时检测到旧位置 `e:\反重力\release\VGNMouseBattery\VGNMouseBattery.exe` 正在运行并占用文件锁，因此新目录中的 `release/` 为完整副本。退出旧进程并改从新路径启动后，请重新切换一次「开机自启」以更新注册表路径。
+- **旧路径自启项与运行中进程**：若此前从旧目录运行过 `release\VGNMouseBattery\VGNMouseBattery.exe`，退出旧进程并改从新路径启动后，请重新切换一次「开机自启」以更新注册表路径。
 - **缺乏 Git 历史管理**：目前尚未初始化 Git 仓库，迭代依赖手动 `.bak` 备份；建议后续开发前执行 `git init` 建立规范提交历史。
 - **新增鼠标型号需手动补充 PID**：未列入 `KNOWN_DEVICES` 的 VGN/VXE 新型号需要补充对应的 `(VID, PID)` 映射。
 - **缺少自动化单元测试**：目前无 `tests/` 目录，HID 协议解析与配置读写尚未建立自动化回归测试。
@@ -64,6 +64,6 @@
 
 ## 整理记录（2026-11-25）
 
-- 从原混杂的 `e:\反重力\` 根目录完整迁移至独立目录 `e:\反重力\vgn-mouse-battery\`。
+- 从原根目录完整迁移至独立项目目录 `vgn-mouse-battery/`。
 - 保留全部源码、运行配置、前端页面、图标与打包产物，未修改任何业务代码。
 - 12 个历史 `.bak` 备份文件归档至 `archive/history-backups/`；未被引用的设计对比图 `tray_icon_compare.png` 归档至 `archive/unused-assets/`；历史 `__pycache__` 归档至 `archive/temp-cache/`。

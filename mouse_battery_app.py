@@ -475,6 +475,9 @@ def _run_on_form_ui(win: Optional[webview.Window], fn) -> None:
 
 
 def ensure_app_ico() -> Optional[str]:
+    """返回应用/文件夹 EXE 图标路径（优先保留定制的新软件 Logo 图标，不覆写已有文件）。"""
+    if APP_ICON_ICO.exists() and APP_ICON_ICO.stat().st_size > 100:
+        return str(APP_ICON_ICO)
     try:
         APP_ICON_ICO.parent.mkdir(parents=True, exist_ok=True)
         base = draw_battery_icon(size=256, percent=85, charging=False, connected=True)
@@ -1441,16 +1444,24 @@ class MouseBatteryApp:
         self._dispatch_alert(pref.alias or dev.name, int(dev.percent or 0), dev.kind, is_test=False)
 
     def _update_tray_visual(self) -> None:
+        """托盘栏始终使用动态矢量电池图标，电量条填充长度与颜色随设备实时电量动态变化。"""
         if self._tray is None:
             return
         try:
             td, _name = self._pick_floating_device()
+            rules = self.cfg.tier_rules if isinstance(self.cfg.tier_rules, list) else []
+            t1 = int(rules[0]["threshold"]) if len(rules) > 0 else 30
+            t2 = int(rules[1]["threshold"]) if len(rules) > 1 else 20
+            t3 = int(rules[2]["threshold"]) if len(rules) > 2 else 10
             if td is not None:
                 self._tray.icon = draw_battery_icon(
                     size=64,
                     percent=td.percent,
                     charging=td.charging,
                     connected=td.connected,
+                    low_t1=t1,
+                    low_t2=t2,
+                    low_t3=t3,
                 )
             else:
                 self._tray.icon = draw_battery_icon(size=64, percent=None, charging=False, connected=False)

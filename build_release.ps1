@@ -1,6 +1,6 @@
 ﻿# 一键可重复构建 Windows 独立发布包脚本（供本地发布与后续 GitHub Releases 使用）
 param(
-    [string]$PythonExe = "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe"
+    [string]$PythonExe = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,8 +11,13 @@ $ReleaseDir = Join-Path $Root "release\VGNMouseBattery"
 $UninstallSrc = Join-Path $ReleaseDir "卸载程序.bat"
 $UninstallBackup = Join-Path $WorkTmp "卸载程序.bat.bak"
 
-if (!(Test-Path $PythonExe)) {
-    $PythonExe = "python"
+if ([string]::IsNullOrWhiteSpace($PythonExe) -or !(Test-Path $PythonExe)) {
+    $DefaultPy = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"
+    if (Test-Path $DefaultPy) {
+        $PythonExe = $DefaultPy
+    } else {
+        $PythonExe = "python"
+    }
 }
 
 Write-Host "[1/4] 运行全部自动化单元测试..."

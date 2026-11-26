@@ -7,8 +7,8 @@
 ## 一、项目定位与技术栈
 
 - **定位**：轻量、免官方驱动的 Windows 通用多品牌无线外设电量监控工具（由 VGN 单设备版平滑升级而来）。
-- **工作区目录**：`e:\反重力\vgn-mouse-battery`（独立 Git 仓库，分支 `master`）。
-- **运行环境**：Windows 11 x64（Build 26200），Python `3.12.10`（`C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe`）。
+- **工作区目录**：项目根目录（独立 Git 仓库，分支 `master`）。
+- **运行环境**：Windows 10 / 11 x64，Python `3.12+`（本机验证版本 `3.12.10`）。
 - **核心依赖**：`hidapi 0.15.0`、`pywebview 6.2.1`（Edge WebView2）、`pystray 0.19.5`、`Pillow 13.0.0`、`pythonnet` / `clr-loader`、`PyInstaller 6.22.3`。
 - **本机硬件现状**：物理连接 `VGN Dragonfly F2 Pro Max (VID 0x3554, PID 0xFB3E)`；本机**无蓝牙适配器**（蓝牙模块须在无硬件时静默返回 `[]` 且零报错）。
 

@@ -128,25 +128,10 @@
 
   .page-header {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px 0 2px;
   }
-
-  .page-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .page-icon.blue { background: rgba(37, 99, 235, 0.12); color: #2563EB; }
-  .page-icon.green { background: rgba(34, 197, 94, 0.14); color: #16A34A; }
-  .page-icon.purple { background: rgba(139, 92, 246, 0.14); color: #7C3AED; }
-  .page-icon.amber { background: rgba(245, 158, 11, 0.14); color: #D97706; }
-  .page-icon.slate { background: rgba(100, 116, 139, 0.14); color: #475569; }
 
   .page-title {
     font-size: 17px;
@@ -158,7 +143,6 @@
   .page-desc {
     font-size: 12px;
     color: var(--text-secondary);
-    margin-top: 2px;
   }
 
   /* 分组卡片 */
@@ -339,15 +323,20 @@
   /* 关于页面 */
   .about-hero { display: flex; align-items: center; gap: 14px; padding: 4px 0 12px; }
   .about-logo {
-    width: 46px;
-    height: 46px;
+    width: 48px;
+    height: 48px;
     border-radius: 12px;
-    background: linear-gradient(180deg, #3B82F6 0%, #2563EB 100%);
-    color: #FFFFFF;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    overflow: hidden;
+  }
+  .about-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
   }
   .about-meta { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
   .about-name { font-size: 16px; font-weight: 700; line-height: 1.25; color: var(--text-primary); }
@@ -715,8 +704,8 @@
         <!-- 1. 常规设置（默认页） -->
         <section id="page-general" class="page active">
           <div class="page-header">
-            <div class="page-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
-            <div><div class="page-title">常规设置</div><div class="page-desc">管理软件启动行为、托盘驻留和后台电量轮询周期</div></div>
+            <div class="page-title">常规设置</div>
+            <div class="page-desc">管理软件启动行为、托盘驻留和后台电量轮询周期</div>
           </div>
 
           <div class="card">
@@ -751,8 +740,8 @@
         <!-- 2. 设备管理 -->
         <section id="page-devices" class="page">
           <div class="page-header">
-            <div class="page-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg></div>
-            <div><div class="page-title">设备管理</div><div class="page-desc">重命名设备、隐藏或暂停监控、调整排序以及为单台设备配置独立提醒阈值</div></div>
+            <div class="page-title">设备管理</div>
+            <div class="page-desc">重命名设备、隐藏或暂停监控、调整排序以及为单台设备配置独立提醒阈值</div>
           </div>
 
           <div class="card">
@@ -767,8 +756,8 @@
         <!-- 3. 电量提醒 -->
         <section id="page-alerts" class="page">
           <div class="page-header">
-            <div class="page-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
-            <div><div class="page-title">电量提醒</div><div class="page-desc">设置外设电量的提醒阈值、通知方式和提醒行为</div></div>
+            <div class="page-title">电量提醒</div>
+            <div class="page-desc">设置外设电量的提醒阈值、通知方式和提醒行为</div>
           </div>
 
           <div class="card">
@@ -886,8 +875,8 @@
         <!-- 4. 外观设置 -->
         <section id="page-appearance" class="page">
           <div class="page-header">
-            <div class="page-icon purple"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20V2z" fill="currentColor" opacity="0.2"/></svg></div>
-            <div><div class="page-title">外观设置</div><div class="page-desc">自定义浅色/深色主题、缩放比例、界面动画与设备列表显示方式</div></div>
+            <div class="page-title">外观设置</div>
+            <div class="page-desc">自定义浅色/深色主题、缩放比例、界面动画与设备列表显示方式</div>
           </div>
 
           <div class="card">
@@ -933,8 +922,8 @@
         <!-- 5. 桌面悬浮窗 -->
         <section id="page-floating" class="page">
           <div class="page-header">
-            <div class="page-icon amber"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="14" rx="2"/><rect x="12" y="10" width="7" height="5" rx="1"/></svg></div>
-            <div><div class="page-title">桌面悬浮窗</div><div class="page-desc">启用轻量原生桌面迷你电量条（Win10/11 通用，双击悬浮窗可唤起主窗口）</div></div>
+            <div class="page-title">桌面悬浮窗</div>
+            <div class="page-desc">启用轻量原生桌面迷你电量条（Win10/11 通用，双击悬浮窗可唤起主窗口）</div>
           </div>
 
           <div class="card">
@@ -979,14 +968,14 @@
         <!-- 6. 关于软件 -->
         <section id="page-about" class="page">
           <div class="page-header">
-            <div class="page-icon slate"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div>
-            <div><div class="page-title">关于软件</div><div class="page-desc">版本信息、支持设备清单、开源许可与诊断工具</div></div>
+            <div class="page-title">关于软件</div>
+            <div class="page-desc">版本信息、支持设备清单、开源许可与诊断工具</div>
           </div>
 
           <div class="card">
             <div class="about-hero">
               <div class="about-logo">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="3" width="12" height="18" rx="6"/><line x1="12" y1="7" x2="12" y2="11"/></svg>
+                <img src="../assets/app_logo.png" alt="外设电量监控" />
               </div>
               <div class="about-meta">
                 <div class="about-name">外设电量监控</div>
