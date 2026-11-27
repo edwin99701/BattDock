@@ -806,6 +806,182 @@ class TestV252StabilityAndLifecycle(unittest.TestCase):
         self.assertIn("function resetInteractionState", set_html)
         self.assertIn(":root.ui-await-pointer .win-btn.close:hover", common_css)
 
+    def test_taskbar_click_toggle_style_and_lifecycle_invariants(self):
+        import ctypes
+        from ctypes import wintypes
+        from unittest.mock import MagicMock, patch
+        import floating_widget
+        import mouse_battery_app as mba
+        from mouse_battery_app import MouseBatteryApp, _ensure_taskbar_toggle_style
+
+        # 1. 真实 WinForms 无边框窗口 Win32 样式与 SC_MINIMIZE / SC_RESTORE 验收
+        if sys.platform == "win32":
+            import clr
+            clr.AddReference("System.Windows.Forms")
+            clr.AddReference("System.Drawing")
+            import System.Windows.Forms as WinForms
+            from System.Drawing import Point, Size
+
+            user32 = ctypes.windll.user32
+            GWL_STYLE = -16
+            WS_MINIMIZEBOX = 0x00020000
+            WS_SYSMENU = 0x00080000
+            WS_CAPTION = 0x00C00000
+            WS_THICKFRAME = 0x00040000
+            WS_BORDER = 0x00800000
+            WM_SYSCOMMAND = 0x0112
+            SC_MINIMIZE = 0xF020
+            SC_RESTORE = 0xF120
+
+            form = WinForms.Form()
+            try:
+                form.Text = "BattDock Taskbar Toggle Test"
+                form.Size = Size(760, 480)
+                form.StartPosition = WinForms.FormStartPosition.Manual
+                form.Location = Point(-2200, -2200)
+                form.Opacity = 0.0
+                form.FormBorderStyle = getattr(WinForms.FormBorderStyle, "None")
+                form.Show()
+                WinForms.Application.DoEvents()
+
+                hwnd = int(form.Handle.ToInt64())
+                init_style = int(user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_STYLE)) & 0xFFFFFFFF
+                self.assertEqual(init_style & WS_MINIMIZEBOX, 0)
+
+                # 补齐任务栏点击切换所需原生样式位（且幂等、不引入边框/标题栏）
+                self.assertTrue(_ensure_taskbar_toggle_style(hwnd))
+                self.assertTrue(_ensure_taskbar_toggle_style(hwnd))
+                style = int(user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_STYLE)) & 0xFFFFFFFF
+                self.assertTrue(bool(style & WS_MINIMIZEBOX))
+                self.assertTrue(bool(style & WS_SYSMENU))
+                self.assertFalse(bool(style & WS_CAPTION))
+                self.assertFalse(bool(style & WS_THICKFRAME))
+                self.assertFalse(bool(style & WS_BORDER))
+
+                wrect, crect = wintypes.RECT(), wintypes.RECT()
+                user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(wrect))
+                user32.GetClientRect(wintypes.HWND(hwnd), ctypes.byref(crect))
+                self.assertEqual(wrect.right - wrect.left, crect.right - crect.left)
+                self.assertEqual(wrect.bottom - wrect.top, crect.bottom - crect.top)
+
+                # 模拟任务栏点击前台窗口触发 SC_MINIMIZE -> 最小化且 Win10 圆角逻辑跳过假尺寸
+                user32.SendMessageW(wintypes.HWND(hwnd), WM_SYSCOMMAND, SC_MINIMIZE, 0)
+                WinForms.Application.DoEvents()
+                self.assertTrue(bool(user32.IsIconic(wintypes.HWND(hwnd))))
+                self.assertEqual(
+                    floating_widget.apply_window_rounded_corners(hwnd, radius_dip=10, force_region=True),
+                    "minimized_skip",
+                )
+
+                # 模拟再次点击任务栏图标触发 SC_RESTORE -> 恢复且保持样式与无边框尺寸
+                user32.SendMessageW(wintypes.HWND(hwnd), WM_SYSCOMMAND, SC_RESTORE, 0)
+                WinForms.Application.DoEvents()
+                self.assertFalse(bool(user32.IsIconic(wintypes.HWND(hwnd))))
+                restored_style = int(user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_STYLE)) & 0xFFFFFFFF
+                self.assertTrue(bool(restored_style & WS_MINIMIZEBOX))
+                self.assertTrue(bool(restored_style & WS_SYSMENU))
+
+                # 模拟隐藏至托盘再重新显示后样式不丢失
+                form.Hide()
+                WinForms.Application.DoEvents()
+                form.Show()
+                WinForms.Application.DoEvents()
+                reshown_style = int(user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_STYLE)) & 0xFFFFFFFF
+                self.assertTrue(bool(reshown_style & WS_MINIMIZEBOX))
+                self.assertTrue(bool(reshown_style & WS_SYSMENU))
+            finally:
+                form.Close()
+                form.Dispose()
+
+        # 2. 应用层事件绑定与最小化/恢复不中断监控、不重复创建窗口验收
+        app = MouseBatteryApp(start_hidden=False)
+        app.window = MagicMock()
+        app.hwnd = 123456
+        app._drag_state["main"] = ((0, 0), (0, 0), (760, 480))
+        app.quit_app = MagicMock()
+        app._reset_window_interaction_state = MagicMock()
+        app._push_state_to_ui = MagicMock()
+        app._recreate_main_window = MagicMock()
+
+        with patch.object(mba, "_is_window_alive", return_value=True):
+            app._on_main_window_minimized()
+            self.assertNotIn("main", app._drag_state)
+            self.assertFalse(app._stop_event.is_set())
+            app.quit_app.assert_not_called()
+            app._recreate_main_window.assert_not_called()
+            app._reset_window_interaction_state.assert_called_once_with(app.window, hiding=False)
+
+            app._reset_window_interaction_state.reset_mock()
+            with patch.object(mba, "_apply_window_chrome") as mock_chrome, \
+                 patch.object(mba.ctypes.windll.user32, "IsIconic", return_value=0), \
+                 patch.object(mba.ctypes.windll.user32, "IsZoomed", return_value=0), \
+                 patch.object(mba.threading, "Thread") as mock_thr:
+                app._on_main_window_restored()
+                mock_chrome.assert_called_once()
+                self.assertFalse(app._main_maximized)
+                self.assertFalse(app._stop_event.is_set())
+                app.quit_app.assert_not_called()
+                app._recreate_main_window.assert_not_called()
+                mock_thr.assert_called_once()
+                self.assertEqual(mock_thr.call_args.kwargs.get("target"), app._push_state_to_ui)
+
+        # 3. 组合场景：最小化状态下被关闭至托盘后，从托盘唤出必须 SW_RESTORE + 居中显现
+        app._center_main_hwnd = MagicMock()
+        with patch.object(mba, "_is_window_alive", return_value=True), \
+             patch.object(app, "_find_hwnd_for", return_value=123456), \
+             patch.object(mba, "_apply_window_chrome") as mock_chrome, \
+             patch.object(mba, "_set_form_visibility") as mock_vis, \
+             patch.object(mba, "_bring_hwnd_to_foreground") as mock_fg, \
+             patch.object(mba.ctypes.windll.user32, "IsWindowVisible", return_value=0), \
+             patch.object(mba.ctypes.windll.user32, "IsIconic", return_value=1), \
+             patch.object(mba.ctypes.windll.user32, "IsZoomed", return_value=0), \
+             patch.object(mba.ctypes.windll.user32, "ShowWindow") as mock_show:
+            app.show_main_window()
+            mock_show.assert_called_once()
+            self.assertEqual(mock_show.call_args.args[1], 9)  # SW_RESTORE
+            app._center_main_hwnd.assert_called_once()
+            mock_chrome.assert_called_once()
+            mock_vis.assert_called_once()
+            mock_fg.assert_called_once()
+            app._recreate_main_window.assert_not_called()
+
+        # 4. 组合场景：窗口处于后台但仍可见时唤出，必须置前而非最小化
+        with patch.object(mba, "_is_window_alive", return_value=True), \
+             patch.object(app, "_find_hwnd_for", return_value=123456), \
+             patch.object(mba, "_apply_window_chrome") as mock_chrome, \
+             patch.object(mba, "_bring_hwnd_to_foreground") as mock_fg, \
+             patch.object(mba.ctypes.windll.user32, "IsWindowVisible", return_value=1), \
+             patch.object(mba.ctypes.windll.user32, "IsIconic", return_value=0), \
+             patch.object(mba.ctypes.windll.user32, "ShowWindow") as mock_show:
+            app.show_main_window()
+            mock_show.assert_not_called()
+            mock_chrome.assert_called_once()
+            mock_fg.assert_called_once()
+
+        # 5. 校验 _attach_main_window_events 完整挂载 5 个生命周期事件及准确回调
+        class _FakeEvent:
+            def __init__(self):
+                self.handlers = []
+
+            def __iadd__(self, fn):
+                self.handlers.append(fn)
+                return self
+
+        fake_events = MagicMock()
+        ev_map = {}
+        for ev_name in ("closing", "closed", "minimized", "restored", "maximized", "loaded"):
+            ev = _FakeEvent()
+            setattr(fake_events, ev_name, ev)
+            ev_map[ev_name] = ev
+        fake_win = MagicMock()
+        fake_win.events = fake_events
+        app._attach_main_window_events(fake_win, is_recreate=False)
+        self.assertIn(app._on_main_window_closing, ev_map["closing"].handlers)
+        self.assertIn(app._on_main_window_closed, ev_map["closed"].handlers)
+        self.assertIn(app._on_main_window_minimized, ev_map["minimized"].handlers)
+        self.assertIn(app._on_main_window_restored, ev_map["restored"].handlers)
+        self.assertIn(app._on_main_window_restored, ev_map["maximized"].handlers)
+
 
 class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
     def test_wireless_keyboards_parsers_and_qmk_safety(self):

@@ -99,6 +99,9 @@ def apply_window_rounded_corners(
         user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
         user32.SetWindowRgn.restype = ctypes.c_int
 
+        if user32.IsIconic(wintypes.HWND(hwnd)):
+            return "minimized_skip"
+
         if user32.IsZoomed(wintypes.HWND(hwnd)):
             user32.SetWindowRgn(wintypes.HWND(hwnd), wintypes.HRGN(0), True)
             return "win10_rgn_cleared"

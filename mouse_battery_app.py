@@ -296,10 +296,64 @@ def _set_window_pos(hwnd: int, x: int, y: int, w: int, h: int, topmost: Optional
     )
 
 
+def _ensure_taskbar_toggle_style(hwnd: int) -> bool:
+    """为无边框 WinForms 顶层窗口补齐 WS_MINIMIZEBOX | WS_SYSMENU，启用 Windows 10/11 原生任务栏点击切换。
+
+    说明：
+    - pywebview 的 frameless=True 将 FormBorderStyle 设为 None，会移除 WS_MINIMIZEBOX 与 WS_SYSMENU，
+      导致主窗口在前台可见时再次点击任务栏图标无法触发系统最小化。
+    - 仅补充 WS_MINIMIZEBOX (0x00020000) 与 WS_SYSMENU (0x00080000)，不添加 WS_CAPTION/WS_THICKFRAME/WS_BORDER，
+      保持纯无边框尺寸与 Win10/11 圆角零破坏，且不干扰任务栏右键菜单与关闭拦截。
+    - 幂等操作：样式位已齐全时直接返回 True，不触发额外消息或界面闪动。
+    """
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        hw = wintypes.HWND(hwnd)
+        if not user32.IsWindow(hw):
+            return False
+        GWL_STYLE = -16
+        WS_MINIMIZEBOX = 0x00020000
+        WS_SYSMENU = 0x00080000
+        required = WS_MINIMIZEBOX | WS_SYSMENU
+
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = wintypes.LONG
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+        user32.SetWindowLongW.restype = wintypes.LONG
+
+        cur_style = int(user32.GetWindowLongW(hw, GWL_STYLE)) & 0xFFFFFFFF
+        if (cur_style & required) == required:
+            return True
+
+        new_style = cur_style | required
+        user32.SetWindowLongW(hw, GWL_STYLE, ctypes.c_long(new_style).value)
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SWP_FRAMECHANGED = 0x0020
+        user32.SetWindowPos(
+            hw,
+            wintypes.HWND(0),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+        after_style = int(user32.GetWindowLongW(hw, GWL_STYLE)) & 0xFFFFFFFF
+        return (after_style & required) == required
+    except Exception:
+        return False
+
+
 def _apply_window_chrome(hwnd: int, is_dark: bool, radius_dip: int = 10) -> None:
-    """Windows 10/11 通用轻量窗口装饰：Win11 使用原生 DWM 圆角，Win10 使用高 DPI 兼容外轮廓区域圆角。"""
+    """Windows 10/11 通用轻量窗口装饰：补齐任务栏切换样式，Win11 原生 DWM 圆角，Win10 高 DPI 区域圆角。"""
     if sys.platform != "win32" or not hwnd:
         return
+    _ensure_taskbar_toggle_style(hwnd)
     try:
         dwmapi = ctypes.windll.dwmapi
         dark_val = ctypes.c_int(1 if is_dark else 0)
@@ -390,6 +444,13 @@ def _install_flicker_free_patch() -> None:
             orig_init(form_self, window, cache_dir)
             try:
                 form_self.Opacity = 0.0
+            except Exception:
+                pass
+            try:
+                if getattr(window, "frameless", False):
+                    hwnd = int(form_self.Handle.ToInt64())
+                    if hwnd:
+                        _ensure_taskbar_toggle_style(hwnd)
             except Exception:
                 pass
 
@@ -1261,9 +1322,34 @@ class MouseBatteryApp:
             # 兜底定时器：确保最迟 0.8s 显现，正常情况下由前端 ui_ready() 在首帧就绪时立刻显现
             threading.Timer(0.8, self._reveal_main_if_needed).start()
 
+    def _on_main_window_minimized(self) -> None:
+        """响应任务栏点击最小化或标题栏最小化：清理拖拽与悬停残留，绝不中断后台监控。"""
+        self._drag_state.pop("main", None)
+        if _is_window_alive(self.window, self.hwnd):
+            self._reset_window_interaction_state(self.window, hiding=False)
+
+    def _on_main_window_restored(self) -> None:
+        """响应任务栏点击恢复或系统还原：同步圆角/最大化状态、清除残留高亮并刷新最新电量。"""
+        if self._quitting or not _is_window_alive(self.window, self.hwnd):
+            return
+        if self.hwnd:
+            try:
+                user32 = ctypes.windll.user32
+                if user32.IsIconic(wintypes.HWND(self.hwnd)):
+                    return
+                self._main_maximized = bool(user32.IsZoomed(wintypes.HWND(self.hwnd)))
+            except Exception:
+                pass
+            _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+        self._reset_window_interaction_state(self.window, hiding=False)
+        threading.Thread(target=self._push_state_to_ui, daemon=True).start()
+
     def _attach_main_window_events(self, win: webview.Window, is_recreate: bool = False) -> None:
         win.events.closing += self._on_main_window_closing
         win.events.closed += self._on_main_window_closed
+        win.events.minimized += self._on_main_window_minimized
+        win.events.restored += self._on_main_window_restored
+        win.events.maximized += self._on_main_window_restored
         if is_recreate:
             def _on_recreated_loaded() -> None:
                 with self._window_lock:
@@ -1342,9 +1428,13 @@ class MouseBatteryApp:
 
         if was_minimized and self.hwnd:
             user32.ShowWindow(wintypes.HWND(self.hwnd), 9)  # SW_RESTORE
+            if not was_visible:
+                self._center_main_hwnd()
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
+            self._main_maximized = bool(user32.IsZoomed(wintypes.HWND(self.hwnd)))
             self._push_state_to_ui()
-            _set_form_visibility(win, visible=True, opacity=1.0, activate=True, fade_ms=0)
+            fade = (180 if self._effective_animations() else 0) if not was_visible else 0
+            _set_form_visibility(win, visible=True, opacity=1.0, activate=True, fade_ms=fade)
             _bring_hwnd_to_foreground(self.hwnd, keep_topmost=self.cfg.topmost)
             return
 

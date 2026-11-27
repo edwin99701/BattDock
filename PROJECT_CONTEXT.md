@@ -91,7 +91,7 @@ version_info.txt              Windows EXE 文件版本属性元数据（ProductN
 6. **设备管理拖拽排序与顺序同步**：
    - `ui/settings.html` 使用 Pointer Events + FLIP 位移交换实现无闪影拖拽排序，松手调用 `reorder_devices(ids)` 持久化至 `config.json`，并同步刷新主窗口（`_sorted_devices`）、托盘与桌面悬浮窗（`_pick_floating_device`）。
 7. **窗口生命周期、防交互残留与 HID 通信稳定化（v2.5.2 – v2.6.0）**：
-   - **拦截任务栏右键关闭 / Alt+F4**：主窗口与设置窗口统一订阅 `events.closing`（`should_lock=True`）；开启 `close_to_tray` 时取消销毁并隐藏复用，关闭时触发 `quit_app()` 完整退出；`show_main_window()` 校验 `_is_window_alive()`、自动还原最小化窗口并在窗口意外销毁时安全重建，后台监控线程由 `_bg_started` 保护绝不重复启动。
+   - **拦截任务栏右键关闭 / Alt+F4 与原生任务栏点击切换**：主窗口与设置窗口统一订阅 `events.closing`（`should_lock=True`）；开启 `close_to_tray` 时取消销毁并隐藏复用，关闭时触发 `quit_app()` 完整退出；`show_main_window()` 校验 `_is_window_alive()`、自动还原最小化窗口（含最小化后隐藏至托盘再唤出时先 `SW_RESTORE` 再居中）并在窗口意外销毁时安全重建，后台监控线程由 `_bg_started` 保护绝不重复启动。通过 `_ensure_taskbar_toggle_style()` 为无边框 `BrowserForm` 幂等补齐 `WS_MINIMIZEBOX | WS_SYSMENU`（不添加 `WS_CAPTION`/`WS_THICKFRAME`/`WS_BORDER`），原生支持 Windows 10/11 任务栏点击切换（前台点击最小化、已最小化恢复激活、后台可见切换前台），同时 `apply_window_rounded_corners()` 在 `IsIconic` 时跳过区域重算并在 `minimized`/`restored`/`maximized` 事件中同步圆角、最大化状态与交互残留清理。
    - **彻底消除隐藏/重开残留选中态（v2.6.0 根治）**：隐藏与显现前通过 `resetInteractionState()` 持久挂载 `:root.ui-await-pointer` 压制 Chromium 残留 `:hover`/`:active`（不阻挡点击与键盘 Tab 导航），直到窗口显现 120ms 后检测到用户真实位移 >3px 的 `pointermove` 或 `pointerdown` 才解除；并配合 `EnumChildWindows` 递归向深层 `Chrome_RenderWidgetHostHWND` 投递 `WM_CANCELMODE` / `WM_MOUSELEAVE`。
    - **事件驱动 HID 拓扑缓存与串行退避轮询**：Win32 `WM_DEVICECHANGE` 监听 HID 热插拔，`DeviceManager` 串行加锁并缓存 HID 快照（消除常规 25 秒轮询触发 46–83ms 全总线 `hid.enumerate(0, 0)`）；`VgnBatteryReader` 复用共享快照、改用非阻塞排空并对休眠设备执行阶梯退避（`45s → 90s → 180s`），同步提供内存环形轻量诊断缓冲（零持续磁盘写）。
 8. **开源合规决策**：
