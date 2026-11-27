@@ -41,7 +41,7 @@
 
 ## 3. 项目目录结构
 
-标准目标本地目录为 `BattDock`（原历史工作区目录名 `vgn-mouse-battery`）：
+当前标准本地目录为 `BattDock`（已完成由原历史目录 `vgn-mouse-battery` 原地改名）：
 
 ```text
 BattDock/
@@ -271,7 +271,7 @@ flowchart TD
 | 维度 | 当前正式标准（BattDock） | 历史旧标识（仅兼容迁移使用） | 说明 |
 | :--- | :--- | :--- | :--- |
 | 对外产品名称 | `BattDock` | `VGNMouseBattery` / `VGN 鼠标电量` | 统一定义于 `brand.py` |
-| 本地项目目录 | `BattDock`（原目录 `vgn-mouse-battery`） | `vgn-mouse-battery` | 原地改名保留完整 `.git` 历史 |
+| 本地项目目录 | `BattDock`（原目录 `vgn-mouse-battery`） | `vgn-mouse-battery` | 已完成原地改名并保留完整 `.git` 历史 |
 | 主程序文件名 | `BattDock.exe` | `VGNMouseBattery.exe` | 安装与更新后自动清理旧 EXE |
 | 安装程序命名 | `BattDock-v<版本号>-Setup.exe` | 无（`v2.5.0` 起引入） | Inno Setup `AppId` 固定原地覆盖 |
 | 便携版命名 | `BattDock-v<版本号>-Windows-x64-Portable.zip` | `VGNMouseBattery-v2.2.0-win64.zip` | 兼容现有 `v2.3.0–v2.7.3` 更新器 |
