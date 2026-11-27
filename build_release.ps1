@@ -8,7 +8,6 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DistTmp = Join-Path $Root "build_dist"
 $WorkTmp = Join-Path $Root "build_tmp"
 $ReleaseDir = Join-Path $Root "release\BattDock"
-$LegacyReleaseDir = Join-Path $Root "release\VGNMouseBattery"
 
 if ([string]::IsNullOrWhiteSpace($PythonExe) -or !(Test-Path $PythonExe)) {
     $DefaultPy = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"
@@ -84,7 +83,9 @@ reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "BattDock" /f
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "VGNMouseBattery" /f >nul 2>&1
 echo 正在清理桌面与开始菜单快捷方式...
 del /F /Q "%USERPROFILE%\Desktop\BattDock.lnk" >nul 2>&1
+del /F /Q "%USERPROFILE%\Desktop\VGNMouseBattery.lnk" >nul 2>&1
 del /F /Q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\BattDock.lnk" >nul 2>&1
+del /F /Q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\VGNMouseBattery.lnk" >nul 2>&1
 echo.
 set /p DELCFG=是否同时删除个人配置文件（%LOCALAPPDATA%\BattDock）？[y/N]: 
 if /I "%DELCFG%"=="y" (

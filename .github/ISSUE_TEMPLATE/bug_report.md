@@ -14,7 +14,7 @@ labels: bug
 3. 出现现象...
 
 ## 运行环境
-- **BattDock 版本**：例如 `v2.3.0`
+- **BattDock 版本**：例如 `v2.7.3`
 - **操作系统**：例如 `Windows 11 24H2` / `Windows 10 22H2`
 - **设备品牌与型号**：例如 `VGN Dragonfly F2 Pro Max`
 - **连接方式**：`2.4GHz 无线连接` / `蓝牙连接` / `USB 有线连接`

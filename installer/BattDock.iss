@@ -1,8 +1,8 @@
 ﻿; BattDock 标准 Windows 安装程序脚本（Inno Setup 6）
-; 特点：用户级安装（免管理员 UAC）、自动兼容软件内一键在线更新、防重复安装、自动停进程覆盖、标准应用列表卸载
+; 特点：管理员安装 + 安装目录 users-modify 权限 + runasoriginaluser，支持任意盘符安装、软件内免 UAC 一键自动更新、防重复安装、自动停进程覆盖与标准卸载
 
 #ifndef MyAppVersion
-  #define MyAppVersion "2.4.0"
+  #define MyAppVersion "2.7.3"
 #endif
 
 #define MyAppName "BattDock"
@@ -100,14 +100,24 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   LegacyExe: String;
+  LegacyDesktopLnk: String;
+  LegacyStartMenuLnk: String;
   OldRunVal: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    // 若覆盖安装在旧版目录，自动清理遗留的 VGNMouseBattery.exe 与旧自启项
+    // 若覆盖安装在旧版目录，自动清理遗留的 VGNMouseBattery.exe、旧快捷方式与旧自启项
     LegacyExe := ExpandConstant('{app}\VGNMouseBattery.exe');
     if FileExists(LegacyExe) then
       DeleteFile(LegacyExe);
+
+    LegacyDesktopLnk := ExpandConstant('{userdesktop}\VGNMouseBattery.lnk');
+    if FileExists(LegacyDesktopLnk) then
+      DeleteFile(LegacyDesktopLnk);
+
+    LegacyStartMenuLnk := ExpandConstant('{userprograms}\VGNMouseBattery.lnk');
+    if FileExists(LegacyStartMenuLnk) then
+      DeleteFile(LegacyStartMenuLnk);
 
     if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'VGNMouseBattery', OldRunVal) then
     begin

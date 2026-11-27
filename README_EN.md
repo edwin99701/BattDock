@@ -27,25 +27,25 @@
 
 **BattDock** is a lightweight desktop utility for Windows 10 and Windows 11 that monitors the real-time battery level of wireless mice, keyboards, headsets, and earbuds across multiple brands — without requiring bulky vendor suites running in the background.
 
-- **Read-Only & Driverless**: Uses standard Windows HID and read-only Bluetooth APIs. Installs no kernel drivers and never writes DPI, RGB, or firmware settings.
+- **Read-Only & Driverless**: Uses standard Windows HID and read-only Bluetooth APIs. Installs no kernel drivers and never writes DPI, polling rate, RGB, or firmware settings.
 - **Transparent Limitations**: Bluetooth battery reading requires a Bluetooth adapter supported by Windows; asleep or unreachable devices show `—` rather than a fabricated `0%`.
 
 ---
 
 ## Key Features
 
-- **Multi-Brand Support**: Hardware-verified on `VGN Dragonfly F2 Pro Max`, with built-in read-only adapters for wireless mice, headsets, and keyboards across Logitech / ASTRO (HID++ 2.0, G headsets & Centurion), Razer (mice, 11 keyboards, BlackShark/Kraken/Barracuda headsets), SteelSeries (Arctis/Nova/Elite/GameBuds), Corsair (SLIPSTREAM, Void/HS80/Virtuoso), HyperX (Cloud Alpha/II/III/III S/Flight/Stinger), ASUS ROG / TUF, JBL Quantum, EPOS, Audeze, AKG, Skullcandy, Jabra, Poly, Fractal Design Scape, MOONDROP GM01 Pro, Alienware AW920H, Sony INZONE / PULSE 3D, AULA / MCHOSE / AJAZZ / Attack Shark / CHERRY / Rongyuan / URX / VGN / VXE / ATK keyboards & headsets, Apple AirPods / Magic Keyboard, MAC-aggregated Windows Bluetooth HFP/BLE devices (iKF, Edifier, Bose, Sennheiser, Keychron, NuPhy, Royal Kludge, Akko, etc.), and a read-only Standard USB HID Battery Strength (`0x06:0x20`) catch-all provider.
-- **Dynamic System Tray Battery Icon**: Vector battery fill and color dynamically track real-time charge and alert thresholds, updating only when device state changes.
-- **3-Tier & Custom Low-Battery Alerts**: Default `30% / 20% / 10%` thresholds with hysteresis, optional repeat intervals, system sounds, and a non-intrusive 5-second top-most mini popup that never steals fullscreen/game focus.
-- **Native Desktop Floating Widget**: Lightweight WinForms overlay (zero extra WebView2 overhead) with customizable opacity, size, position presets, and lock toggle.
-- **Light / Dark / System Themes & Smooth Motion**: Clean Win10/11-compatible dual-window UI with 150–220ms subtle transitions and reduced-motion support.
-- **Built-In Online Updates**: Token-free GitHub Releases update checker with SHA-256 verification, safe rollback, and zero-loss config preservation.
+- **Multi-Brand Support**: Hardware-verified on `VGN Dragonfly F2 Pro Max`, with built-in read-only adapters (unit-tested, awaiting physical hardware verification) for wireless mice, headsets, and keyboards across Logitech / ASTRO (HID++ 2.0, G headsets & Centurion), Razer (mice, 11 keyboards, BlackShark/Kraken/Barracuda headsets), SteelSeries (Arctis/Nova/Elite/GameBuds), Corsair (SLIPSTREAM, Void/HS70/HS80/Virtuoso), HyperX (Cloud Alpha/II/III/III S/Flight/Stinger, Pulsefire), ASUS ROG / TUF, JBL Quantum, EPOS, Audeze, AKG, Skullcandy, Jabra, Poly, Fractal Design Scape, MOONDROP GM01 Pro, Alienware AW920H, Sony INZONE / PULSE 3D, AULA / MCHOSE / AJAZZ / Attack Shark / CHERRY / Rongyuan / URX / VGN / VXE / ATK keyboards & headsets, Apple Magic Keyboard, MAC-aggregated Windows Bluetooth HFP/BLE devices (iKF, Edifier, Bose, Sennheiser, Keychron, NuPhy, Royal Kludge, Akko, etc.), and a read-only Standard USB HID Battery Strength (`0x06:0x20`) catch-all provider.
+- **Native Win32 Dynamic System Tray Battery Icon**: Dedicated native Win32 NotifyIcon controller with in-memory dynamic vector battery fill and alert color tracking, automatic recovery, and a tray toggle for the floating widget.
+- **3-Tier & Custom Low-Battery Alerts**: Default `30% / 20% / 10%` thresholds with hysteresis, per-device overrides, system sounds, and a compact 5-second top-most mini popup that never steals fullscreen/game focus.
+- **Native Desktop Floating Widget**: Lightweight WinForms overlay (zero extra WebView2 overhead) with customizable opacity, size, position presets, custom label, and lock toggle.
+- **Light / Dark / System Themes & Taskbar Toggle**: Clean Win10/11-compatible dual-window UI with native taskbar click-to-toggle minimization, smooth transitions, and reduced-motion support.
+- **Built-In Online Updates**: Token-free GitHub Releases update checker with automatic CN mirror acceleration and silent GitHub fallback, SHA-256 verification, same-volume rollback, and zero-loss config preservation.
 
 ---
 
 ## Screenshots
 
-> Captured from actual **BattDock v2.4.0** runs. The Dark Mode screenshot shows a **demo multi-device view** to illustrate unified device icons, card layouts, and split-earbud indicators (see [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md) for actual hardware verification status).
+> Captured from actual **BattDock** runs (primary visuals from `v2.4.0`). The Dark Mode screenshot shows a **demo multi-device view** to illustrate unified device icons, card layouts, and split-earbud indicators (see [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md) for actual hardware verification status).
 
 <table>
   <tr>
@@ -74,7 +74,7 @@
 
 ## Download & Installation
 
-1. Go to [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) and download **`BattDock-v2.7.0-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates with built-in China mirror acceleration) or **`BattDock-v2.7.0-Windows-x64-Portable.zip`** (portable archive).
+1. Go to [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) and download **`BattDock-v2.7.3-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.7.3-Windows-x64-Portable.zip`** (portable archive).
 2. Run the installer or extract the ZIP and launch **`BattDock.exe`** (requires Windows 10 22H2 x64+ or Windows 11 x64).
 3. Settings are stored in `%LOCALAPPDATA%\BattDock\config.json` and preserved across updates. Legacy `VGNMouseBattery` configurations and autostart entries migrate automatically on first launch.
 

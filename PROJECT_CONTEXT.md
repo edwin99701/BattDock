@@ -1,121 +1,284 @@
-# PROJECT_CONTEXT.md — BattDock 技术架构与关键决策
+# PROJECT_CONTEXT.md — BattDock 权威技术架构文档
 
-> 本文档是 **BattDock** 跨会话的唯一技术真值来源。新开会话或切换模型时，与 `AGENTS.md`、`PROGRESS.md` 一并读取即可完整掌握项目全貌，无需依赖历史聊天记录。
-
----
-
-## 一、项目定位、运行环境与技术栈
-
-- **软件名称**：**BattDock**（轻量化 Windows 无线外设电量管理工具，开源协议 MIT）
-- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前版本 `v2.7.3`）
-- **兼容目标**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时，免 Python 环境、免官方驱动）
-- **开发与构建环境**：Python `3.12+`（验证版本 `3.12.10`）、`hidapi 0.15.0`、`pywebview 6.2.1`（WinForms + EdgeChromium）、`pystray 0.19.5`、`Pillow 13.0.0`、`pythonnet` / `clr-loader`、`PyInstaller 6.22.3`、`Inno Setup 6.7.3`（用户级安装于 `%LOCALAPPDATA%\Programs\Inno Setup 6`）
-- **当前本机硬件环境**：Windows 11 x64，物理连接 `VGN Dragonfly F2 Pro Max (VID 0x3554, PID 0xFB3E)`；本机**无蓝牙适配器**（蓝牙适配器缺失时 `BluetoothBatteryProvider` 必须静默返回 `[]` 且零报错）。
+> 本文档以当前源码（**BattDock v2.7.3**，`master` 分支）为唯一事实来源，系统记录项目技术栈、模块职责、核心流程、兼容性方案及命名映射关系。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
 
 ---
 
-## 二、模块架构总览
+## 1. 软件定位及主要功能
+
+- **软件正式名称**：**BattDock**（轻量化 Windows 无线外设电量管理工具，开源协议 MIT）
+- **核心定位**：免安装第三方厂商驱动套件、免内核驱动，在一处轻量双主题桌面界面与系统托盘中，通过只读 USB HID 与 Windows 蓝牙接口统一监控多品牌无线鼠标、无线键盘、无线耳机与分体耳塞的实时电量。
+- **主要功能**：
+  - 多品牌外设实时电量监控、充电/充满/休眠状态识别与分体耳塞（左/右/盒）三列展示；
+  - 原生 Win32 系统托盘动态矢量电池图标（随电量/充电/三级低电量动态变色）与实时右键菜单；
+  - 现代双窗口架构（主窗口 + 独立设置中心，浅色/深色/跟随系统主题与 Win10/11 圆角兼容）；
+  - 每设备独立三级低电量提醒（滞回防抖、原生 WinForms 不抢焦点紧凑弹窗 + 系统通知 + 提示音）；
+  - 原生 WinForms 轻量桌面悬浮窗（品牌精简显示、自定义名称、位置锁定、托盘双向开关）；
+  - 零 Token GitHub Releases 在线更新（国内多节点高速通道优先 + 静默回退 GitHub、SHA-256 校验、同盘回滚与自动重启）；
+  - 脱敏设备诊断报告一键复制与导出（供社区设备适配与排障，零隐私信息）。
+
+---
+
+## 2. 实际技术栈及框架版本
+
+以下版本经本机开发环境实测核验（与 `requirements.txt` 及构建环境一致）：
+
+| 类别 | 组件 / 工具 | 当前验证版本 | 用途说明 |
+| :--- | :--- | :--- | :--- |
+| 运行时 | Python | `3.12.10`（要求 `3.12+`） | 核心应用逻辑、HID 通信与构建脚本辅助 |
+| HID 通信 | `hidapi`（`hid`） | `0.15.0`（`>=0.14.0`） | USB 2.4GHz / 有线外设 HID 只读枚举与报告收发 |
+| 桌面 UI 宿主 | `pywebview` | `6.2.1`（`>=5.0`） | WinForms + Edge WebView2（`edgechromium`）渲染 HTML/CSS/JS |
+| 图像与图标 | `Pillow`（`PIL`） | `13.0.0`（`>=10.0.0`） | 动态矢量电池图标、8x 超采样 SVG 设备图标与 ICO 渲染 |
+| WinForms 互操作 | `pythonnet` / `clr-loader` | `3.2.1` / `0.3.1` | 宿主窗口精细控制、原生 WinForms 悬浮窗与紧凑提醒弹窗 |
+| 系统托盘与原生 API | 自研 `tray_icon.py` + `ctypes` / `winreg` | 内置（`v2.7.3` 起移除运行时 `pystray` 依赖） | `Shell_NotifyIconW` 托盘、`SetupAPI` 蓝牙电量、DWM/HRGN 圆角、单实例互斥量、自启注册表 |
+| 打包工具（构建期） | `PyInstaller` | `6.22.3` | 构建 `BattDock.exe` 目录版及旧版迁移桥接器 `VGNMouseBattery.exe` |
+| 安装程序（构建期） | `Inno Setup 6` | `6.7.3` | 编译标准简体中文安装程序 `BattDock-vX.Y.Z-Setup.exe` |
+
+- **兼容目标**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时）。
+- **本机实测硬件边界**：开发机为 Windows 11 x64，物理连接 `VGN Dragonfly F2 Pro Max (VID 0x3554, PID 0xFB3E)`，**无物理蓝牙适配器**（`BluetoothBatteryProvider` 在无蓝牙硬件时静默返回 `[]` 且零报错）。
+
+---
+
+## 3. 项目目录结构
+
+标准目标本地目录为 `BattDock`（原历史工作区目录名 `vgn-mouse-battery`）：
 
 ```text
-brand.py                      品牌常量单一真值来源（BattDock / 版本号 / EXE 名 / AppUserModelID / 互斥量 / GitHub 地址）
-device_icons.py               全局统一 24x24 黑白实心设备类型图标库（SVG + 8x 超采样 Pillow 渲染，浅黑/深白）
-assets/
-  ├── app_logo.png            512x512 纯黑圆角底 + 白色无线耳机/鼠标主 Logo（透明背景）
-  ├── app_icon.ico            9 规格多分辨率 Windows ICO（16/20/24/32/40/48/64/128/256 px）
-  └── icons/*.svg             mouse.svg / headset.svg / keyboard.svg / other.svg 统一实心矢量源
-mouse_battery_app.py          主控制器：主窗口(760x480) + 独立设置窗口(840x742)、紧凑自适应低电量提醒窗、状态机、JS 桥
-tray_icon.py                  原生 Win32 独立系统托盘动态电池图标控制器（RLock 线程安全、纯内存 32 位 ARGB HICON、失败重试/自愈、WM_TASKBARCREATED、退出同步 NIM_DELETE、uID=0 兼容）
-floating_widget.py            原生 WinForms 轻量桌面悬浮窗、动态矢量电池图标绘制、Win10/11 跨版本圆角与 1px 抗锯齿细边工具、系统提示音
-updater.py                    零依赖 GitHub Releases 在线检查更新、摘要提取、SHA-256/ZIP 校验、同盘回滚与自动重启
-legacy_shim.py                旧版 VGNMouseBattery v2.2.0 自动升级至 BattDock 的过渡迁移桥接器
-app_config.py                 配置持久化（%LOCALAPPDATA%\BattDock\config.json）、旧版配置/自启无损迁移、设备偏好与阈值
-vgn_battery.py                已真机验证的 VGN Dragonfly F2 Pro Max 17 字节 HID 读取器（保持零破坏）
-ui/
-  ├── common.css              设计令牌、浅/深双主题、配色方案、--ui-zoom 圆角补偿、Win10 边框对齐、统一动效曲线
-  ├── index.html              主窗口（动态多设备卡片、低电量暖色卡片、分体耳塞三列卡、空状态、底栏更新提示）
-  └── settings.html           设置窗口（左 6 分类导航 + 右自适应居中内容区、设备管理可折叠拖拽卡片、支持设备子页、关于与更新卡片）
-providers/
-  ├── base.py                 DeviceBattery / SubBattery / BatteryProvider + 只读 HidP_GetCaps / output_report_id / HidD_GetInputReport 与标准四舍五入工具
-  ├── device_naming.py        官方标准设备名称规范化、中文连接副标题、悬浮窗品牌标签、低电量弹窗智能完整名
-  ├── manager.py              DeviceManager（单次 hid.enumerate 共享、异常隔离、去重、禁伪造 0%、专用认领表防 standard_hid 重复卡片、脱敏诊断导出）
-  ├── vgn_provider.py         VGN（封装 vgn_battery）/ VXE / ATK / CompX / MCHOSE / Rapoo
-  ├── logitech_hidpp.py       Logitech HID++ 2.0 (0x1004/0x1000/0x1001/0x1F20 + 0x0005) & G 耳机
-  ├── razer_hid.py            Razer 91 字节 Feature Report (0x07/0x80, 0x07/0x84, XOR CRC)
-  ├── steelseries_hid.py      SteelSeries Aerox/Prime/Rival 鼠标 & Arctis/Nova/GameBuds 耳机
-  ├── corsair_hid.py          Corsair SLIPSTREAM Bragi (FF42:0001) & Void/HS70 耳机
-  ├── hyperx_hid.py           HyperX Cloud 耳机 & Pulsefire 鼠标
-  ├── extra_brands.py         ASUS ROG/TUF 鼠键/Omni/SpeedNova/耳机 & Sony INZONE H5/H9 II/Buds
-  ├── wireless_headsets.py    Razer Audio / Logitech Centurion / ASTRO / JBL Quantum / EPOS / Airoha RACE (含 Audeze Maxwell 有线 0x4B1A) / Alienware AW920H / Poly BT600 / Jabra GN / Fractal Scape / MOONDROP GM01 Pro / Sony PULSE 3D (常驻只读句柄) / MCHOSE (多集合自适应与受控通用探测) / VGN OMNISOUND / FIFINE / Lenovo 无线耳机
-  ├── wireless_keyboards.py   CompX BY / SONiX(隔离QMK) / Evision / Semico / 荣元 Rongyuan 2.4G / URX Core75 / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard 无线键盘（180s 低打扰节流）
-  ├── standard_hid.py         标准 USB HID Battery Strength (0x06:0x20) 零写操作通用电池兜底适配器（按精确 (vid, pid) 跳过专用适配器在线及休眠占位设备）
-  └── bluetooth_provider.py   Windows SetupAPI DEVPKEY_Device_BatteryLevel（按 MAC 聚合根节点名/在线态与 HFP/BLE 子节点电量）+ Apple AirPods Continuity BLE 解析
-installer/
-  ├── BattDock.iss            Inno Setup 6 标准安装脚本（管理员安装 + 目录 users-modify 权限 + 防重复安装 + 卸载）
-  └── ChineseSimplified.isl   UTF-8 BOM 简体中文安装向导语言包（Microsoft YaHei UI）
-tests/test_providers.py       43 项自动化单元测试（全协议解析 + 取整精度 + 迈从安全护栏 + PULSE 3D 长句柄释放 + standard_hid 精准去重 + 提醒状态机 + 命名/图标/摘要/UI/托盘同步 + 国内优先更新与静默回退 + 任务栏点击切换样式与生命周期 + 核心托盘动态图标生命周期回归）
-RELEASE_CHECKLIST.md          发布前强制回归检查与人工验收清单（含 9 大核心受保护功能与 Win10/11 实机验收表）
-build_release.ps1             一键测试 → PyInstaller 构建 → Inno Setup 编译 Setup.exe → ZIP 打包 → SHA256SUMS.txt
-version_info.txt              Windows EXE 文件版本属性元数据（ProductName=BattDock）
+BattDock/
+├── brand.py                     # 品牌常量与版本号单一真值来源（BattDock / 2.7.3 / EXE / AUMID / 互斥量 / 仓库地址）
+├── mouse_battery_app.py         # 主入口与核心控制器（主窗口/设置窗口生命周期、提醒弹窗、状态机、JS 桥、后台服务）
+├── tray_icon.py                 # 自研独立原生 Win32 NotifyIcon 动态电池托盘控制器
+├── floating_widget.py           # 原生 WinForms 桌面悬浮窗、动态电池绘图、Win10/11 圆角与细边工具、提示音
+├── app_config.py                # 配置持久化（%LOCALAPPDATA%\BattDock\config.json）、旧版配置与开机自启迁移
+├── updater.py                   # 在线检查更新、国内加速优选、摘要提取、SHA-256/ZIP 校验、同盘回滚与重启脚本
+├── device_icons.py              # 全局统一 24x24 黑白实心设备类型图标库（SVG + Pillow 8x 超采样）
+├── vgn_battery.py               # 已真机验证的 VGN Dragonfly F2 Pro Max 17 字节只读 HID 协议实现
+├── legacy_shim.py               # 旧版 VGNMouseBattery v2.2.0 自动升级至 BattDock 的过渡桥接启动器
+├── providers/                   # 11 大模块化外设适配器与统一设备管理层
+│   ├── __init__.py
+│   ├── base.py                  # DeviceBattery / SubBattery / BatteryProvider / Win32 只读 HidP_GetCaps 工具
+│   ├── manager.py               # DeviceManager（HID 快照缓存、串行锁、去重、专用认领表、脱敏诊断导出）
+│   ├── device_naming.py         # 官方标准名称规范化、中文连接副标题、悬浮窗品牌标签与弹窗完整名
+│   ├── vgn_provider.py          # VGN（封装 vgn_battery）/ VXE / ATK / CompX / MCHOSE / Rapoo
+│   ├── logitech_hidpp.py        # Logitech HID++ 2.0 (0x1004/0x1000/0x1001/0x1F20 + 0x0005) & G 耳机
+│   ├── razer_hid.py             # Razer 91 字节 Feature Report（鼠标 / 键盘）
+│   ├── steelseries_hid.py       # SteelSeries 鼠标 & Arctis / Nova / GameBuds 耳机
+│   ├── corsair_hid.py           # Corsair SLIPSTREAM Bragi (FF42:0001) 鼠键 & Void / HS70 / Virtuoso / HS80 耳机
+│   ├── hyperx_hid.py            # HyperX Cloud 耳机 & Pulsefire 鼠标
+│   ├── extra_brands.py          # ASUS ROG / TUF 鼠键/Omni/SpeedNova/耳机 & Sony INZONE 系列
+│   ├── wireless_headsets.py     # Razer Audio / Logitech Centurion / ASTRO / JBL / EPOS / Airoha RACE / Alienware / Poly / Jabra / Fractal / 水月雨 / Sony PULSE 3D / MCHOSE / VGN OMNISOUND / FIFINE / Lenovo
+│   ├── wireless_keyboards.py    # CompX BY / SONiX(隔离 QMK) / Evision / Semico / 荣元 2.4G / URX Core75 / MCHOSE K87 V3 / Alienware / Apple Magic Keyboard
+│   ├── standard_hid.py          # 标准 USB HID Battery Strength (0x06:0x20) 零写操作通用兜底适配器
+│   └── bluetooth_provider.py    # Windows SetupAPI DEVPKEY_Device_BatteryLevel MAC 聚合 + AirPods Continuity BLE 解析
+├── ui/
+│   ├── common.css               # 设计令牌、浅/深双主题、配色方案、--ui-zoom 圆角补偿、Win10 边框对齐与轻量动效
+│   ├── index.html               # 主窗口（多设备卡片、低电量高亮卡、分体耳塞三列卡、空状态、底栏更新胶囊）
+│   ├── settings.html            # 独立设置中心（6 分类导航、设备拖拽排序卡片、支持设备子页、关于与一键复制/导出诊断）
+│   └── alert.html               # v1.x 遗留静态提醒模板（当前运行时由原生 WinForms 弹窗替代，保留未删）
+├── assets/
+│   ├── app_logo.png             # 512x512 纯黑圆角底 + 白色无线外设主 Logo（透明背景）
+│   ├── app_icon.ico             # 9 规格多分辨率 Windows ICO（16–256px）
+│   └── icons/*.svg              # mouse.svg / headset.svg / keyboard.svg / other.svg 统一实心矢量图标
+├── installer/
+│   ├── BattDock.iss             # Inno Setup 6 安装脚本（UTF-8 BOM，管理员安装 + users-modify + runasoriginaluser）
+│   └── ChineseSimplified.isl    # 简体中文安装向导语言包（UTF-8 BOM，Microsoft YaHei UI）
+├── tests/
+│   └── test_providers.py        # 43 项自动化单元测试与核心生命周期回归门禁
+├── docs/screenshots/            # README 展示截图（v2.4.0 实拍与演示截图）
+├── .github/ISSUE_TEMPLATE/      # Bug 反馈与设备适配申请模板
+├── build_release.ps1            # 一键单测 → PyInstaller → Inno Setup → ZIP 打包 → SHA256SUMS.txt
+├── version_info.txt             # PyInstaller 嵌入的 Windows EXE 文件版本属性
+├── requirements.txt             # 运行期 Python 依赖清单
+├── 启动BattDock.vbs              # 源码模式无控制台启动脚本（规范名称）
+├── 启动鼠标电量监控.vbs           # v1.x 历史无控制台启动脚本（与启动BattDock.vbs 等效，暂保留兼容）
+├── AGENTS.md / PROJECT_CONTEXT.md / PROGRESS.md / SUPPORTED_DEVICES.md / RELEASE_CHECKLIST.md / CHANGELOG.md
+├── README.md / README_EN.md / LICENSE / THIRD_PARTY_LICENSES.md
+├── PROJECT.md                   # v1.x 历史项目文档归档（只读保留）
+├── archive/                     # 已 gitignore 的历史备份与旧构建归档
+└── release/                     # 已 gitignore 的本地构建输出与历史版本资产目录
 ```
 
 ---
 
-## 三、已验证核心硬件协议基线（不可破坏）
+## 4. 程序启动及退出流程
 
-- **VGN Dragonfly F2 Pro Max**（`vgn_battery.py`）：
-  - `VID 0x3554`，`PID 0xFB3E`（2.4G）/ `0xFB3D`（有线），`Interface 1`，`Usage Page 0xFF02`，`Usage 0x0002`
-  - 17 字节 HID 报告（Report ID `0x08`），校验和目标 `sum(frame) % 256 == 0x55`
-  - 会话查询序列：`0x02(1) -> 0x03(1) -> 0x04 -> 0x02(0)`
-  - 解析：`Byte 6` 电量百分比，`Byte 7` 充电/有线状态，`Bytes 8–9` 电压（mV），连续 3 次无应答判休眠（返回 `percent=None`，绝不伪造 `0%`）
+### 启动流程（`mouse_battery_app.py:main()` → `MouseBatteryApp.run()`）
+1. **进程初始化（模块加载期）**：调用 `SetCurrentProcessExplicitAppUserModelID("BattDock.App")` 与 `SetProcessDpiAwareness(2)`（失败降级 `SetProcessDPIAware()`）。
+2. **单实例校验（`_acquire_single_instance()`）**：同时申请 `Local\BattDock_SingleInstance` 与 `Local\VGNMouseBatteryMonitor_SingleInstance` 双互斥量；若任一已存在，则非 `--background` 模式调用 `_activate_existing_window()` 触发唤出事件后直接退出。
+3. **旧版迁移与清理（仅冻结版 `IS_FROZEN`）**：
+   - `load_config()` 内部调用 `migrate_legacy_config()` 无损复制旧配置；
+   - `migrate_legacy_autostart()` 迁移旧开机自启键 `VGNMouseBattery` → `BattDock`；
+   - 若带 `--cleanup-legacy-exe` 参数，2 秒后异步删除同目录过渡 `VGNMouseBattery.exe`。
+4. **窗口预创建与零闪烁挂载**：安装 `_install_flicker_free_patch()`（`Opacity=0.0` + 主题背景色），创建无边框主窗口（`hidden="--background" in sys.argv`，`shadow=is_windows_11()`），进入 `webview.start(func=self._on_window_loaded, gui="edgechromium")`。
+5. **后台服务单次初始化（`_start_background_services_once()`）**：受 `_bg_lock` + `_bg_started` 保护，绝不重复启动：
+   - 挂载系统关机/注销监听 `_hook_os_session_ending()`；
+   - 启动独立原生 Win32 托盘 `_start_tray()`；
+   - 按配置同步桌面悬浮窗 `_sync_floating_widget()`；
+   - 启动 4 个守护线程：`BattDock-Poll`、`BattDock-Wakeup`、`BattDock-ShowEvent`、`BattDock-DevChange`；
+   - 若开启自动检查更新，12 秒后静默执行 `check_updates(silent=True)`。
 
----
-
-## 四、关键技术决策与已攻克的坑
-
-1. **Windows 10 / 11 跨版本圆角与消除 1px 白色直角框（v2.4.0 → v2.5.1）**：
-   - **坑 1（64 位句柄截断）**：`ctypes.windll.gdi32.CreateRoundRectRgn` 默认返回 32 位 `c_int`，在 64 位 Python 下截断 `HRGN` 导致 `SetWindowRgn` 失败。已显式声明 `argtypes`/`restype = wintypes.HRGN`，并传入 `(0, 0, w + 1, h + 1, diam, diam)` 实现四边四角完全对称裁剪。
-   - **坑 2（`pywebview` 强制矩形 DWM 外框导致 Win10 圆角外 1px 白色直角 `┌` 框）**：`webview/platforms/winforms.py` 在默认 `shadow=True` 下调用 `DwmExtendFrameIntoClientArea(1,1,1,1)` 和 `DWMWA_NCRENDERING_POLICY = DWMNCRP_ENABLED`，令 Windows 10 DWM 无视 `SetWindowRgn` 在矩形外圈硬画白边。**根治方案**：主/设置窗口统一传 `shadow=is_windows_11()`，且 `apply_window_rounded_corners()` Win10 分支显式执行 `DWMNCRP_DISABLED` + 零 `MARGINS` 清零，最大化时调用 `SetWindowRgn(hwnd, 0, True)` 恢复直角。
-   - **坑 3（`ui_scale` 缩放与 `body` 角部缝隙）**：先定位 `_set_window_pos` 再执行 `_apply_window_chrome`，同时挂载 `SizeChanged`、`Resize`、`VisibleChanged`、`DpiChanged` 钩子；CSS 通过 `--ui-zoom` 反向补偿 `.app-shell` 圆角并在 `:root[data-os="win10"]` 下将 `body` 背景与 `--border-window` 对齐，实现零子像素残留。
-2. **启动与设置窗口零闪烁 + 开机 `--background` 静默无弹窗**：
-   - 通过 `_install_flicker_free_patch()` 在 `BrowserForm.__init__` 置 `Opacity = 0.0` + 主题匹配 `background_color`，在不可见态完成精确居中、圆角裁剪及前端双 `requestAnimationFrame` 首帧合成后由 `ui_ready()` 原子显现；设置窗口关闭时改为隐藏复用（仅退出程序时销毁），消除冷启动闪烁。
-   - 严禁在句柄创建后修改 WinForms `ShowInTaskbar`（会触发 `RecreateHandle()` 导致 WebView2 `E_ABORT` 崩溃）。
-3. **在线自动覆盖更新与自动重启（v2.4.0 彻底根治）**：
-   - **坑 1（跨盘符 `Move-Item` 崩溃）**：旧版 `v2.3.0` 将回滚目录建在 `C:\Temp`，当程序位于 `D:`/`E:`/`F:` 时 `Move-Item _internal` 抛出跨卷异常。已改为在目标程序同盘同目录建立 `._battdock_rollback_<pid>`。
-   - **坑 2（互斥进程创建标志）**：Windows 下 `CREATE_NO_WINDOW | DETACHED_PROCESS` 互斥导致隐藏 `powershell.exe` 无法启动。已改为 `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` + `stdin/stdout/stderr=DEVNULL`。
-   - **坑 3（文件锁释放）**：主进程启动更新脚本后调用 `quit_app()` 并立即 `os._exit(0)`，彻底释放 WebView2 / CLR 对 `_internal` 的句柄锁；脚本自动重试替换、失败自动完整回滚、自动拉起新版 `BattDock.exe` 并核验 PID、清理全部临时文件。
-   - **坑 4（旧版客户端纯文本展示乱码）**：绝不在 GitHub Release 正文顶部放 `<!-- BATTDOCK_SUMMARY_START -->` 注释；软件内简明摘要由 Release 资产 `update-summary.json` 提供，Release 正文自身保持纯净简洁 `•` 列表。
-4. **标准 Windows 安装程序与自动更新权限兼容（Inno Setup 6）**：
-   - `installer/BattDock.iss` 与 `ChineseSimplified.isl` 必须保存为 **UTF-8 BOM**，否则 Inno Setup 6 按 GBK 解析中文导致乱码。
-   - `PrivilegesRequired=lowest` 无法在 `E:\BattDock` 等根目录创建文件夹（`Error 5`）；已改为 `PrivilegesRequired=admin` + `[Dirs] Name: "{app}"; Permissions: users-modify` + `[Run] Flags: ... runasoriginaluser`，同时实现「任意盘符无报错安装 + 后续普通权限软件内一键自动覆盖更新 + 配置路径与桌面用户会话一致」。
-5. **原生 WinForms 桌面悬浮窗与紧凑低电量提醒弹窗**：
-   - 均不引入额外 WebView2 进程，通过 `native_main.BeginInvoke` 在 UI 线程极速渲染并绘制 1px 抗锯齿圆角细边（`paint_winforms_rounded_border`）。
-   - 悬浮窗默认仅显示品牌名（悬停显示完整名）；低电量提醒弹窗按 `TextRenderer.MeasureText` 动态计算宽度（`250–360 × 56` 逻辑像素），显示完整标准设备名（超长仅裁冗余后缀，绝不缩减为纯品牌名），加 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` 避免抢夺游戏/全屏焦点。
-6. **设备管理拖拽排序与顺序同步**：
-   - `ui/settings.html` 使用 Pointer Events + FLIP 位移交换实现无闪影拖拽排序，松手调用 `reorder_devices(ids)` 持久化至 `config.json`，并同步刷新主窗口（`_sorted_devices`）、托盘与桌面悬浮窗（`_pick_floating_device`）。
-7. **窗口生命周期、防交互残留与 HID 通信稳定化（v2.5.2 – v2.6.0）**：
-   - **拦截任务栏右键关闭 / Alt+F4 与原生任务栏点击切换**：主窗口与设置窗口统一订阅 `events.closing`（`should_lock=True`）；开启 `close_to_tray` 时取消销毁并隐藏复用，关闭时触发 `quit_app()` 完整退出；`show_main_window()` 校验 `_is_window_alive()`、自动还原最小化窗口（含最小化后隐藏至托盘再唤出时先 `SW_RESTORE` 再居中）并在窗口意外销毁时安全重建，后台监控线程由 `_bg_started` 保护绝不重复启动。通过 `_ensure_taskbar_toggle_style()` 为无边框 `BrowserForm` 幂等补齐 `WS_MINIMIZEBOX | WS_SYSMENU`（不添加 `WS_CAPTION`/`WS_THICKFRAME`/`WS_BORDER`），原生支持 Windows 10/11 任务栏点击切换（前台点击最小化、已最小化恢复激活、后台可见切换前台），同时 `apply_window_rounded_corners()` 在 `IsIconic` 时跳过区域重算并在 `minimized`/`restored`/`maximized` 事件中同步圆角、最大化状态与交互残留清理。
-   - **彻底消除隐藏/重开残留选中态（v2.6.0 根治）**：隐藏与显现前通过 `resetInteractionState()` 持久挂载 `:root.ui-await-pointer` 压制 Chromium 残留 `:hover`/`:active`（不阻挡点击与键盘 Tab 导航），直到窗口显现 120ms 后检测到用户真实位移 >3px 的 `pointermove` 或 `pointerdown` 才解除；并配合 `EnumChildWindows` 递归向深层 `Chrome_RenderWidgetHostHWND` 投递 `WM_CANCELMODE` / `WM_MOUSELEAVE`。
-   - **事件驱动 HID 拓扑缓存与串行退避轮询**：Win32 `WM_DEVICECHANGE` 监听 HID 热插拔，`DeviceManager` 串行加锁并缓存 HID 快照（消除常规 25 秒轮询触发 46–83ms 全总线 `hid.enumerate(0, 0)`）；`VgnBatteryReader` 复用共享快照、改用非阻塞排空并对休眠设备执行阶梯退避（`45s → 90s → 180s`），同步提供内存环形轻量诊断缓冲（零持续磁盘写）。
-8. **系统托盘动态电池图标高可靠架构（取代 `pystray` 竞态与静默失败隐患）**：
-   - **根因**：旧版依赖 `pystray 0.19.5` 存在 4 处结构性缺陷：① 无线程锁保护 `_icon_handle`/`_menu_handle`，启动轮询与设置页 `update_menu()` 并发易触发 `DestroyIcon` `WinError 1402` 或传入已销毁句柄；② 完全忽略 `Shell_NotifyIconW(NIM_ADD)` 返回值且永不重试，在线更新 `os._exit(0)` 未等 `NIM_DELETE` 重启后若 `NIM_ADD` 瞬时失败图标永久消失；③ `ChangeWindowMessageFilterEx` 权限失败直接崩溃托盘线程；④ 每次电量更新均写磁盘临时 `.ico` 文件且 `hID` 字段名拼写错误。
-   - **根治方案（`tray_icon.py`）**：自研独立 Win32 `TrayIconController`（独立消息窗口与主窗口生命周期彻底解耦、纯内存 `BITMAPV5HEADER` 32 位 ARGB `HICON` 先新后旧原子替换、`RLock` 串行、`NIM_ADD` 退避重试与 `NIM_MODIFY` 失败自动补注册、`WM_TASKBARCREATED`/`WM_DISPLAYCHANGE` 自愈、右键现场构建并销毁 `HMENU`、`stop()` 同步 `NIM_DELETE` 后再 `os._exit(0)`）；**显式保持 `uID = 0`** 以 100% 保留老用户在 Windows 11 `NotifyIconSettings` 中已置顶的 `IsPromoted = 1` 偏好；并在诊断报告中输出 `tray` 健康快照。
-9. **开源合规决策**：
-   - 仅参考 MIT 仓库（`qu1ncky/BatteryTray`、`JKWTCN/BatteryMonitor`）的公开报文规范独立实现；未从 GPL-3.0（`Sapd/HeadsetControl`）或无 LICENSE 仓库复制代码，详情记录于 `THIRD_PARTY_LICENSES.md`。
+### 退出流程（`MouseBatteryApp.quit_app()`）
+1. 置位 `_quitting` 与 `_stop_event`，唤醒并停止后台轮询与监听线程。
+2. 关闭桌面悬浮窗与低电量提醒弹窗，调用 `DeviceManager.close()` 释放所有常驻 HID 句柄（如 Sony PULSE 3D 只读句柄）。
+3. **同步注销托盘**：调用 `TrayIconController.stop()` 发送 `NIM_DELETE` 销毁通知区域图标与 `HICON`，等待托盘线程退出，避免遗留僵尸图标。
+4. 销毁设置窗口与主窗口，释放单实例互斥量；若处于在线更新流程，立即调用 `os._exit(0)` 彻底释放 WebView2 / CLR 文件锁，交由隐藏更新脚本完成替换并拉起新版。
 
 ---
 
-## 五、标准构建与 GitHub 发布流程
+## 5. 主窗口与设置窗口生命周期
 
-1. **版本递增**：同步更新 `brand.py`（`APP_VERSION` / `APP_VERSION_TUPLE`）、`version_info.txt`、`CHANGELOG.md`、`PROGRESS.md`、`README.md`、`README_EN.md`。
-2. **一键构建**：执行 `powershell -ExecutionPolicy Bypass -File .\build_release.ps1`，自动跑通 30 项单元测试并生成 `release\assets_vX.Y.Z\` 下的：
-   - `BattDock-vX.Y.Z-Setup.exe`（标准中文安装程序）
-   - `BattDock-vX.Y.Z-Windows-x64-Portable.zip`（便携免安装版，供软件内自动更新使用）
-   - `VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip`（旧版 `v2.2.0` 迁移桥接包）
-   - `SHA256SUMS.txt`
-3. **准备摘要文件**：在构建产物目录放入 `update-summary.json`（3–5 条简明中文更新要点 + 可选 `important_notice`）以及纯净无 Markdown/HTML 噪音的 Release 正文。
-4. **隐私检查与 Git 提交**：扫描确认无个人路径/Token，排除本地参考原图（`极简白色电脑图标组.png`、`黑底白色外设图标目录.png`），提交代码并打注释标签 `git tag -a vX.Y.Z -m "BattDock vX.Y.Z"` 后推送 `master` 与 tag。
-5. **草稿校验 → 正式发布 → 线上联调**：
-   - `gh release create vX.Y.Z --draft ...` 上传全部 5 个资产；
-   - `gh release view vX.Y.Z` 确认 5 个资产均为 `uploaded` 且大小准确；
-   - `gh release edit vX.Y.Z --draft=false --latest` 正式发布；
-   - 调用 `updater.check_for_update("<prev_ver>")` 与 HTTP HEAD 验证新版检出、便携 ZIP 命中、摘要解析与全部 5 个直链 HTTP 200。
+- **零闪烁显现**：通过 `_install_flicker_free_patch()` 在 `BrowserForm.__init__` 预置 `Opacity=0.0`，在不可见态完成按显示器工作区居中（`_set_window_pos`）与圆角裁剪（`_apply_window_chrome`），待前端双 `requestAnimationFrame` 完成首帧合成并回调 `ui_ready()` 后平滑显现。严禁在句柄创建后修改 WinForms `ShowInTaskbar`（会触发 `RecreateHandle()` 引发 WebView2 `E_ABORT`）。
+- **关闭与隐藏复用**：主窗口与设置窗口统一订阅 `events.closing`（`should_lock=True`）：
+  - 主窗口在 `close_to_tray=True` 时取消销毁并隐藏至托盘，不销毁实例也不影响托盘与后台监控；`close_to_tray=False` 时触发 `quit_app()` 完整退出；
+  - 设置窗口关闭始终隐藏复用（仅程序退出时销毁），每次重新打开默认重置至「常规设置」；
+  - 托盘唤出或单实例唤醒 `show_main_window()` 校验 `_is_window_alive()`：若曾最小化（含「最小化后再右键关闭至托盘」），先 `SW_RESTORE` 再居中激活；若意外销毁则安全重建主窗口且绝不重复启动后台服务。
+- **原生任务栏点击切换**：`_ensure_taskbar_toggle_style()` 幂等补齐 `WS_MINIMIZEBOX | WS_SYSMENU`（绝不添加 `WS_CAPTION`/`WS_THICKFRAME`/`WS_BORDER`），零全局钩子实现前台点击最小化、最小化恢复激活、后台可见置前不误最小化。
+- **消除隐藏/重开残留悬停与焦点**：隐藏与显现前执行 `resetInteractionState()` 持久挂载 `:root.ui-await-pointer` 压制 Chromium 残留 `:hover`/`:active`，并递归 `EnumChildWindows` 向 `Chrome_RenderWidgetHostHWND` 投递 `WM_CANCELMODE`/`WM_MOUSELEAVE`，直至显现 120ms 后检测到真实位移 `> 3px` 的指针移动或点击才解除（不阻碍点击与键盘 `Tab` 导航）。
+
+---
+
+## 6. 系统托盘及 NotifyIcon 实现
+
+自 `v2.7.3` 起彻底移除 `pystray 0.19.5`（根治其无锁 `HICON`/`HMENU` 竞态、忽略 `NIM_ADD` 返回值、权限异常崩溃及临时 `.ico` 磁盘写入四大缺陷），改用自研原生 Win32 **`tray_icon.py`（`TrayIconController`）**：
+
+- **完全生命周期解耦**：在独立后台线程创建隐藏顶层消息窗口运行 Win32 消息循环，与主窗口/设置窗口的关闭、隐藏、最小化、重建及监控暂停完全解耦。
+- **纯内存图标原子替换**：`draw_battery_icon()`（`floating_widget.py`）绘制动态矢量电池与三级色阶；`pil_image_to_hicon()` 通过 `CreateDIBSection(BITMAPV5HEADER)` 纯内存生成 32 位 ARGB `HICON`（零磁盘临时文件），`set_icon()` 在 `RLock` 保护下先注册新图标再安全销毁旧 `HICON`。
+- **高可靠自愈机制**：`NIM_ADD` 失败自动退避重试；`NIM_MODIFY` 返回失败自动回退重新 `NIM_ADD` 补注册；监听 `WM_TASKBARCREATED`（Explorer 重启）与 `WM_DISPLAYCHANGE` 自动恢复图标；状态缓存 `_last_tray_icon_key` 仅在 `set_icon()` 返回成功时推进。
+- **Win11 置顶兼容与实时菜单**：显式保持 `TRAY_UID = 0`，100% 兼容老用户在 Windows 11 `NotifyIconSettings` 中已设置的 `IsPromoted = 1` 置顶偏好；左键唤出主窗口，右键现场构建原生 `HMENU`（实时反映「显示桌面悬浮窗」勾选状态）并在使用后销毁；脱敏诊断报告附带 `tray` 健康状态快照。
+
+---
+
+## 7. HID / 蓝牙设备识别与电量读取架构
+
+- **统一调度层（`providers/manager.py`）**：按顺序调度 11 个只读适配器：
+  1. `VgnCompxProvider`（封装已真机验证的 `vgn_battery.py`）
+  2. `LogitechHidppProvider`
+  3. `RazerHidProvider`
+  4. `SteelSeriesHidProvider`
+  5. `CorsairHidProvider`
+  6. `HyperXHidProvider`
+  7. `ExtraBrandsProvider`（ASUS ROG / TUF、Sony INZONE）
+  8. `WirelessHeadsetsProvider`（多品牌 2.4G/有线无线耳机，含迈从受控探测与 Sony PULSE 3D 常驻只读句柄）
+  9. `WirelessKeyboardsProvider`（多品牌 2.4G/蓝牙键盘，180s 低打扰节流）
+  10. `StandardHidBatteryProvider`（标准 USB HID `0x06:0x20` 通用只读兜底）
+  11. `BluetoothBatteryProvider`（Windows SetupAPI 12 位 MAC 跨节点聚合 + AirPods Continuity BLE 解析）
+- **去重与防冲突**：
+  - 单次 `hid.enumerate(0, 0)` 快照共享给全部 HID 适配器，异常隔离；
+  - `DeviceManager` 维护 `_dedicated_claimed_vps` 专用认领集合（含在线与休眠占位设备的精确 `(vid, pid)`），`StandardHidBatteryProvider` 精准跳过已认领设备防止重复卡片；
+  - 同 `device_id` 按 `在线 > 有电量 > 充电中 > 已验证` 评分去重；
+  - `sanitize_device_reading()` 统一通过 `providers/device_naming.py` 规范化显示名并强制保护「离线/未知电量绝不伪造 `0%`」。
+- **已验证核心协议基线（`vgn_battery.py`，不可破坏）**：
+  - `VGN Dragonfly F2 Pro Max`：`VID 0x3554`、`PID 0xFB3E`（2.4G）/ `0xFB3D`（有线），`Interface 1`，`Usage Page 0xFF02`，`Usage 0x0002`，17 字节 Report ID `0x08`，校验和 `sum(frame) % 256 == 0x55`，查询序列 `0x02(1) -> 0x03(1) -> 0x04 -> 0x02(0)`，连续 3 次无应答判休眠返回 `percent=None`。
+
+---
+
+## 8. 后台监控与轮询机制
+
+- **事件驱动 HID 拓扑缓存**：`BattDock-DevChange` 线程监听 Windows `WM_DEVICECHANGE`（硬件插拔）与 `WM_POWERBROADCAST`（系统休眠/唤醒），仅在启动、热插拔、手动刷新、IO 异常恢复或长周期兜底（有设备 300s / 无设备 60s）时执行全量 `hid.enumerate(0, 0)`，消除常规轮询对 USB 总线的周期性阻塞。
+- **串行防并发与退避降频**：`DeviceManager` 使用 `RLock` 串行轮询；`VgnBatteryReader` 复用共享快照、非阻塞排空并对休眠设备阶梯退避（`45s → 90s → 180s`）；`BattDock-Wakeup` 监听用户鼠标活动触发唤醒刷新并带 15 秒冷却。
+- **轻量内存诊断**：`DeviceManager._poll_history` 使用最大 60 条的内存环形缓冲，默认零持续磁盘日志写入（仅环境变量 `BATTDOCK_DEBUG_LOG=1` 时写限长调试日志）。
+
+---
+
+## 9. 低电量提醒机制
+
+- **状态机（`mouse_battery_app.py:evaluate_tiered_alerts()`）**：默认三级阈值 `30%`（一级黄「电量偏低」）、`20%`（二级橙「电量不足」）、`10%`（三级红「电量紧急」），支持单设备覆盖；引入 `+5%` 迟滞回升防抖与充电重置，同一轮跨越多个档位仅弹最紧急档位，可选重复提醒间隔。
+- **展示载体**：
+  - **原生 WinForms 迷你弹窗**：按 `TextRenderer.MeasureText` 动态计算宽度（`250–360×56` 逻辑像素，圆角 `8px`），带 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` 避免抢夺游戏/全屏焦点，钳制在工作区内停留 5 秒，左侧单色实心设备图标不变色，第二行优先显示自定义名或完整标准型号；
+  - **Windows 系统通知与提示音**：可选经由 `TrayIconController.notify()` 推送气泡通知与 `play_alert_sound()` 播放系统提示音。
+
+---
+
+## 10. 桌面悬浮窗实现方式
+
+- 实现于 `floating_widget.py`（`DesktopFloatingWidget`），基于原生 WinForms 窗体（零额外 WebView2 进程），经主窗体 UI 线程 `BeginInvoke` 刷新。
+- **内容与交互**：黑白实心设备图标 + 默认精简品牌名（`resolve_compact_device_label()`，同品牌多设备自动补全型号、支持自定义显示名与悬停查看完整详情）+ 百分比 + 平滑电量条 + 1px 抗锯齿圆角细边（`paint_winforms_rounded_border()`）。
+- 支持透明度（`40%–100%`）、小/中/大尺寸、四角预设与自由拖拽坐标持久化、位置锁定、指定设备或自动跟随、双击唤出主窗口，以及系统托盘右键与设置页双向实时开关。
+
+---
+
+## 11. 用户配置存储方式
+
+- 实现于 `app_config.py`：
+  - **打包运行模式（`IS_FROZEN=True`）**：存储于 `%LOCALAPPDATA%\BattDock\config.json`；首次启动自动检查 `%LOCALAPPDATA%\VGNMouseBattery\config.json`，目标不存在时无损复制迁移。
+  - **源码运行模式（`IS_FROZEN=False`）**：存储于项目根目录 `config.json`（已列入 `.gitignore`）。
+- **数据结构**：`AppConfig` 涵盖窗口坐标尺寸、主题、界面缩放、动画开关、配色方案、全局轮询间隔、关窗至托盘、自动检查更新、三级阈值规则 `tier_rules`、提醒方式、每设备独立偏好 `device_prefs`（`DevicePreference`：别名/隐藏/监控开关/排序权重/自定义阈值）与悬浮窗配置 `floating`（`FloatingWidgetConfig`）。
+- **向后兼容清洗**：旧配置中窗口尺寸过小（`< 600×400`）自动纠正为 `760×480`；已移除的旧版界面线路字段（`update_source`/`update_custom_mirror`）在加载时重置为默认自动优选（`"auto"`/`""`），防老配置残留失效镜像锁死。
+
+---
+
+## 12. 在线更新及自动重启机制
+
+- 实现于 `updater.py`（零第三方网络依赖，兼容系统代理）：
+  - **版本检查**：默认国内加速通道优先（通过 `CN_GITHUB_MIRRORS` 4 节点读取 `releases/latest/download/update-summary.json`），失败静默回退 GitHub 官方 API（`LATEST_RELEASE_API`），严格过滤 `draft` 与 `prerelease`。
+  - **资产选择与安全校验**：`select_release_asset()` 强制匹配含 `battdock` 与 `portable` 且排除 `bridge` 的 HTTPS `.zip` 资产；下载前并发测速择优（`rank_candidate_urls()`）并支持节点故障无缝切换；下载后校验 `SHA256SUMS.txt` 与 ZIP 防路径遍历（Zip Slip）及主程序 `BattDock.exe` 存在性。
+  - **原地替换、同盘回滚与自动重启**：生成 UTF-8 BOM PowerShell 脚本并以 `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` + `DEVNULL` 启动；主进程同步 `NIM_DELETE` 注销托盘并 `os._exit(0)` 释放锁；脚本在目标程序**同盘目录**建立 `._battdock_rollback_<pid>` 仅移出旧 `BattDock.exe` 与 `_internal`（绝不触碰用户无关文件），复制新版失败自动完整回滚，成功后顺手清理旧 `VGNMouseBattery.exe` 与旧自启项、自动重启新版 `BattDock.exe` 并核验 PID 存活、清理全部临时文件。
+
+---
+
+## 13. GitHub 仓库及发布流程
+
+- **公开仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（主分支 `master`，当前最新正式版 `v2.7.3`）。
+- **仓库名保留说明**：为保障已发布 `v2.2.0–v2.7.3` 客户端的在线更新 API 与 4 个国内加速镜像代理链接长期不中断，当前继续保留原 GitHub 仓库路径，对外展示名称、程序名、安装包与文档全面统一为 **BattDock**。
+- **标准构建与发布流程**：
+  1. 版本递增：同步更新 `brand.py`、`version_info.txt`、`installer/BattDock.iss` 默认版本、`CHANGELOG.md`、`PROGRESS.md`、`README.md`、`README_EN.md`。
+  2. 一键构建：运行 `powershell -ExecutionPolicy Bypass -File .\build_release.ps1`，自动跑通全部 43 项单元测试，生成 `release\assets_vX.Y.Z\` 下的 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip` 与 `SHA256SUMS.txt`。
+  3. 准备 `update-summary.json`（3–5 条简明中文摘要）与纯文本 Release 正文（无 `•`/Markdown 噪音/HTML 注释）。
+  4. 按 `RELEASE_CHECKLIST.md` 完成隐私扫描与回归核验，提交并打附注标签 `git tag -a vX.Y.Z -m "BattDock vX.Y.Z"`，推送 `master` 与 tag。
+  5. 执行 `gh release create vX.Y.Z --draft ...` → 核验 5 个资产均已上传 → `gh release edit vX.Y.Z --draft=false --latest` → 线上验证 `updater.check_for_update()` 与资产直链 HTTP 200。
+
+---
+
+## 14. Windows 10 / 11 兼容性处理
+
+- **圆角与边框**：
+  - **Windows 11（Build `>= 22000`）**：`shadow=True` + 原生 `DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND` + `DWMWA_BORDER_COLOR = NONE`。
+  - **Windows 10（Build `< 22000`）**：禁用 `pywebview` 默认阴影（`shadow=is_windows_11()`），在 `apply_window_rounded_corners()` 中显式关闭非客户区 DWM 渲染（`DWMNCRP_DISABLED`）并清零 `DwmExtendFrameIntoClientArea(0,0,0,0)`，消除 1px 白色直角外框；使用显式 64 位 `HRGN` 签名的 `CreateRoundRectRgn(0, 0, w+1, h+1, diam, diam)` + `SetWindowRgn` 按真实 DPI 裁剪；最大化清除裁剪区域、最小化 `IsIconic` 跳过重算，并在 `SizeChanged`/`Resize`/`VisibleChanged`/`DpiChanged` 同步重算。
+- **任务栏与托盘**：原生 Win32 样式补齐 `WS_MINIMIZEBOX | WS_SYSMENU` 兼容 Win10/11 任务栏切换；托盘 `uID=0` 保持 Win11 托盘置顶偏好，并兼容 Win10 通知区经典行为。
+- **安装与更新权限**：Inno Setup 使用 `PrivilegesRequired=admin` + `[Dirs] Name: "{app}"; Permissions: users-modify` + `[Run] runasoriginaluser`，同时实现任意盘符无报错安装、普通用户权限软件内自动更新及正确用户配置目录定位。
+
+---
+
+## 15. 重要模块之间的依赖关系
+
+```mermaid
+flowchart TD
+    Brand["brand.py (品牌/版本/标识单一真值)"] --> Config["app_config.py (配置与自启迁移)"]
+    Brand --> Updater["updater.py (在线更新与同盘回滚)"]
+    Brand --> App["mouse_battery_app.py (主控制器/双窗口/提醒/JS桥)"]
+    Brand --> Mgr["providers/manager.py (DeviceManager)"]
+
+    Config --> App
+    Updater --> App
+    Tray["tray_icon.py (原生 Win32 托盘)"] --> App
+    Float["floating_widget.py (悬浮窗/电池绘制/Win10圆角)"] --> App
+    Icons["device_icons.py (黑白实心设备图标)"] --> App
+    Icons --> Float
+
+    Mgr --> App
+    VgnRaw["vgn_battery.py (VGN 已验证协议)"] --> VgnProv["providers/vgn_provider.py"]
+    VgnProv --> Mgr
+    OtherProvs["providers/* (其余 10 个只读适配器)"] --> Mgr
+    Naming["providers/device_naming.py"] --> Mgr
+    Naming --> App
+    UI["ui/index.html + settings.html + common.css"] <--> App
+```
+
+---
+
+## 16. 软件名称、程序文件名及内部标识对应关系
+
+| 维度 | 当前正式标准（BattDock） | 历史旧标识（仅兼容迁移使用） | 说明 |
+| :--- | :--- | :--- | :--- |
+| 对外产品名称 | `BattDock` | `VGNMouseBattery` / `VGN 鼠标电量` | 统一定义于 `brand.py` |
+| 本地项目目录 | `BattDock`（原目录 `vgn-mouse-battery`） | `vgn-mouse-battery` | 原地改名保留完整 `.git` 历史 |
+| 主程序文件名 | `BattDock.exe` | `VGNMouseBattery.exe` | 安装与更新后自动清理旧 EXE |
+| 安装程序命名 | `BattDock-v<版本号>-Setup.exe` | 无（`v2.5.0` 起引入） | Inno Setup `AppId` 固定原地覆盖 |
+| 便携版命名 | `BattDock-v<版本号>-Windows-x64-Portable.zip` | `VGNMouseBattery-v2.2.0-win64.zip` | 兼容现有 `v2.3.0–v2.7.3` 更新器 |
+| 旧版迁移桥接包 | `VGNMouseBattery-v<版本号>-win64-UpgradeBridge.zip` | 仅服务 `v2.2.0` 旧版 | 内含 `legacy_shim.py` 过渡启动器 |
+| AppUserModelID | `BattDock.App` | 无 | 任务栏分组、Alt+Tab 与通知来源 |
+| 配置目录 | `%LOCALAPPDATA%\BattDock\config.json` | `%LOCALAPPDATA%\VGNMouseBattery\config.json` | 首次启动自动无损复制迁移 |
+| 开机自启键 | `HKCU\...\Run\BattDock` | `HKCU\...\Run\VGNMouseBattery` | 启动/安装/更新/桥接四重自动迁移清理 |
+| 单实例互斥量 | `Local\BattDock_SingleInstance` | `Local\VGNMouseBatteryMonitor_SingleInstance` | 同时申请双互斥量防新旧共存 |
+| 窗口唤醒事件 | `Local\BattDock_ShowEvent` | `Local\VGNMouseBatteryMonitor_ShowEvent` | 同时监听双事件防唤醒失效 |
+| 保留原名内部模块 | `mouse_battery_app.py`、`vgn_battery.py`、`providers/vgn_provider.py` | 同左 | 职责清晰且牵涉入口/自启/测试，不强行改名 |

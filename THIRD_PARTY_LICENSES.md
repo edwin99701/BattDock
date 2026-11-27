@@ -46,7 +46,7 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
 | :--- | :--- | :--- |
 | `hidapi` | 跨平台 USB HID 设备读写通信 | BSD-3-Clause / GPL-3.0 / HIDAPI Original（本项目按 BSD-3-Clause 使用） |
 | `pywebview` | 基于 Edge WebView2 的桌面轻量窗口 | BSD-3-Clause |
-| `pystray` | Windows 系统托盘图标与右键菜单 | LGPL-3.0（动态依赖使用） |
 | `Pillow` | 矢量高清透明电池托盘图标与 ICO 渲染 | MIT-CMU（HPND） |
 | `pythonnet` / `clr-loader` | WinForms 原生宿主与极速无边框置顶迷你弹窗 | MIT License |
 | `PyInstaller` | Windows 独立可执行程序打包（仅构建期使用） | GPL-2.0 with Bootloader Exception（允许打包任意许可证应用） |
+| `pystray`（历史依赖，已于 `v2.7.3` 移除） | 早期版本 Windows 系统托盘实现；`v2.7.3` 起已替换为自研原生 Win32 `tray_icon.py` | LGPL-3.0（仅历史版本使用） |

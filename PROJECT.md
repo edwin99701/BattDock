@@ -1,6 +1,6 @@
-# PROJECT.md — VGN 鼠标电量显示工具（历史归档）
+# PROJECT.md — VGN 鼠标电量显示工具（v1.x 历史归档）
 
-> **说明**：本项目已于 2026-11-26 升级为通用多品牌无线外设电量监控工具（v2.0），最新架构、规则与进度请统一查阅 [`AGENTS.md`](./AGENTS.md)、[`PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md) 与 [`PROGRESS.md`](./PROGRESS.md)。本文件仅作为 v1.x 目录整理历史存档保留。
+> **说明**：本项目已正式升级并定名为 **BattDock**（标准本地目录 `BattDock`，原目录 `vgn-mouse-battery`）。最新架构、长期规范与开发进度请统一查阅 [`AGENTS.md`](./AGENTS.md)、[`PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md) 与 [`PROGRESS.md`](./PROGRESS.md)。本文件仅作为 v1.x 历史存档保留，不再更新。
 
 ## 基本信息
 
