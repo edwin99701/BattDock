@@ -7,7 +7,7 @@
 ## 一、项目定位、运行环境与技术栈
 
 - **软件名称**：**BattDock**（轻量化 Windows 无线外设电量管理工具，开源协议 MIT）
-- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前版本 `v2.7.2`）
+- **GitHub 仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（公开仓库，主分支 `master`，当前版本 `v2.7.3`）
 - **兼容目标**：Windows 10 22H2 x64 及以上 / Windows 11 x64（依赖系统内置 Edge WebView2 运行时，免 Python 环境、免官方驱动）
 - **开发与构建环境**：Python `3.12+`（验证版本 `3.12.10`）、`hidapi 0.15.0`、`pywebview 6.2.1`（WinForms + EdgeChromium）、`pystray 0.19.5`、`Pillow 13.0.0`、`pythonnet` / `clr-loader`、`PyInstaller 6.22.3`、`Inno Setup 6.7.3`（用户级安装于 `%LOCALAPPDATA%\Programs\Inno Setup 6`）
 - **当前本机硬件环境**：Windows 11 x64，物理连接 `VGN Dragonfly F2 Pro Max (VID 0x3554, PID 0xFB3E)`；本机**无蓝牙适配器**（蓝牙适配器缺失时 `BluetoothBatteryProvider` 必须静默返回 `[]` 且零报错）。
@@ -23,8 +23,9 @@ assets/
   ├── app_logo.png            512x512 纯黑圆角底 + 白色无线耳机/鼠标主 Logo（透明背景）
   ├── app_icon.ico            9 规格多分辨率 Windows ICO（16/20/24/32/40/48/64/128/256 px）
   └── icons/*.svg             mouse.svg / headset.svg / keyboard.svg / other.svg 统一实心矢量源
-mouse_battery_app.py          主控制器：主窗口(760x480) + 独立设置窗口(840x742)、紧凑自适应低电量提醒窗、托盘、状态机、JS 桥
-floating_widget.py            原生 WinForms 轻量桌面悬浮窗、Win10/11 跨版本圆角与 1px 抗锯齿细边工具、系统提示音
+mouse_battery_app.py          主控制器：主窗口(760x480) + 独立设置窗口(840x742)、紧凑自适应低电量提醒窗、状态机、JS 桥
+tray_icon.py                  原生 Win32 独立系统托盘动态电池图标控制器（RLock 线程安全、纯内存 32 位 ARGB HICON、失败重试/自愈、WM_TASKBARCREATED、退出同步 NIM_DELETE、uID=0 兼容）
+floating_widget.py            原生 WinForms 轻量桌面悬浮窗、动态矢量电池图标绘制、Win10/11 跨版本圆角与 1px 抗锯齿细边工具、系统提示音
 updater.py                    零依赖 GitHub Releases 在线检查更新、摘要提取、SHA-256/ZIP 校验、同盘回滚与自动重启
 legacy_shim.py                旧版 VGNMouseBattery v2.2.0 自动升级至 BattDock 的过渡迁移桥接器
 app_config.py                 配置持久化（%LOCALAPPDATA%\BattDock\config.json）、旧版配置/自启无损迁移、设备偏好与阈值
@@ -51,7 +52,8 @@ providers/
 installer/
   ├── BattDock.iss            Inno Setup 6 标准安装脚本（管理员安装 + 目录 users-modify 权限 + 防重复安装 + 卸载）
   └── ChineseSimplified.isl   UTF-8 BOM 简体中文安装向导语言包（Microsoft YaHei UI）
-tests/test_providers.py       40 项自动化单元测试（全协议解析 + 取整精度 + 迈从安全护栏 + PULSE 3D 长句柄释放 + standard_hid 精准去重 + 提醒状态机 + 命名/图标/摘要/UI/托盘同步 + 国内优先更新与静默回退 + 任务栏点击切换样式与生命周期）
+tests/test_providers.py       43 项自动化单元测试（全协议解析 + 取整精度 + 迈从安全护栏 + PULSE 3D 长句柄释放 + standard_hid 精准去重 + 提醒状态机 + 命名/图标/摘要/UI/托盘同步 + 国内优先更新与静默回退 + 任务栏点击切换样式与生命周期 + 核心托盘动态图标生命周期回归）
+RELEASE_CHECKLIST.md          发布前强制回归检查与人工验收清单（含 9 大核心受保护功能与 Win10/11 实机验收表）
 build_release.ps1             一键测试 → PyInstaller 构建 → Inno Setup 编译 Setup.exe → ZIP 打包 → SHA256SUMS.txt
 version_info.txt              Windows EXE 文件版本属性元数据（ProductName=BattDock）
 ```
@@ -94,7 +96,10 @@ version_info.txt              Windows EXE 文件版本属性元数据（ProductN
    - **拦截任务栏右键关闭 / Alt+F4 与原生任务栏点击切换**：主窗口与设置窗口统一订阅 `events.closing`（`should_lock=True`）；开启 `close_to_tray` 时取消销毁并隐藏复用，关闭时触发 `quit_app()` 完整退出；`show_main_window()` 校验 `_is_window_alive()`、自动还原最小化窗口（含最小化后隐藏至托盘再唤出时先 `SW_RESTORE` 再居中）并在窗口意外销毁时安全重建，后台监控线程由 `_bg_started` 保护绝不重复启动。通过 `_ensure_taskbar_toggle_style()` 为无边框 `BrowserForm` 幂等补齐 `WS_MINIMIZEBOX | WS_SYSMENU`（不添加 `WS_CAPTION`/`WS_THICKFRAME`/`WS_BORDER`），原生支持 Windows 10/11 任务栏点击切换（前台点击最小化、已最小化恢复激活、后台可见切换前台），同时 `apply_window_rounded_corners()` 在 `IsIconic` 时跳过区域重算并在 `minimized`/`restored`/`maximized` 事件中同步圆角、最大化状态与交互残留清理。
    - **彻底消除隐藏/重开残留选中态（v2.6.0 根治）**：隐藏与显现前通过 `resetInteractionState()` 持久挂载 `:root.ui-await-pointer` 压制 Chromium 残留 `:hover`/`:active`（不阻挡点击与键盘 Tab 导航），直到窗口显现 120ms 后检测到用户真实位移 >3px 的 `pointermove` 或 `pointerdown` 才解除；并配合 `EnumChildWindows` 递归向深层 `Chrome_RenderWidgetHostHWND` 投递 `WM_CANCELMODE` / `WM_MOUSELEAVE`。
    - **事件驱动 HID 拓扑缓存与串行退避轮询**：Win32 `WM_DEVICECHANGE` 监听 HID 热插拔，`DeviceManager` 串行加锁并缓存 HID 快照（消除常规 25 秒轮询触发 46–83ms 全总线 `hid.enumerate(0, 0)`）；`VgnBatteryReader` 复用共享快照、改用非阻塞排空并对休眠设备执行阶梯退避（`45s → 90s → 180s`），同步提供内存环形轻量诊断缓冲（零持续磁盘写）。
-8. **开源合规决策**：
+8. **系统托盘动态电池图标高可靠架构（取代 `pystray` 竞态与静默失败隐患）**：
+   - **根因**：旧版依赖 `pystray 0.19.5` 存在 4 处结构性缺陷：① 无线程锁保护 `_icon_handle`/`_menu_handle`，启动轮询与设置页 `update_menu()` 并发易触发 `DestroyIcon` `WinError 1402` 或传入已销毁句柄；② 完全忽略 `Shell_NotifyIconW(NIM_ADD)` 返回值且永不重试，在线更新 `os._exit(0)` 未等 `NIM_DELETE` 重启后若 `NIM_ADD` 瞬时失败图标永久消失；③ `ChangeWindowMessageFilterEx` 权限失败直接崩溃托盘线程；④ 每次电量更新均写磁盘临时 `.ico` 文件且 `hID` 字段名拼写错误。
+   - **根治方案（`tray_icon.py`）**：自研独立 Win32 `TrayIconController`（独立消息窗口与主窗口生命周期彻底解耦、纯内存 `BITMAPV5HEADER` 32 位 ARGB `HICON` 先新后旧原子替换、`RLock` 串行、`NIM_ADD` 退避重试与 `NIM_MODIFY` 失败自动补注册、`WM_TASKBARCREATED`/`WM_DISPLAYCHANGE` 自愈、右键现场构建并销毁 `HMENU`、`stop()` 同步 `NIM_DELETE` 后再 `os._exit(0)`）；**显式保持 `uID = 0`** 以 100% 保留老用户在 Windows 11 `NotifyIconSettings` 中已置顶的 `IsPromoted = 1` 偏好；并在诊断报告中输出 `tray` 健康快照。
+9. **开源合规决策**：
    - 仅参考 MIT 仓库（`qu1ncky/BatteryTray`、`JKWTCN/BatteryMonitor`）的公开报文规范独立实现；未从 GPL-3.0（`Sapd/HeadsetControl`）或无 LICENSE 仓库复制代码，详情记录于 `THIRD_PARTY_LICENSES.md`。
 
 ---

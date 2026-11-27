@@ -1650,11 +1650,208 @@ class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
         app_src = (root / "mouse_battery_app.py").read_text(encoding="utf-8")
         idx_open = app_src.index('f"打开 {APP_NAME}"')
         idx_flt = app_src.index('"显示桌面悬浮窗"')
-        idx_set = app_src.index('"设置", lambda _i, _m: self.open_settings_window')
+        idx_set = app_src.index('"设置", action=lambda: self.open_settings_window')
         self.assertLess(idx_open, idx_flt)
         self.assertLess(idx_flt, idx_set)
-        self.assertIn("checked=lambda _item: self._is_floating_enabled()", app_src)
+        self.assertIn("checked=self._is_floating_enabled", app_src)
         self.assertIn("self._refresh_tray_menu()", app_src)
+
+
+class TestCoreTrayLifecycleRegression(unittest.TestCase):
+    """核心受保护功能回归测试：动态系统托盘电池图标生命周期、失败自愈、并发安全与窗口解耦。"""
+
+    def test_dynamic_battery_hicon_creation_and_cleanup(self):
+        from floating_widget import draw_battery_icon
+        from tray_icon import destroy_hicon_safe, pil_image_to_hicon
+
+        cases = [
+            (85, False, True),   # 正常绿色
+            (25, False, True),   # 一级偏低黄色
+            (15, False, True),   # 二级不足橙色
+            (8, False, True),    # 三级紧急红色
+            (60, True, True),    # 充电中闪电
+            (None, False, False),  # 休眠/未连接灰色
+        ]
+        for pct, chg, conn in cases:
+            img = draw_battery_icon(size=64, percent=pct, charging=chg, connected=conn)
+            self.assertEqual(img.size, (64, 64))
+            self.assertEqual(img.mode, "RGBA")
+            if sys.platform == "win32":
+                hicon = pil_image_to_hicon(img)
+                self.assertGreater(hicon, 0, f"HICON creation failed for {(pct, chg, conn)}")
+                destroy_hicon_safe(hicon)
+
+    def test_tray_add_retry_modify_self_heal_and_sync_delete_on_stop(self):
+        from floating_widget import draw_battery_icon
+        from tray_icon import NIM_ADD, NIM_DELETE, NIM_MODIFY, TrayIconController, TrayMenuEntry
+
+        calls: list[tuple[int, int]] = []
+        created_icons: list[int] = []
+        destroyed_icons: list[int] = []
+        next_h = [100]
+        # 模拟更新重启瞬间前 2 次 NIM_ADD 失败，第 3 次成功；之后模拟 1 次 NIM_MODIFY 失败触发自愈补注册
+        add_results = [False, False, True, True]
+        modify_results = [True, False]
+
+        def fake_notify(code: int, nid) -> bool:
+            hicon_val = int(getattr(nid, "hIcon", 0) or 0) if not isinstance(nid, dict) else int(nid.get("hIcon", 0))
+            calls.append((code, hicon_val))
+            if code == NIM_ADD:
+                return add_results.pop(0) if add_results else True
+            if code == NIM_MODIFY:
+                return modify_results.pop(0) if modify_results else True
+            return True
+
+        def fake_factory(_img) -> int:
+            next_h[0] += 1
+            created_icons.append(next_h[0])
+            return next_h[0]
+
+        def fake_destroy(h: int) -> None:
+            destroyed_icons.append(h)
+
+        tray = TrayIconController(
+            name="BattDock",
+            initial_icon=draw_battery_icon(size=64, percent=None, charging=False, connected=False),
+            title="BattDock",
+            menu_entries=[TrayMenuEntry("打开 BattDock", action=lambda: None, default=True)],
+            _notify_api=fake_notify,
+            _icon_factory=fake_factory,
+            _icon_destroyer=fake_destroy,
+        )
+        self.assertEqual(tray.TRAY_UID, 0)  # 保持与既有 Win11 NotifyIconSettings IsPromoted=1 兼容
+
+        # 手动驱动注册重试与更新自愈（不依赖真实桌面 Explorer）
+        with tray._lock:
+            tray._hwnd = 99999
+            tray._running = True
+            self.assertFalse(tray._register_icon_locked(is_reregister=False))
+            self.assertFalse(tray.get_health_snapshot()["registered"])
+            self.assertFalse(tray._register_icon_locked(is_reregister=True))
+            self.assertTrue(tray._register_icon_locked(is_reregister=True))
+            self.assertTrue(tray.get_health_snapshot()["registered"])
+            self.assertTrue(tray.get_health_snapshot()["visible"])
+
+        # 电量变化更新成功 -> 创建新 HICON 后安全销毁旧 HICON
+        self.assertTrue(tray.set_icon(draw_battery_icon(size=64, percent=75, charging=False, connected=True)))
+        self.assertEqual(len(destroyed_icons), 1)
+        self.assertEqual(destroyed_icons[0], created_icons[0])
+
+        # 模拟 Explorer 静默重启导致 NIM_MODIFY 返回 False -> 自动回退 NIM_ADD 自愈注册
+        self.assertTrue(tray.set_icon(draw_battery_icon(size=64, percent=20, charging=False, connected=True)))
+        snap = tray.get_health_snapshot()
+        self.assertTrue(snap["registered"])
+        self.assertTrue(snap["visible"])
+        self.assertGreaterEqual(snap["modify_failures"], 1)
+        self.assertGreaterEqual(snap["reregister_count"], 2)
+
+        # 退出 stop() 必须同步发出 NIM_DELETE 并释放当前 HICON
+        tray.stop(join_timeout=0.2)
+        self.assertEqual(calls[-1][0], NIM_DELETE)
+        self.assertFalse(tray.get_health_snapshot()["registered"])
+        self.assertFalse(tray.get_health_snapshot()["visible"])
+        self.assertEqual(set(destroyed_icons), set(created_icons))
+
+    def test_tray_survives_window_lifecycle_pause_resume_and_concurrent_updates(self):
+        import concurrent.futures
+        from unittest.mock import MagicMock, patch
+        import mouse_battery_app as mba
+        from mouse_battery_app import MouseBatteryApp
+        from providers.base import DeviceBattery, KIND_MOUSE
+
+        app = MouseBatteryApp(start_hidden=False)
+        fake_tray = MagicMock()
+        fake_tray.set_icon.return_value = True
+        fake_tray.set_title.return_value = True
+        fake_tray.ensure_visible.return_value = True
+        fake_tray.get_health_snapshot.return_value = {
+            "running": True,
+            "registered": True,
+            "visible": True,
+            "hwnd_valid": True,
+            "icon_handle_valid": True,
+            "uid": 0,
+            "add_attempts": 1,
+            "add_failures": 0,
+            "modify_failures": 0,
+            "reregister_count": 0,
+            "last_error": "",
+        }
+        app._tray = fake_tray
+        app.window = MagicMock()
+        app.hwnd = 234567
+        app.cfg.close_to_tray = True
+        app._push_state_to_ui = MagicMock()
+        app._sync_floating_widget = MagicMock()
+        app._reset_window_interaction_state = MagicMock()
+
+        # 1. 主窗口关闭至托盘、最小化、恢复、唤出均不得销毁或重建托盘
+        with patch.object(mba, "_is_window_alive", return_value=True), \
+             patch.object(mba, "_set_form_visibility"), \
+             patch.object(mba, "_apply_window_chrome"), \
+             patch.object(mba, "_bring_hwnd_to_foreground"), \
+             patch.object(mba.ctypes.windll.user32, "IsIconic", return_value=0), \
+             patch.object(mba.ctypes.windll.user32, "IsZoomed", return_value=0), \
+             patch.object(mba.ctypes.windll.user32, "IsWindowVisible", return_value=1), \
+             patch.object(app, "_find_hwnd_for", return_value=234567):
+            self.assertFalse(app._on_main_window_closing())
+            app._on_main_window_minimized()
+            app._on_main_window_restored()
+            app.show_main_window()
+            # 再次调用 _start_tray 必须幂等复用现有托盘，绝不重复创建
+            app._start_tray()
+
+        self.assertIs(app._tray, fake_tray)
+        fake_tray.stop.assert_not_called()
+
+        # 2. 暂停与恢复后台电量监控不得销毁托盘
+        with patch.object(mba, "save_config"):
+            app.update_settings({"auto_monitor": False})
+            app.update_settings({"auto_monitor": True})
+        self.assertIs(app._tray, fake_tray)
+        fake_tray.stop.assert_not_called()
+
+        # 3. 并发电量更新与失败保留重试：若 set_icon 返回 False，不得推进 _last_tray_icon_key
+        app.devices = [
+            DeviceBattery(
+                device_id="vgn:test",
+                name="VGN Dragonfly F2 Pro Max",
+                brand="VGN",
+                kind=KIND_MOUSE,
+                percent=60,
+                charging=False,
+                connected=True,
+                online=True,
+                connection_mode="2.4GHz",
+            )
+        ]
+        fake_tray.set_icon.return_value = False
+        prev_key = app._last_tray_icon_key
+        app._update_tray_visual()
+        self.assertEqual(app._last_tray_icon_key, prev_key)
+        self.assertNotEqual((app._last_tray_icon_key or (None,))[0], 60)
+
+        fake_tray.set_icon.return_value = True
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+            futs = [ex.submit(app._update_tray_visual) for _ in range(12)]
+            for f in futs:
+                f.result()
+        self.assertIsNotNone(app._last_tray_icon_key)
+        self.assertEqual(app._last_tray_icon_key[0], 60)
+
+        # 4. 诊断报告包含托盘健康快照
+        with patch.object(app, "_copy_text_to_clipboard", return_value=True):
+            diag = app.copy_diagnostics()
+        self.assertIn('"tray"', diag["text"])
+        self.assertIn('"registered": true', diag["text"])
+
+        # 5. 仅在完整退出 quit_app() 时注销并清理托盘
+        app.floating_widget = MagicMock()
+        app.manager = MagicMock()
+        with patch.object(mba, "_is_window_alive", return_value=False):
+            app.quit_app()
+        fake_tray.stop.assert_called_once()
+        self.assertIsNone(app._tray)
 
 
 if __name__ == "__main__":

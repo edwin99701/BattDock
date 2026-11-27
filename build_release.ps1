@@ -40,8 +40,8 @@ Write-Host "[2/6] 使用 PyInstaller 构建 BattDock.exe（含品牌图标与 Wi
     --add-data ((Join-Path $Root "CHANGELOG.md") + ";.") `
     --hidden-import brand `
     --hidden-import device_icons `
+    --hidden-import tray_icon `
     --hidden-import updater `
-    --hidden-import pystray._win32 `
     --hidden-import floating_widget `
     --hidden-import providers `
     --collect-submodules providers `

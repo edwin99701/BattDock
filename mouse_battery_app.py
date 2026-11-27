@@ -17,8 +17,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-import pystray
 import webview
+
+from tray_icon import TrayIconController, TrayMenuEntry
 
 from app_config import (
     APP_AUTHOR,
@@ -885,7 +886,8 @@ class MouseBatteryApp:
         self._alert_window = None
         self._alert_timer: Optional[threading.Timer] = None
         self._alert_lock = threading.Lock()
-        self._tray: Optional[pystray.Icon] = None
+        self._tray_lock = threading.RLock()
+        self._tray: Optional[TrayIconController] = None
         self._stop_event = threading.Event()
         self._alerted_tiers: dict[str, set[int]] = {}
         self._last_alert_ts: dict[str, float] = {}
@@ -1865,6 +1867,8 @@ class MouseBatteryApp:
             report = self.manager.export_diagnostics(
                 active_monitor_tasks=len(self._active_bg_threads),
             )
+        if self._tray is not None:
+            report["tray"] = self._tray.get_health_snapshot()
         payload = json.dumps(report, ensure_ascii=False, indent=2)
         copied = self._copy_text_to_clipboard(payload)
         return {"ok": copied, "length": len(payload), "text": payload}
@@ -1876,6 +1880,8 @@ class MouseBatteryApp:
             report = self.manager.export_diagnostics(
                 active_monitor_tasks=len(self._active_bg_threads),
             )
+        if self._tray is not None:
+            report["tray"] = self._tray.get_health_snapshot()
         payload = json.dumps(report, ensure_ascii=False, indent=2)
         target = APP_DIR / filename
         try:
@@ -2462,12 +2468,14 @@ class MouseBatteryApp:
         self._close_alert_window(instant=True)
         self.floating_widget.close()
         self.manager.stop()
-        if self._tray is not None:
+        with self._tray_lock:
+            tray = self._tray
+            self._tray = None
+        if tray is not None:
             try:
-                self._tray.stop()
+                tray.stop(join_timeout=0.8)
             except Exception:
                 pass
-            self._tray = None
         if _is_window_alive(self.settings_window, self.settings_hwnd):
             try:
                 self.settings_window.destroy()
@@ -2581,6 +2589,11 @@ class MouseBatteryApp:
         if self._stop_event.is_set():
             return
         self.manager.notify_power_event("resume" if resuming else "suspend")
+        if resuming and self._tray is not None:
+            try:
+                self._tray.ensure_visible()
+            except Exception:
+                pass
         if not resuming or not self.cfg.auto_monitor:
             return
         if self._device_change_timer is not None:
@@ -2723,81 +2736,96 @@ class MouseBatteryApp:
         )
 
     def _update_tray_visual(self) -> None:
-        """托盘栏始终使用动态矢量电池图标，仅在电量或设备状态实际变化时重绘图标与提示文本。"""
-        if self._tray is None:
-            return
-        try:
-            td, _name = self._pick_floating_device()
-            rules = self.cfg.tier_rules if isinstance(self.cfg.tier_rules, list) else []
-            t1 = int(rules[0]["threshold"]) if len(rules) > 0 else 30
-            t2 = int(rules[1]["threshold"]) if len(rules) > 1 else 20
-            t3 = int(rules[2]["threshold"]) if len(rules) > 2 else 10
-            icon_key = (
-                (td.percent, bool(td.charging), bool(td.connected), t1, t2, t3)
-                if td is not None
-                else (None, False, False, t1, t2, t3)
-            )
-            if icon_key != self._last_tray_icon_key:
-                self._last_tray_icon_key = icon_key
-                self._tray.icon = draw_battery_icon(
-                    size=64,
-                    percent=icon_key[0],
-                    charging=icon_key[1],
-                    connected=icon_key[2],
-                    low_t1=t1,
-                    low_t2=t2,
-                    low_t3=t3,
+        """托盘栏始终使用动态矢量电池图标，串行更新、失败保留重试状态并在需要时自愈补注册。"""
+        with self._tray_lock:
+            tray = self._tray
+            if tray is None or self._quitting:
+                return
+            try:
+                td, _name = self._pick_floating_device()
+                rules = self.cfg.tier_rules if isinstance(self.cfg.tier_rules, list) else []
+                t1 = int(rules[0]["threshold"]) if len(rules) > 0 else 30
+                t2 = int(rules[1]["threshold"]) if len(rules) > 1 else 20
+                t3 = int(rules[2]["threshold"]) if len(rules) > 2 else 10
+                icon_key = (
+                    (td.percent, bool(td.charging), bool(td.connected), t1, t2, t3)
+                    if td is not None
+                    else (None, False, False, t1, t2, t3)
                 )
-
-            if not self.devices:
-                next_title = f"{APP_NAME}（未检测到外设）"
-            else:
-                lines = []
-                for d in self.devices[:3]:
-                    pref = get_device_pref(self.cfg, d.device_id)
-                    nm = pref.alias or d.name
-                    sub = format_device_subtitle(
-                        d.connection_mode, d.connected, d.online, d.asleep, d.charging, d.full, d.percent
+                if icon_key != self._last_tray_icon_key:
+                    img = draw_battery_icon(
+                        size=64,
+                        percent=icon_key[0],
+                        charging=icon_key[1],
+                        connected=icon_key[2],
+                        low_t1=t1,
+                        low_t2=t2,
+                        low_t3=t3,
                     )
-                    if d.percent is not None:
-                        lines.append(f"{nm}: {d.percent}% ({sub})" if sub else f"{nm}: {d.percent}%")
-                    else:
-                        lines.append(f"{nm}: — ({sub})" if sub else f"{nm}: —")
-                if len(self.devices) > 3:
-                    lines.append(f"…共 {len(self.devices)} 台外设")
-                next_title = "\n".join(lines)[:124]
+                    if tray.set_icon(img):
+                        self._last_tray_icon_key = icon_key
+                else:
+                    tray.ensure_visible()
 
-            if next_title != self._last_tray_title:
-                self._last_tray_title = next_title
-                self._tray.title = next_title
-        except Exception:
-            pass
+                if not self.devices:
+                    next_title = f"{APP_NAME}（未检测到外设）"
+                else:
+                    lines = []
+                    for d in self.devices[:3]:
+                        pref = get_device_pref(self.cfg, d.device_id)
+                        nm = pref.alias or d.name
+                        sub = format_device_subtitle(
+                            d.connection_mode, d.connected, d.online, d.asleep, d.charging, d.full, d.percent
+                        )
+                        if d.percent is not None:
+                            lines.append(f"{nm}: {d.percent}% ({sub})" if sub else f"{nm}: {d.percent}%")
+                        else:
+                            lines.append(f"{nm}: — ({sub})" if sub else f"{nm}: —")
+                    if len(self.devices) > 3:
+                        lines.append(f"…共 {len(self.devices)} 台外设")
+                    next_title = "\n".join(lines)[:124]
+
+                if next_title != self._last_tray_title:
+                    if tray.set_title(next_title):
+                        self._last_tray_title = next_title
+            except Exception:
+                pass
 
     def _start_tray(self) -> None:
-        tray_menu = pystray.Menu(
-            pystray.MenuItem(f"打开 {APP_NAME}", lambda _i, _m: self.show_main_window(), default=True),
-            pystray.MenuItem(
-                "显示桌面悬浮窗",
-                lambda _i, _m: self.toggle_floating_widget(),
-                checked=lambda _item: self._is_floating_enabled(),
-            ),
-            pystray.MenuItem("设置", lambda _i, _m: self.open_settings_window("general")),
-            pystray.MenuItem(
-                "检查更新",
-                lambda _i, _m: (self.open_settings_window("about"), self.check_updates(silent=False)),
-            ),
-            pystray.MenuItem("测试低电量弹窗", lambda _i, _m: self.test_low_battery()),
-            pystray.MenuItem("导出设备诊断报告", lambda _i, _m: threading.Thread(target=self.export_diagnostics, daemon=True).start()),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出程序", lambda _i, _m: self.quit_app()),
-        )
-        self._tray = pystray.Icon(
-            APP_TRAY_NAME,
-            draw_battery_icon(size=64, percent=None, charging=False, connected=False),
-            APP_NAME,
-            tray_menu,
-        )
-        threading.Thread(target=self._tray.run, daemon=True).start()
+        """幂等启动原生 Win32 动态电池托盘图标（避免重复创建，并与主窗口生命周期解耦）。"""
+        with self._tray_lock:
+            if self._tray is not None and self._tray.get_health_snapshot().get("running"):
+                self._tray.ensure_visible()
+                return
+            entries = [
+                TrayMenuEntry(f"打开 {APP_NAME}", action=self.show_main_window, default=True),
+                TrayMenuEntry(
+                    "显示桌面悬浮窗",
+                    action=self.toggle_floating_widget,
+                    checked=self._is_floating_enabled,
+                ),
+                TrayMenuEntry("设置", action=lambda: self.open_settings_window("general")),
+                TrayMenuEntry(
+                    "检查更新",
+                    action=lambda: (self.open_settings_window("about"), self.check_updates(silent=False)),
+                ),
+                TrayMenuEntry("测试低电量弹窗", action=self.test_low_battery),
+                TrayMenuEntry(
+                    "导出设备诊断报告",
+                    action=lambda: threading.Thread(target=self.export_diagnostics, daemon=True).start(),
+                ),
+                TrayMenuEntry(separator=True),
+                TrayMenuEntry("退出程序", action=self.quit_app),
+            ]
+            tray = TrayIconController(
+                name=APP_TRAY_NAME,
+                initial_icon=draw_battery_icon(size=64, percent=None, charging=False, connected=False),
+                title=APP_NAME,
+                menu_entries=entries,
+                on_left_click=self.show_main_window,
+            )
+            self._tray = tray
+        tray.start(wait_timeout=1.5)
 
     def _start_background_services_once(self) -> None:
         """保证托盘、轮询、唤醒监听、单实例唤出监听与热插拔监听仅启动一次，窗口重建时不重复创建后台任务。"""

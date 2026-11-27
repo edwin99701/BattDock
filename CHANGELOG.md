@@ -1,5 +1,16 @@
 # 更新日志（CHANGELOG）
 
+## BattDock v2.7.3（2026-11-27）— 彻底修复系统托盘动态电池图标消失回归并建立长期回归保护机制
+
+### 系统托盘核心功能根治修复
+- **自研独立原生 Win32 动态电池托盘控制器（`tray_icon.py`、`mouse_battery_app.py`）**：
+  - 排查定位旧版 `pystray 0.19.5` 导致托盘动态电池图标消失的四项根因（无线程锁 `HICON`/`HMENU` 竞态、忽略 `Shell_NotifyIcon(NIM_ADD)` 返回值且永不重试、`ChangeWindowMessageFilterEx` 权限失败崩溃以及自动更新 `os._exit(0)` 前未同步执行 `NIM_DELETE`）；
+  - 改用独立顶层隐藏消息窗口与 `RLock` 线程安全架构，与主窗口/设置窗口生命周期彻底解耦（关闭、隐藏、最小化、恢复及监控暂停/恢复均不影响托盘图标），完整保留原有动态矢量电池图标与三级电量颜色映射；
+  - 纯内存 32 位 ARGB `HICON` 生成（零磁盘临时文件、先新后旧原子替换），补齐 `NIM_ADD` 退避重试、`NIM_MODIFY` 失败自动补注册、`WM_TASKBARCREATED`/`WM_DISPLAYCHANGE` 自愈、右键现场实时勾选菜单及退出同步 `NIM_DELETE`；显式保持 `uID=0` 兼容既有 Windows 11 托盘置顶偏好（`IsPromoted=1`），并在诊断报告中新增 `tray` 健康状态快照。
+- **建立长期回归保护机制与发布前检查清单（`AGENTS.md`、`RELEASE_CHECKLIST.md`、`tests/test_providers.py`）**：明确 9 大核心受保护功能，新增 3 组托盘生命周期回归自动化测试（全量 43/43 通过），并完成 Windows 11 交互桌面实机验证（托盘动态图标、菜单、任务栏切换与 VGN 真机电量 `75%` 全通过）。
+
+---
+
 ## BattDock v2.7.2（2026-11-27）— 支持任务栏点击切换主窗口与窗口状态同步加固
 
 ### 窗口交互与稳定性修复
