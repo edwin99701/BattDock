@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.7.1-111827?style=for-the-badge" alt="Download Latest BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.7.2-111827?style=for-the-badge" alt="Download Latest BattDock" />
 </a>
 
 </div>

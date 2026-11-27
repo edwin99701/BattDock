@@ -1,5 +1,16 @@
 # 更新日志（CHANGELOG）
 
+## BattDock v2.7.2（2026-11-27）— 支持任务栏点击切换主窗口与窗口状态同步加固
+
+### 窗口交互与稳定性修复
+- **支持 Windows 10/11 原生任务栏点击切换主窗口（`mouse_battery_app.py`、`floating_widget.py`）**：
+  - 通过 Win32 原生样式辅助函数 `_ensure_taskbar_toggle_style()` 为无边框 `BrowserForm` 幂等补齐 `WS_MINIMIZEBOX | WS_SYSMENU`（绝不添加 `WS_CAPTION` / `WS_THICKFRAME` / `WS_BORDER`，保持纯无边框零边框侵入与 Win10/11 圆角无损，且零全局鼠标钩子）；
+  - 实现与标准桌面软件一致的任务栏交互：主窗口处于前台且可见时再次点击任务栏图标自动最小化、已最小化时点击恢复并激活、后台仍可见时点击置前而不误最小化；
+  - 完整保留「关闭窗口时最小化至托盘」、系统托盘唤出、任务栏右键菜单及右键关闭恢复机制，最小化与恢复过程绝不退出软件、不中断后台电量监控且不重复创建主窗口或监控任务；
+  - 同步加固 `apply_window_rounded_corners()` 最小化 `IsIconic` 跳过保护、`minimized`/`restored`/`maximized` 状态与残留清理同步，以及「主窗口先最小化再右键关闭至托盘后由托盘唤出」的 `SW_RESTORE` + 居中恢复边界；全量 40/40 项单元测试与 Windows 11 真实 Edge WebView2 端到端验收全部通过。
+
+---
+
 ## BattDock v2.7.1（2026-11-27）— 全适配器通信与电量精度修复、关于页精简与托盘悬浮窗开关
 
 ### 无线外设通信稳定性、迈从耳机识别与电量精度修复
