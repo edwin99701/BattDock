@@ -22,6 +22,7 @@ from .base import (
     KIND_MOUSE,
     STATUS_PROTOCOL,
     get_hid_report_lengths,
+    make_cached_device,
     round_half_up,
 )
 
@@ -120,14 +121,29 @@ def build_razer_request(tid: int, cmd_class: int, cmd_id: int) -> list[int]:
     return req
 
 
-def parse_razer_reply(reply: list[int] | bytes, cmd_class: int, cmd_id: int) -> Optional[list[int]]:
-    """校验 Razer 91 字节回包，返回 80 字节 arguments；休眠/超时/不匹配返回 None。"""
+def parse_razer_reply(
+    reply: list[int] | bytes,
+    cmd_class: int,
+    cmd_id: int,
+    *,
+    expected_tid: Optional[int] = None,
+    verify_crc: bool = False,
+) -> Optional[list[int]]:
+    """校验 Razer 91 字节回包，返回 80 字节 arguments；仅接受 0x02(OK)，拒绝 0x01(BUSY)/坏 CRC/错 TID。"""
     if len(reply) < REPORT_LEN:
         return None
     if reply[7] != cmd_class or reply[8] != cmd_id:
         return None
-    if reply[1] not in (0x02, 0x01):  # 0x02 ok, 0x01 busy-but-valid
+    if reply[1] != 0x02:  # 仅接受 STATUS_SUCCESS(0x02)；0x01(BUSY) 必须重试，防读到旧缓冲区脏值
         return None
+    if expected_tid is not None and reply[2] != (expected_tid & 0xFF):
+        return None
+    if verify_crc:
+        crc = 0
+        for b in reply[3:89]:
+            crc ^= b
+        if reply[89] != crc:
+            return None
     return list(reply[9:89])
 
 
@@ -147,11 +163,17 @@ class RazerHidProvider(BatteryProvider):
     def __init__(self) -> None:
         self._cache: dict[str, DeviceBattery] = {}
 
+    def on_device_change(self) -> None:
+        self._cache.clear()
+
+    def on_power_resume(self) -> None:
+        self._cache.clear()
+
     def _send_cmd(self, dev: hid.device, model: RazerModel, cmd_class: int, cmd_id: int) -> Optional[list[int]]:
         req = build_razer_request(model.tid, cmd_class, cmd_id)
         for attempt in range(3):
             if attempt > 0:
-                time.sleep(0.015)
+                time.sleep(0.02)
             try:
                 if dev.send_feature_report(req) < REPORT_LEN:
                     return None
@@ -159,7 +181,13 @@ class RazerHidProvider(BatteryProvider):
                 reply = dev.get_feature_report(0, REPORT_LEN)
             except OSError:
                 return None
-            args = parse_razer_reply(reply, cmd_class, cmd_id)
+            args = parse_razer_reply(
+                reply,
+                cmd_class,
+                cmd_id,
+                expected_tid=model.tid,
+                verify_crc=True,
+            )
             if args is not None:
                 return args
         return None
@@ -172,6 +200,11 @@ class RazerHidProvider(BatteryProvider):
             pid = d.get("product_id", 0)
             if pid in RAZER_MODELS:
                 by_pid.setdefault(pid, []).append(d)
+
+        present_ids = {f"razer:{RAZER_MODELS[p].key}" for p in by_pid.keys()}
+        for old_id in list(self._cache.keys()):
+            if old_id not in present_ids:
+                del self._cache[old_id]
 
         out: list[DeviceBattery] = []
         for pid, colls in by_pid.items():
@@ -209,6 +242,7 @@ class RazerHidProvider(BatteryProvider):
                     except Exception:
                         pass
 
+            now_ts = time.time()
             if found_pct is not None:
                 is_full = charging and found_pct >= 100
                 item = DeviceBattery(
@@ -226,28 +260,51 @@ class RazerHidProvider(BatteryProvider):
                     full=is_full,
                     support_status=STATUS_PROTOCOL,
                     provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
                 )
                 self._cache[dev_id] = item
                 out.append(item)
             else:
                 prev = self._cache.get(dev_id)
-                out.append(
-                    DeviceBattery(
-                        device_id=dev_id,
-                        name=model.name,
-                        brand="Razer",
-                        kind=model.kind,
-                        connection_mode="休眠" if model.wireless else "有线",
-                        vid=RAZER_VID,
-                        pid=pid,
-                        connected=True,
-                        online=False,
-                        asleep=True,
-                        percent=prev.percent if prev else None,
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="休眠中",
-                        provider_name=self.name,
-                        timestamp=prev.timestamp if prev else time.time(),
+                if prev is not None:
+                    out.append(
+                        make_cached_device(
+                            prev,
+                            connected=True,
+                            online=False,
+                            asleep=True,
+                            connection_mode="休眠" if model.wireless else "有线",
+                            status_detail="休眠中",
+                            stale=True,
+                            failure_reason="device_asleep_or_read_failed",
+                            preserve_charging=True,
+                            now_ts=now_ts,
+                        )
                     )
-                )
+                else:
+                    out.append(
+                        DeviceBattery(
+                            device_id=dev_id,
+                            name=model.name,
+                            brand="Razer",
+                            kind=model.kind,
+                            connection_mode="休眠" if model.wireless else "有线",
+                            vid=RAZER_VID,
+                            pid=pid,
+                            connected=True,
+                            online=False,
+                            asleep=True,
+                            percent=None,
+                            support_status=STATUS_PROTOCOL,
+                            status_detail="休眠中",
+                            provider_name=self.name,
+                            timestamp=now_ts,
+                            last_success_ts=None,
+                            from_cache=False,
+                            stale=True,
+                        )
+                    )
         return out

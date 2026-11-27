@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/BattDock/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.7.4-111827?style=for-the-badge" alt="Download Latest BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.7.5-111827?style=for-the-badge" alt="Download Latest BattDock" />
 </a>
 
 </div>
@@ -74,7 +74,7 @@
 
 ## Download & Installation
 
-1. Go to [GitHub Releases](https://github.com/edwin99701/BattDock/releases/latest) and download **`BattDock-v2.7.4-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.7.4-Windows-x64-Portable.zip`** (portable archive).
+1. Go to [GitHub Releases](https://github.com/edwin99701/BattDock/releases/latest) and download **`BattDock-v2.7.5-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.7.5-Windows-x64-Portable.zip`** (portable archive).
 2. Run the installer or extract the ZIP and launch **`BattDock.exe`** (requires Windows 10 22H2 x64+ or Windows 11 x64).
 3. Settings are stored in `%LOCALAPPDATA%\BattDock\config.json` and preserved across updates. Legacy `VGNMouseBattery` configurations and autostart entries migrate automatically on first launch.
 

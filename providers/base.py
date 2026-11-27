@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import math
+import re
 import struct
 import sys
 import time
 from abc import ABC, abstractmethod
 from ctypes import wintypes
 from dataclasses import asdict, dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import hid
 
@@ -44,7 +46,7 @@ class SubBattery:
 
 @dataclass
 class DeviceBattery:
-    """跨品牌、跨协议的统一设备电量快照。"""
+    """跨品牌、跨协议的统一设备电量快照（区分实时读取、缓存、休眠与过期状态）。"""
 
     device_id: str
     name: str
@@ -66,10 +68,113 @@ class DeviceBattery:
     provider_name: str = ""
     raw_name: str = ""  # 底层硬件/协议原始上报名称（保留用于诊断与追溯）
     timestamp: float = field(default_factory=time.time)
+    last_success_ts: Optional[float] = None  # 最近一次真实硬件成功采样的 Unix 时间戳
+    from_cache: bool = False                 # 本次结果是否来自适配器/节流/系统缓存
+    stale: bool = False                      # 数据是否已过期/读取失败后不可再作为实时电量使用
+    diagnostic: Optional[dict[str, Any]] = None  # 脱敏原始读取、充电切换与跳变复核诊断数据
 
     def to_dict(self) -> dict:
         d = asdict(self)
         return d
+
+
+def make_cached_device(
+    prev: DeviceBattery,
+    *,
+    connected: bool = True,
+    online: bool = False,
+    asleep: bool = True,
+    connection_mode: Optional[str] = None,
+    status_detail: Optional[str] = None,
+    stale: bool = True,
+    failure_reason: str = "read_failed",
+    preserve_charging: bool = True,
+    now_ts: Optional[float] = None,
+) -> DeviceBattery:
+    """基于上一次有效读数构造缓存/回退快照，严格保留真实采样时间且绝不伪造 timestamp。"""
+    sample_now = time.time() if now_ts is None else float(now_ts)
+    last_ok = prev.last_success_ts if prev.last_success_ts is not None else prev.timestamp
+    chg = bool(prev.charging) if preserve_charging else False
+    full = bool(prev.full) if preserve_charging else False
+    prev_diag = dict(prev.diagnostic) if isinstance(prev.diagnostic, dict) else {}
+    diag: dict[str, Any] = {
+        **prev_diag,
+        "charging_state": chg,
+        "previous_charging_state": bool(prev.charging),
+        "raw_percent": prev.percent,
+        "previous_raw_percent": prev.percent,
+        "voltage_mv": prev.voltage_mv,
+        "previous_voltage_mv": prev.voltage_mv,
+        "last_success_ts": last_ok,
+        "current_sample_ts": sample_now,
+        "percentage_delta": 0 if prev.percent is not None else None,
+        "charging_transition": "none",
+        "from_cache": True,
+        "anomaly_detected": False,
+        "failure_reason": failure_reason,
+    }
+    return DeviceBattery(
+        device_id=prev.device_id,
+        name=prev.name,
+        brand=prev.brand,
+        kind=prev.kind,
+        connection_mode=connection_mode if connection_mode is not None else prev.connection_mode,
+        vid=prev.vid,
+        pid=prev.pid,
+        connected=connected,
+        online=online,
+        asleep=asleep,
+        percent=prev.percent,
+        charging=chg,
+        full=full,
+        voltage_mv=prev.voltage_mv,
+        sub_batteries=prev.sub_batteries,
+        support_status=prev.support_status,
+        status_detail=status_detail if status_detail is not None else prev.status_detail,
+        provider_name=prev.provider_name,
+        raw_name=prev.raw_name,
+        timestamp=last_ok,
+        last_success_ts=last_ok,
+        from_cache=True,
+        stale=stale,
+        diagnostic=diag,
+    )
+
+
+_BT_MAC_ID_RE = re.compile(r"\b(bt|airpods):([0-9a-fA-F]{12})\b")
+_SENSITIVE_DIAG_KEYS = {"path", "hid_path", "serial", "serial_number", "mac", "bluetooth_address", "instance_id"}
+
+
+def anonymize_bt_mac(mac_hex: str) -> str:
+    """将 12 位蓝牙 MAC 单向匿名化为 8 位短哈希，确保诊断导出不泄露硬件地址。"""
+    digest = hashlib.sha256(f"battdock-mac:{mac_hex.lower()}".encode("utf-8")).hexdigest()[:8]
+    return f"anon_{digest}"
+
+
+def redact_sensitive_text(text: str) -> str:
+    """脱敏字符串中可能出现的蓝牙 MAC 标识（如 bt:<12hex> / airpods:<12hex>）。"""
+    if not text:
+        return text
+    return _BT_MAC_ID_RE.sub(lambda m: f"{m.group(1)}:{anonymize_bt_mac(m.group(2))}", text)
+
+
+def redact_diagnostics_data(obj: Any) -> Any:
+    """递归脱敏诊断数据结构：移除原始 HID 路径/序列号并匿名化蓝牙 MAC。"""
+    if isinstance(obj, dict):
+        cleaned: dict[str, Any] = {}
+        for k, v in obj.items():
+            kl = str(k).lower()
+            if kl in _SENSITIVE_DIAG_KEYS:
+                continue
+            cleaned[k] = redact_diagnostics_data(v)
+        return cleaned
+    if isinstance(obj, list):
+        return [redact_diagnostics_data(item) for item in obj]
+    if isinstance(obj, tuple):
+        return [redact_diagnostics_data(item) for item in obj]
+    if isinstance(obj, str):
+        return redact_sensitive_text(obj)
+    return obj
 
 
 class BatteryProvider(ABC):

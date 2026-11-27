@@ -26,6 +26,7 @@ from .base import (
     KIND_OTHER,
     STATUS_PROTOCOL,
     get_hid_report_lengths,
+    make_cached_device,
     round_half_up,
 )
 
@@ -245,6 +246,14 @@ class StandardHidBatteryProvider(BatteryProvider):
         self._last_poll_mono: float = 0.0
         self._cached: list[DeviceBattery] = []
 
+    def on_device_change(self) -> None:
+        self._last_poll_mono = 0.0
+        self._cached.clear()
+
+    def on_power_resume(self) -> None:
+        self._last_poll_mono = 0.0
+        self._cached.clear()
+
     def poll(
         self,
         hid_snapshot: list[dict],
@@ -252,16 +261,31 @@ class StandardHidBatteryProvider(BatteryProvider):
         exclude_vps: Optional[set[tuple[int, int]]] = None,
     ) -> list[DeviceBattery]:
         excluded = set(exclude_vps or ())
+        present_vps = {
+            (int(d.get("vendor_id", 0)), int(d.get("product_id", 0)))
+            for d in hid_snapshot
+            if int(d.get("vendor_id", 0)) and int(d.get("product_id", 0))
+        }
         now_mono = time.monotonic()
         if not force and self._last_poll_mono > 0 and (now_mono - self._last_poll_mono) < self.THROTTLE_SEC:
             return [
-                d
+                make_cached_device(
+                    d,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    stale=False,
+                    failure_reason="throttled",
+                    preserve_charging=True,
+                )
                 for d in self._cached
                 if (int(d.vid or 0), int(d.pid or 0)) not in excluded
+                and (int(d.vid or 0), int(d.pid or 0)) in present_vps
             ]
 
         out: list[DeviceBattery] = []
         seen_vp: set[tuple[int, int]] = set()
+        now_ts = time.time()
         for d in hid_snapshot:
             vid = int(d.get("vendor_id", 0))
             pid = int(d.get("product_id", 0))
@@ -303,6 +327,10 @@ class StandardHidBatteryProvider(BatteryProvider):
                     charging=False,
                     support_status=STATUS_PROTOCOL,
                     provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
                 )
             )
         self._last_poll_mono = now_mono

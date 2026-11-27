@@ -442,6 +442,7 @@ def aggregate_bluetooth_pnp_nodes(
                 "root_name": "",
                 "best_name": "",
                 "battery": None,
+                "battery_is_ble": False,
                 "root_connected": None,
                 "any_connected": False,
                 "any_conn_reported": False,
@@ -450,14 +451,21 @@ def aggregate_bluetooth_pnp_nodes(
         )
         inst_up = inst_id.upper()
         is_root = "\\DEV_" in inst_up
+        is_ble_node = inst_up.startswith(("BTHLE\\", "BTHLEDEVICE\\")) or "0000180F-" in inst_up
         if any(guid in inst_up for guid in ("0000111E-", "0000110B-", "00001108-", "0000111F-")):
             grp["has_audio_profile"] = True
 
         pct = node.get("battery")
         if pct is not None and 0 <= int(pct) <= 100:
-            # 优先保留非 0 的有效读数，或尚未有读数时记录
-            if grp["battery"] is None or (grp["battery"] == 0 and int(pct) > 0):
-                grp["battery"] = int(pct)
+            val = int(pct)
+            # 优先采用非 0 且更高精度的 BLE GATT 电池服务读数，避免被粗粒度旧 HFP 节点覆盖
+            if (
+                grp["battery"] is None
+                or (grp["battery"] == 0 and val > 0)
+                or (is_ble_node and not grp["battery_is_ble"] and val > 0)
+            ):
+                grp["battery"] = val
+                grp["battery_is_ble"] = is_ble_node
 
         conn = node.get("is_connected")
         if conn is not None:
@@ -476,14 +484,15 @@ def aggregate_bluetooth_pnp_nodes(
 
     devices: list[DeviceBattery] = []
     seen_ids: set[str] = set()
+    now_ts = time.time()
     for mac, grp in groups.items():
         if grp["battery"] is None:
             continue
-        # 若主节点或任一服务节点明确在线则视为在线；若系统未提供 IsConnected 属性默认在线；若全为离线则跳过
-        if grp["root_connected"] is True or grp["any_connected"]:
-            is_online = True
-        elif grp["root_connected"] is False and not grp["any_connected"]:
+        # 若根节点明确报告断开 (root_connected is False)，绝不被滞后的服务子节点误判为在线
+        if grp["root_connected"] is False:
             is_online = False
+        elif grp["root_connected"] is True or grp["any_connected"]:
+            is_online = True
         elif grp["any_conn_reported"]:
             is_online = False
         else:
@@ -515,6 +524,10 @@ def aggregate_bluetooth_pnp_nodes(
                 support_status=STATUS_PROTOCOL,
                 status_detail="Windows 蓝牙电量服务",
                 provider_name=provider_name,
+                timestamp=now_ts,
+                last_success_ts=now_ts,
+                from_cache=False,
+                stale=False,
             )
         )
     return devices

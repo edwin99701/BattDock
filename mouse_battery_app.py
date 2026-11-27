@@ -77,6 +77,7 @@ from floating_widget import (
     is_windows_11,
     paint_winforms_rounded_border,
     play_alert_sound,
+    resolve_winforms_font_family,
     set_layered_window_alpha,
     set_window_topmost_noactivate,
 )
@@ -910,7 +911,15 @@ def evaluate_tiered_alerts(
         tiers = get_device_tiers(cfg, dev.device_id)
         seen = alerted_map.setdefault(dev.device_id, set())
 
-        if not tiers or not dev.connected or not dev.online or dev.asleep or dev.percent is None:
+        if (
+            not tiers
+            or not dev.connected
+            or not dev.online
+            or dev.asleep
+            or getattr(dev, "stale", False)
+            or getattr(dev, "from_cache", False)
+            or dev.percent is None
+        ):
             continue
 
         if dev.charging:
@@ -983,10 +992,16 @@ class MouseBatteryApp:
         self._active_bg_threads: set[str] = set()
         self._poll_lock = threading.Lock()
         self._poll_running = threading.Event()
+        self._pending_lock = threading.Lock()
+        self._pending_poll: Optional[tuple[str, bool, bool]] = None
+        self._last_applied_poll_seq: int = 0
+        self._charging_boost_until_mono: float = 0.0
+        self._last_charging_map: dict[str, bool] = {}
         self._last_manual_refresh_mono: float = 0.0
         self._last_wakeup_poll_mono: float = 0.0
         self._device_change_hwnd: int = 0
         self._device_change_timer: Optional[threading.Timer] = None
+        self._device_change_first_mono: float = 0.0
         self._session_hooked = False
 
         self._alert_window = None
@@ -1060,19 +1075,26 @@ class MouseBatteryApp:
                 continue
             tiers = get_device_tiers(self.cfg, dev.device_id)
             display_name = pref.alias or dev.name
+            is_stale = bool(getattr(dev, "stale", False) or (not dev.online))
+            live_pct = None if is_stale else dev.percent
+            last_ok_ts = getattr(dev, "last_success_ts", None)
             d = dev.to_dict()
             d["original_name"] = dev.name
             d["raw_name"] = dev.raw_name or dev.name
             d["display_name"] = display_name
             d["connection_label"] = _connection_label(dev)
+            d["live_percent"] = live_pct
+            d["last_success_str"] = (
+                datetime.fromtimestamp(last_ok_ts).strftime("%H:%M") if last_ok_ts else ""
+            )
             d["subtitle"] = format_device_subtitle(
                 connection_mode=dev.connection_mode,
                 connected=dev.connected,
                 online=dev.online,
                 asleep=dev.asleep,
-                charging=dev.charging,
-                full=dev.full,
-                percent=dev.percent,
+                charging=dev.charging if not is_stale else False,
+                full=dev.full if not is_stale else False,
+                percent=live_pct,
             )
             d["support_label"] = _support_label(dev.support_status)
             d["pref"] = asdict(pref)
@@ -1084,9 +1106,7 @@ class MouseBatteryApp:
 
     def _compute_alert_level(self, dev: DeviceBattery, tiers: list[int]) -> str:
         """返回 normal | tier1 | tier2 | tier3 | charging | offline | unknown。"""
-        if not dev.connected or (not dev.online and not dev.asleep):
-            return "offline"
-        if dev.asleep:
+        if not dev.connected or not dev.online or dev.asleep or getattr(dev, "stale", False):
             return "offline"
         if dev.percent is None:
             return "unknown"
@@ -1127,10 +1147,12 @@ class MouseBatteryApp:
         ordered_devices = [d for _, d in ordered_objs]
         visible = [d for d in ordered_devices if not get_device_pref(self.cfg, d.device_id).hidden]
         pool = visible or ordered_devices
-        with_pct = [d for d in pool if d.connected and d.percent is not None]
-        if with_pct:
-            # 保持用户排序优先（同等电量或非极低电量时严格遵循用户设备顺序）
-            best = min(with_pct, key=lambda d: (int(d.percent or 100), pool.index(d)))
+        live_with_pct = [
+            d for d in pool
+            if d.connected and d.online and not getattr(d, "stale", False) and d.percent is not None
+        ]
+        if live_with_pct:
+            best = min(live_with_pct, key=lambda d: (int(d.percent or 100), pool.index(d)))
             return best, (get_device_pref(self.cfg, best.device_id).alias or best.name)
         if pool:
             return pool[0], (get_device_pref(self.cfg, pool[0].device_id).alias or pool[0].name)
@@ -1243,12 +1265,20 @@ class MouseBatteryApp:
         t1, t2, t3 = self._get_active_tier_thresholds(dev.device_id if dev else None)
         hover_detail = ""
         if dev is not None:
+            is_stale = bool(getattr(dev, "stale", False) or not dev.online)
+            live_pct = None if is_stale else dev.percent
             sub = format_device_subtitle(
                 dev.connection_mode, dev.connected, dev.online,
-                dev.asleep, dev.charging, dev.full, dev.percent,
+                dev.asleep, dev.charging if not is_stale else False, dev.full if not is_stale else False, live_pct,
             )
-            pct_s = f"{dev.percent}%" if dev.percent is not None else "—"
-            hover_detail = f"{dev.name}\n{sub} · {pct_s}" if sub else f"{dev.name}\n{pct_s}"
+            if is_stale and dev.percent is not None:
+                last_ts = getattr(dev, "last_success_ts", None) or dev.timestamp
+                ts_s = datetime.fromtimestamp(last_ts).strftime("%H:%M") if last_ts else ""
+                ref_s = f"上次 {dev.percent}% ({ts_s})" if ts_s else f"上次 {dev.percent}%"
+                hover_detail = f"{dev.name}\n{sub} · {ref_s}" if sub else f"{dev.name}\n{ref_s}"
+            else:
+                pct_s = f"{live_pct}%" if live_pct is not None else "—"
+                hover_detail = f"{dev.name}\n{sub} · {pct_s}" if sub else f"{dev.name}\n{pct_s}"
         self.floating_widget.sync(
             fcfg,
             dev,
@@ -2416,10 +2446,11 @@ class MouseBatteryApp:
                 from System.Drawing.Drawing2D import GraphicsPath, SmoothingMode
                 from System.IO import MemoryStream
 
+                ui_font_fam = resolve_winforms_font_family(numeric=False)
                 title_text = f"{tier_title} · 剩余 {pct}%"
-                title_font = Font("Microsoft YaHei UI", 9.0, FontStyle.Bold)
-                dev_font = Font("Microsoft YaHei UI", 8.6, FontStyle.Regular)
-                btn_font = Font("Microsoft YaHei UI", 8.2, FontStyle.Regular)
+                title_font = Font(ui_font_fam, 9.0, FontStyle.Bold)
+                dev_font = Font(ui_font_fam, 8.6, FontStyle.Regular)
+                btn_font = Font(ui_font_fam, 8.2, FontStyle.Regular)
 
                 # 紧凑参考参数（按当前显示器 DPI 动态缩放）
                 pad_x = int(round(11 * scale))
@@ -2674,20 +2705,54 @@ class MouseBatteryApp:
 
     # ================= 后台轮询、唤醒监测与硬件热插拔监听 =================
 
+    def _queue_pending_poll(self, reason: str, force_rescan: bool, force_query: bool) -> None:
+        """合并高优先级挂起刷新请求（热插拔/唤醒/充电检查绝不因锁忙被丢弃，也不产生线程堆积）。"""
+        with self._pending_lock:
+            if self._pending_poll is None:
+                self._pending_poll = (reason, bool(force_rescan), bool(force_query))
+            else:
+                prev_reason, prev_rescan, prev_query = self._pending_poll
+                merged_reason = reason if reason in ("device_change", "power_resume", "charging_check") else prev_reason
+                self._pending_poll = (
+                    merged_reason,
+                    bool(prev_rescan or force_rescan),
+                    bool(prev_query or force_query),
+                )
+
+    def _compute_next_poll_interval(self) -> int:
+        """根据充电状态与最近变化动态决定下一轮轮询间隔（绝不将全部设备无脑压到 1 秒）。"""
+        base = max(10, int(self.cfg.poll_interval_sec))
+        has_active_charging = any(
+            d.connected and d.online and not getattr(d, "stale", False) and d.charging and not d.full
+            for d in self.devices
+        )
+        if has_active_charging or time.monotonic() < self._charging_boost_until_mono:
+            return min(base, 10)
+        return base
+
     def _poll_once(
         self,
         reason: str = "scheduled",
         force_rescan: bool = False,
         force_query: bool = False,
     ) -> bool:
-        """串行执行单次设备电量轮询，自动合并并发请求并避免重复访问同一 HID 设备。"""
+        """串行执行单次设备电量轮询，合并并发高优先级请求、按单调序号防旧结果覆盖新结果。"""
         if self._stop_event.is_set():
             return False
+        high_priority = reason in ("startup", "manual_refresh", "device_change", "power_resume", "wakeup", "charging_check")
         blocking = reason in ("startup", "manual_refresh")
-        acquired = self._poll_lock.acquire(blocking=blocking, timeout=2.0 if blocking else -1) if blocking else self._poll_lock.acquire(blocking=False)
+        acquired = (
+            self._poll_lock.acquire(blocking=True, timeout=2.0)
+            if blocking
+            else self._poll_lock.acquire(blocking=False)
+        )
         if not acquired:
+            if high_priority:
+                self._queue_pending_poll(reason, force_rescan, force_query)
             return False
+
         self._poll_running.set()
+        pending_next: Optional[tuple[str, bool, bool]] = None
         try:
             if self._stop_event.is_set():
                 return False
@@ -2697,18 +2762,49 @@ class MouseBatteryApp:
                 force_query=force_query,
                 active_monitor_tasks=len(self._active_bg_threads),
             )
+            poll_seq = self.manager.get_poll_seq()
+            if poll_seq < self._last_applied_poll_seq:
+                return False
+            self._last_applied_poll_seq = poll_seq
+
+            charging_changed = False
+            next_chg_map: dict[str, bool] = {}
+            for d in devices:
+                if d.online and not getattr(d, "stale", False):
+                    cur_chg = bool(d.charging)
+                    next_chg_map[d.device_id] = cur_chg
+                    if d.device_id in self._last_charging_map and self._last_charging_map[d.device_id] != cur_chg:
+                        charging_changed = True
+                elif d.device_id in self._last_charging_map:
+                    next_chg_map[d.device_id] = self._last_charging_map[d.device_id]
+            self._last_charging_map = next_chg_map
+            if charging_changed:
+                self._charging_boost_until_mono = time.monotonic() + 30.0
+
             self.devices = devices
             for d in devices:
                 self._known_devices[d.device_id] = d
             self._last_poll_ts = time.time()
-            self._push_state_to_ui()
+            # 充电状态或电量更新后，立即同步托盘、悬浮窗与主窗口（托盘零额外延迟）
             self._update_tray_visual()
             self._sync_floating_widget()
+            self._push_state_to_ui()
             self._check_low_batteries(devices)
             return True
         finally:
             self._poll_running.clear()
             self._poll_lock.release()
+            with self._pending_lock:
+                pending_next = self._pending_poll
+                self._pending_poll = None
+            if pending_next is not None and not self._stop_event.is_set():
+                p_reason, p_rescan, p_query = pending_next
+                threading.Thread(
+                    target=self._poll_once,
+                    kwargs={"reason": p_reason, "force_rescan": p_rescan, "force_query": p_query},
+                    daemon=True,
+                    name="BattDock-PendingPoll",
+                ).start()
 
     def _poll_loop(self) -> None:
         self._active_bg_threads.add("poll_loop")
@@ -2716,7 +2812,7 @@ class MouseBatteryApp:
             # 启动后立即执行首轮扫描
             self._poll_once(reason="startup", force_rescan=True, force_query=True)
             while not self._stop_event.is_set():
-                interval = max(10, int(self.cfg.poll_interval_sec))
+                interval = self._compute_next_poll_interval()
                 self._stop_event.wait(interval)
                 if self._stop_event.is_set():
                     break
@@ -2733,13 +2829,15 @@ class MouseBatteryApp:
                 if pos != self._last_cursor:
                     self._last_cursor = pos
                     now_mono = time.monotonic()
-                    # 仅在存在休眠/未知鼠标且距上次唤醒探测 >= 15s 且当前无轮询进行时触发，杜绝高频打扰鼠标
+                    # 仅在存在休眠/过期/未知鼠标且距上次唤醒探测 >= 15s 且当前无轮询进行时触发，杜绝高频打扰鼠标
                     if (
                         self.cfg.auto_monitor
                         and not self._poll_running.is_set()
                         and (now_mono - self._last_wakeup_poll_mono) >= 15.0
                         and any(
-                            d.kind == KIND_MOUSE and d.connected and (d.asleep or d.percent is None)
+                            d.kind == KIND_MOUSE
+                            and d.connected
+                            and (d.asleep or getattr(d, "stale", False) or d.percent is None)
                             for d in self.devices
                         )
                     ):
@@ -2749,22 +2847,39 @@ class MouseBatteryApp:
         finally:
             self._active_bg_threads.discard("wakeup_watch")
 
-    def _on_hardware_device_change(self) -> None:
-        """USB/HID 设备插拔防抖回调：标记 HID 缓存失效并在 1.2s 后按需执行单次同步。"""
+    def _on_hardware_device_change(self, *, fast: bool = False) -> None:
+        """USB/HID 设备插拔防抖回调：优先快速响应插线充电（0.35s），防止连续总线事件无限推迟刷新。"""
         if self._stop_event.is_set():
             return
         self.manager.mark_hid_dirty("device_change")
         if not self.cfg.auto_monitor:
+            return
+        now_mono = time.monotonic()
+        self._charging_boost_until_mono = max(self._charging_boost_until_mono, now_mono + 25.0)
+        if (
+            self._device_change_timer is not None
+            and self._device_change_timer.is_alive()
+            and self._device_change_first_mono > 0.0
+            and (now_mono - self._device_change_first_mono) >= 0.8
+        ):
             return
         if self._device_change_timer is not None:
             try:
                 self._device_change_timer.cancel()
             except Exception:
                 pass
-        timer = threading.Timer(
-            1.2,
-            lambda: self._poll_once(reason="device_change", force_rescan=True, force_query=True),
-        )
+        else:
+            self._device_change_first_mono = now_mono
+        if self._device_change_first_mono <= 0.0:
+            self._device_change_first_mono = now_mono
+
+        delay_sec = 0.35 if fast else 0.55
+
+        def _fire() -> None:
+            self._device_change_first_mono = 0.0
+            self._poll_once(reason="device_change", force_rescan=True, force_query=True)
+
+        timer = threading.Timer(delay_sec, _fire)
         timer.daemon = True
         self._device_change_timer = timer
         timer.start()
@@ -2787,7 +2902,7 @@ class MouseBatteryApp:
             except Exception:
                 pass
         timer = threading.Timer(
-            2.0,
+            1.5,
             lambda: self._poll_once(reason="power_resume", force_rescan=True, force_query=True),
         )
         timer.daemon = True
@@ -2795,7 +2910,7 @@ class MouseBatteryApp:
         timer.start()
 
     def _device_change_watch_loop(self) -> None:
-        """轻量级 Win32 WM_DEVICECHANGE + WM_POWERBROADCAST 监听窗口：热插拔与系统休眠唤醒同步刷新/释放句柄。"""
+        """轻量级 Win32 WM_DEVICECHANGE + WM_POWERBROADCAST 监听窗口：热插拔、电源切换与系统休眠唤醒即时同步。"""
         if sys.platform != "win32":
             return
         self._active_bg_threads.add("device_change_watch")
@@ -2810,6 +2925,7 @@ class MouseBatteryApp:
             WM_POWERBROADCAST = 0x0218
             PBT_APMSUSPEND = 0x0004
             PBT_APMRESUMESUSPEND = 0x0007
+            PBT_APMPOWERSTATUSCHANGE = 0x000A
             PBT_APMRESUMEAUTOMATIC = 0x0012
             WM_DEVICECHANGE = 0x0219
             DBT_DEVICEARRIVAL = 0x8000
@@ -2851,13 +2967,22 @@ class MouseBatteryApp:
                 ]
 
             def _wnd_proc(h, msg, wp, lp):
-                if msg == WM_DEVICECHANGE and wp in (DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVNODES_CHANGED):
-                    self._on_hardware_device_change()
+                if msg == WM_DEVICECHANGE:
+                    if wp in (DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE):
+                        self._on_hardware_device_change(fast=True)
+                    elif wp == DBT_DEVNODES_CHANGED:
+                        self._on_hardware_device_change(fast=False)
                 elif msg == WM_POWERBROADCAST:
                     if wp == PBT_APMSUSPEND:
                         self._on_power_event(resuming=False)
                     elif wp in (PBT_APMRESUMESUSPEND, PBT_APMRESUMEAUTOMATIC):
                         self._on_power_event(resuming=True)
+                    elif wp == PBT_APMPOWERSTATUSCHANGE and self.cfg.auto_monitor:
+                        threading.Thread(
+                            target=self._poll_once,
+                            kwargs={"reason": "charging_check", "force_rescan": False, "force_query": True},
+                            daemon=True,
+                        ).start()
                 return user32.DefWindowProcW(h, msg, wp, lp)
 
             cb = WNDPROC(_wnd_proc)
@@ -2958,11 +3083,16 @@ class MouseBatteryApp:
                 t1 = int(rules[0]["threshold"]) if len(rules) > 0 else 30
                 t2 = int(rules[1]["threshold"]) if len(rules) > 1 else 20
                 t3 = int(rules[2]["threshold"]) if len(rules) > 2 else 10
-                icon_key = (
-                    (td.percent, bool(td.charging), bool(td.connected), t1, t2, t3)
-                    if td is not None
-                    else (None, False, False, t1, t2, t3)
-                )
+                if td is not None:
+                    td_stale = bool(getattr(td, "stale", False) or not td.online)
+                    live_pct = None if td_stale else td.percent
+                    live_chg = False if td_stale else bool(td.charging)
+                    live_conn = bool(td.connected) and not td_stale
+                    icon_key = (live_pct, live_chg, live_conn, t1, t2, t3)
+                else:
+                    td_stale = False
+                    icon_key = (None, False, False, t1, t2, t3)
+
                 if icon_key != self._last_tray_icon_key:
                     img = draw_battery_icon(
                         size=64,
@@ -2975,6 +3105,13 @@ class MouseBatteryApp:
                     )
                     if tray.set_icon(img):
                         self._last_tray_icon_key = icon_key
+                        self.manager.record_tray_sync(
+                            td.device_id if td else None,
+                            percent=icon_key[0],
+                            charging=icon_key[1],
+                            connected=icon_key[2],
+                            stale=td_stale,
+                        )
                 else:
                     tray.ensure_visible()
 
@@ -2985,11 +3122,21 @@ class MouseBatteryApp:
                     for d in self.devices[:3]:
                         pref = get_device_pref(self.cfg, d.device_id)
                         nm = pref.alias or d.name
+                        d_stale = bool(getattr(d, "stale", False) or not d.online)
+                        d_live_pct = None if d_stale else d.percent
                         sub = format_device_subtitle(
-                            d.connection_mode, d.connected, d.online, d.asleep, d.charging, d.full, d.percent
+                            d.connection_mode,
+                            d.connected,
+                            d.online,
+                            d.asleep,
+                            False if d_stale else d.charging,
+                            False if d_stale else d.full,
+                            d_live_pct,
                         )
-                        if d.percent is not None:
-                            lines.append(f"{nm}: {d.percent}% ({sub})" if sub else f"{nm}: {d.percent}%")
+                        if d_live_pct is not None:
+                            lines.append(f"{nm}: {d_live_pct}% ({sub})" if sub else f"{nm}: {d_live_pct}%")
+                        elif d_stale and d.percent is not None:
+                            lines.append(f"{nm}: — ({sub}·上次{d.percent}%)" if sub else f"{nm}: — (上次{d.percent}%)")
                         else:
                             lines.append(f"{nm}: — ({sub})" if sub else f"{nm}: —")
                     if len(self.devices) > 3:

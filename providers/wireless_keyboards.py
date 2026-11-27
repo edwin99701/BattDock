@@ -24,6 +24,7 @@ from .base import (
     get_hid_input_report,
     get_hid_report_lengths,
     hid_drain,
+    make_cached_device,
     pad_report,
 )
 
@@ -402,7 +403,8 @@ class WirelessKeyboardsProvider(BatteryProvider):
 
     name = "wireless_keyboards"
     brand = "Wireless Keyboards"
-    THROTTLE_ONLINE_SEC = 180.0  # 键盘耗电缓慢，在线态每 3 分钟自动查询一次；手动刷新立即穿透
+    THROTTLE_ONLINE_SEC = 180.0  # 键盘耗电缓慢，在线放电每 3 分钟自动查询一次；手动刷新立即穿透
+    THROTTLE_CHARGING_SEC = 30.0  # 充电期间缩短至 30 秒，确保充电状态与电量及时同步
 
     def __init__(self) -> None:
         self._cache: dict[str, tuple[float, DeviceBattery]] = {}
@@ -411,6 +413,15 @@ class WirelessKeyboardsProvider(BatteryProvider):
         self._proven_shared: set[str] = set()
         self._evision_counter: int = 1
 
+    def on_device_change(self) -> None:
+        self._cache.clear()
+        self._compx_models.clear()
+        self._sonix_form.clear()
+        self._proven_shared.clear()
+
+    def on_power_resume(self) -> None:
+        self._cache.clear()
+
     def _get_throttled(self, dev_id: str, now_mono: float, force: bool) -> Optional[DeviceBattery]:
         if force:
             return None
@@ -418,13 +429,71 @@ class WirelessKeyboardsProvider(BatteryProvider):
         if entry is None:
             return None
         ts_mono, cached = entry
-        if cached.online and (now_mono - ts_mono) < self.THROTTLE_ONLINE_SEC:
-            return cached
+        limit = self.THROTTLE_CHARGING_SEC if cached.charging else self.THROTTLE_ONLINE_SEC
+        if cached.online and (now_mono - ts_mono) < limit:
+            return make_cached_device(
+                cached,
+                connected=True,
+                online=True,
+                asleep=False,
+                stale=False,
+                failure_reason="throttled",
+                preserve_charging=True,
+            )
         return None
 
     def _remember(self, dev: DeviceBattery, now_mono: float) -> DeviceBattery:
-        self._cache[dev.device_id] = (now_mono, dev)
+        if dev.online and not dev.stale:
+            if dev.last_success_ts is None:
+                dev.last_success_ts = dev.timestamp
+            self._cache[dev.device_id] = (now_mono, dev)
         return dev
+
+    def _fallback_asleep(
+        self,
+        dev_id: str,
+        prev_entry: Optional[tuple[float, DeviceBattery]],
+        *,
+        name: str,
+        brand: str,
+        vid: int,
+        pid: int,
+        connection_mode: str = "休眠",
+        status_detail: str = "休眠中",
+    ) -> DeviceBattery:
+        if prev_entry is not None:
+            return make_cached_device(
+                prev_entry[1],
+                connected=True,
+                online=False,
+                asleep=True,
+                connection_mode=connection_mode,
+                status_detail=status_detail,
+                stale=True,
+                failure_reason="device_asleep_or_read_failed",
+                preserve_charging=True,
+            )
+        now_ts = time.time()
+        return DeviceBattery(
+            device_id=dev_id,
+            name=name,
+            brand=brand,
+            kind=KIND_KEYBOARD,
+            connection_mode=connection_mode,
+            vid=vid,
+            pid=pid,
+            connected=True,
+            online=False,
+            asleep=True,
+            percent=None,
+            support_status=STATUS_PROTOCOL,
+            status_detail=status_detail,
+            provider_name=self.name,
+            timestamp=now_ts,
+            last_success_ts=None,
+            from_cache=False,
+            stale=True,
+        )
 
     def _poll_compx_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
@@ -515,6 +584,7 @@ class WirelessKeyboardsProvider(BatteryProvider):
             prev = self._cache.get(dev_id)
             if parsed is not None:
                 pct, chg = parsed
+                now_ts = time.time()
                 item = DeviceBattery(
                     device_id=dev_id,
                     name=name,
@@ -531,25 +601,14 @@ class WirelessKeyboardsProvider(BatteryProvider):
                     full=chg and pct >= 100,
                     support_status=STATUS_PROTOCOL,
                     provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
                 )
+                out.append(self._remember(item, now_mono))
             else:
-                item = DeviceBattery(
-                    device_id=dev_id,
-                    name=name,
-                    brand=brand,
-                    kind=KIND_KEYBOARD,
-                    connection_mode="休眠",
-                    vid=vid,
-                    pid=pid,
-                    connected=True,
-                    online=False,
-                    asleep=True,
-                    percent=prev[1].percent if prev else None,
-                    support_status=STATUS_PROTOCOL,
-                    status_detail="休眠中",
-                    provider_name=self.name,
-                )
-            out.append(self._remember(item, now_mono))
+                out.append(self._fallback_asleep(dev_id, prev, name=name, brand=brand, vid=vid, pid=pid))
         return out
 
     def _poll_sonix_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
@@ -626,23 +685,31 @@ class WirelessKeyboardsProvider(BatteryProvider):
             name = prod if (prod and prod.lower() not in ("2.4g dongle", "2.4g wireless receiver")) else "SONiX 2.4G 无线键盘"
             brand = _infer_kb_brand(name, "SONiX")
             prev = self._cache.get(dev_id)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=name,
-                brand=brand,
-                kind=KIND_KEYBOARD,
-                connection_mode="2.4G" if pct is not None else "休眠",
-                vid=vid,
-                pid=pid,
-                connected=True,
-                online=pct is not None,
-                asleep=pct is None,
-                percent=pct if pct is not None else (prev[1].percent if prev else None),
-                support_status=STATUS_PROTOCOL,
-                status_detail="" if pct is not None else "休眠中",
-                provider_name=self.name,
-            )
-            out.append(self._remember(item, now_mono))
+            if pct is not None:
+                now_ts = time.time()
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand=brand,
+                    kind=KIND_KEYBOARD,
+                    connection_mode="2.4G",
+                    vid=vid,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="",
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
+                out.append(self._remember(item, now_mono))
+            else:
+                out.append(self._fallback_asleep(dev_id, prev, name=name, brand=brand, vid=vid, pid=pid))
         return out
 
     def _poll_evision_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
@@ -725,25 +792,43 @@ class WirelessKeyboardsProvider(BatteryProvider):
                 continue
 
             prev = self._cache.get(dev_id)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=name,
-                brand=brand,
-                kind=KIND_KEYBOARD,
-                connection_mode="有线" if (is_wired or chg) else ("2.4G" if online else "休眠"),
-                vid=vid,
-                pid=pid,
-                connected=True,
-                online=online,
-                asleep=not online,
-                percent=pct if online else (prev[1].percent if prev else None),
-                charging=chg and (pct is None or pct < 100),
-                full=chg and pct == 100,
-                support_status=STATUS_PROTOCOL,
-                status_detail="" if online else "休眠中",
-                provider_name=self.name,
-            )
-            out.append(self._remember(item, now_mono))
+            if online:
+                now_ts = time.time()
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand=brand,
+                    kind=KIND_KEYBOARD,
+                    connection_mode="有线" if (is_wired or chg) else "2.4G",
+                    vid=vid,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=chg and (pct is None or pct < 100),
+                    full=chg and pct == 100,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="",
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
+                out.append(self._remember(item, now_mono))
+            else:
+                out.append(
+                    self._fallback_asleep(
+                        dev_id,
+                        prev,
+                        name=name,
+                        brand=brand,
+                        vid=vid,
+                        pid=pid,
+                        connection_mode="有线" if is_wired else "休眠",
+                    )
+                )
         return out
 
     def _poll_other_keyboards(self, hid_snapshot: list[dict], now_mono: float, force: bool) -> list[DeviceBattery]:
@@ -843,27 +928,46 @@ class WirelessKeyboardsProvider(BatteryProvider):
             name = {0xA034: "Attack Shark X98", 0xA036: "AJAZZ AK820 Max Plus"}.get(
                 pid, str(hit_entry.get("product_string") or "").strip() or "Semico 2.4G 无线键盘"
             )
-            out.append(
-                self._remember(
-                    DeviceBattery(
-                        device_id=dev_id,
+            brand = _infer_kb_brand(name, "Attack Shark")
+            if online:
+                now_ts = time.time()
+                out.append(
+                    self._remember(
+                        DeviceBattery(
+                            device_id=dev_id,
+                            name=name,
+                            brand=brand,
+                            kind=KIND_KEYBOARD,
+                            connection_mode="有线" if pid in (0xA034, 0xA036) else "2.4G",
+                            vid=0x1A2C,
+                            pid=pid,
+                            connected=True,
+                            online=True,
+                            asleep=False,
+                            percent=pct,
+                            support_status=STATUS_PROTOCOL,
+                            status_detail="",
+                            provider_name=self.name,
+                            timestamp=now_ts,
+                            last_success_ts=now_ts,
+                            from_cache=False,
+                            stale=False,
+                        ),
+                        now_mono,
+                    )
+                )
+            else:
+                out.append(
+                    self._fallback_asleep(
+                        dev_id,
+                        prev,
                         name=name,
-                        brand=_infer_kb_brand(name, "Attack Shark"),
-                        kind=KIND_KEYBOARD,
-                        connection_mode="有线" if pid in (0xA034, 0xA036) else ("2.4G" if online else "休眠"),
+                        brand=brand,
                         vid=0x1A2C,
                         pid=pid,
-                        connected=True,
-                        online=online,
-                        asleep=not online,
-                        percent=pct if online else (prev[1].percent if prev else None),
-                        support_status=STATUS_PROTOCOL,
-                        status_detail="" if online else "休眠中",
-                        provider_name=self.name,
-                    ),
-                    now_mono,
+                        connection_mode="有线" if pid in (0xA034, 0xA036) else "休眠",
+                    )
                 )
-            )
 
         # 2. MCHOSE K87 V3 (3837:1015, FF80:0001, 64B, Report 0x4D)
         if k87v3_colls:
@@ -902,29 +1006,41 @@ class WirelessKeyboardsProvider(BatteryProvider):
                     self._proven_shared.add(dev_id)
                 if dev_id in self._proven_shared:
                     prev = self._cache.get(dev_id)
-                    out.append(
-                        self._remember(
-                            DeviceBattery(
-                                device_id=dev_id,
-                                name="MCHOSE K87 V3",
-                                brand="MCHOSE",
-                                kind=KIND_KEYBOARD,
-                                connection_mode="有线" if chg else ("2.4G" if online else "休眠"),
-                                vid=0x3837,
-                                pid=0x1015,
-                                connected=True,
-                                online=online,
-                                asleep=not online,
-                                percent=pct if online else (prev[1].percent if prev else None),
-                                charging=chg and (pct is None or pct < 100),
-                                full=chg and pct == 100,
-                                support_status=STATUS_PROTOCOL,
-                                status_detail="" if online else "休眠中",
-                                provider_name=self.name,
-                            ),
-                            now_mono,
+                    if online:
+                        now_ts = time.time()
+                        out.append(
+                            self._remember(
+                                DeviceBattery(
+                                    device_id=dev_id,
+                                    name="MCHOSE K87 V3",
+                                    brand="MCHOSE",
+                                    kind=KIND_KEYBOARD,
+                                    connection_mode="有线" if chg else "2.4G",
+                                    vid=0x3837,
+                                    pid=0x1015,
+                                    connected=True,
+                                    online=True,
+                                    asleep=False,
+                                    percent=pct,
+                                    charging=chg and (pct is None or pct < 100),
+                                    full=chg and pct == 100,
+                                    support_status=STATUS_PROTOCOL,
+                                    status_detail="",
+                                    provider_name=self.name,
+                                    timestamp=now_ts,
+                                    last_success_ts=now_ts,
+                                    from_cache=False,
+                                    stale=False,
+                                ),
+                                now_mono,
+                            )
                         )
-                    )
+                    else:
+                        out.append(
+                            self._fallback_asleep(
+                                dev_id, prev, name="MCHOSE K87 V3", brand="MCHOSE", vid=0x3837, pid=0x1015
+                            )
+                        )
 
         # 3. Alienware Pro Wireless Gaming Keyboard (413C:211D)
         if aw_kb_colls:
@@ -966,29 +1082,46 @@ class WirelessKeyboardsProvider(BatteryProvider):
                             pass
                 pct, chg = parsed if parsed else (None, False)
                 prev = self._cache.get(dev_id)
-                out.append(
-                    self._remember(
-                        DeviceBattery(
-                            device_id=dev_id,
+                if parsed is not None:
+                    now_ts = time.time()
+                    out.append(
+                        self._remember(
+                            DeviceBattery(
+                                device_id=dev_id,
+                                name="Alienware Pro Wireless Gaming Keyboard",
+                                brand="Alienware",
+                                kind=KIND_KEYBOARD,
+                                connection_mode="有线" if chg else "2.4G",
+                                vid=0x413C,
+                                pid=0x211D,
+                                connected=True,
+                                online=True,
+                                asleep=False,
+                                percent=pct,
+                                charging=chg and (pct is None or pct < 100),
+                                full=chg and pct == 100,
+                                support_status=STATUS_PROTOCOL,
+                                status_detail="",
+                                provider_name=self.name,
+                                timestamp=now_ts,
+                                last_success_ts=now_ts,
+                                from_cache=False,
+                                stale=False,
+                            ),
+                            now_mono,
+                        )
+                    )
+                else:
+                    out.append(
+                        self._fallback_asleep(
+                            dev_id,
+                            prev,
                             name="Alienware Pro Wireless Gaming Keyboard",
                             brand="Alienware",
-                            kind=KIND_KEYBOARD,
-                            connection_mode="有线" if chg else ("2.4G" if parsed else "休眠"),
                             vid=0x413C,
                             pid=0x211D,
-                            connected=True,
-                            online=parsed is not None,
-                            asleep=parsed is None,
-                            percent=pct if parsed is not None else (prev[1].percent if prev else None),
-                            charging=chg and (pct is None or pct < 100),
-                            full=chg and pct == 100,
-                            support_status=STATUS_PROTOCOL,
-                            status_detail="" if parsed else "休眠中",
-                            provider_name=self.name,
-                        ),
-                        now_mono,
+                        )
                     )
-                )
 
         # 4. Apple Magic Keyboard (Classic Bluetooth HID {00001124-...}, 只读 HidD_GetInputReport 0x90)
         for pid, colls in apple_groups.items():
@@ -1067,27 +1200,39 @@ class WirelessKeyboardsProvider(BatteryProvider):
                     self._proven_shared.add(dev_id)
                 if dev_id in self._proven_shared:
                     prev = self._cache.get(dev_id)
-                    out.append(
-                        self._remember(
-                            DeviceBattery(
-                                device_id=dev_id,
-                                name="URX Core75",
-                                brand="URX",
-                                kind=KIND_KEYBOARD,
-                                connection_mode="2.4G" if pct is not None else "休眠",
-                                vid=0x36B0,
-                                pid=0x3002,
-                                connected=True,
-                                online=pct is not None,
-                                asleep=pct is None,
-                                percent=pct if pct is not None else (prev[1].percent if prev else None),
-                                support_status=STATUS_PROTOCOL,
-                                status_detail="" if pct is not None else "休眠中",
-                                provider_name=self.name,
-                            ),
-                            now_mono,
+                    if pct is not None:
+                        now_ts = time.time()
+                        out.append(
+                            self._remember(
+                                DeviceBattery(
+                                    device_id=dev_id,
+                                    name="URX Core75",
+                                    brand="URX",
+                                    kind=KIND_KEYBOARD,
+                                    connection_mode="2.4G",
+                                    vid=0x36B0,
+                                    pid=0x3002,
+                                    connected=True,
+                                    online=True,
+                                    asleep=False,
+                                    percent=pct,
+                                    support_status=STATUS_PROTOCOL,
+                                    status_detail="",
+                                    provider_name=self.name,
+                                    timestamp=now_ts,
+                                    last_success_ts=now_ts,
+                                    from_cache=False,
+                                    stale=False,
+                                ),
+                                now_mono,
+                            )
                         )
-                    )
+                    else:
+                        out.append(
+                            self._fallback_asleep(
+                                dev_id, prev, name="URX Core75", brand="URX", vid=0x36B0, pid=0x3002
+                            )
+                        )
 
         # 6. Rongyuan (荣元) 2.4G 无线键盘/双槽接收器平台 (Interface 2, FFFF:0002, Feature 0xF7)
         for (vid, pid), colls in rongyuan_groups.items():
@@ -1131,27 +1276,36 @@ class WirelessKeyboardsProvider(BatteryProvider):
                 prev = self._cache.get(kb_id)
                 prod = str(hit_entry.get("product_string") or "").strip()
                 name = prod if (prod and prod.lower() not in ("2.4g wireless receiver", "2.4g dongle", "usb receiver")) else "Rongyuan 2.4G 无线键盘"
-                out.append(
-                    self._remember(
-                        DeviceBattery(
-                            device_id=kb_id,
-                            name=name,
-                            brand=_infer_kb_brand(name, "Akko" if vid == 0x38EE else "Attack Shark"),
-                            kind=KIND_KEYBOARD,
-                            connection_mode="2.4G" if kb_on else "休眠",
-                            vid=vid,
-                            pid=pid,
-                            connected=True,
-                            online=kb_on,
-                            asleep=not kb_on,
-                            percent=kb_pct if isinstance(kb_pct, int) else (prev[1].percent if prev else None),
-                            support_status=STATUS_PROTOCOL,
-                            status_detail="" if kb_on else "休眠中",
-                            provider_name=self.name,
-                        ),
-                        now_mono,
+                brand = _infer_kb_brand(name, "Akko" if vid == 0x38EE else "Attack Shark")
+                if kb_on and isinstance(kb_pct, int):
+                    now_ts = time.time()
+                    out.append(
+                        self._remember(
+                            DeviceBattery(
+                                device_id=kb_id,
+                                name=name,
+                                brand=brand,
+                                kind=KIND_KEYBOARD,
+                                connection_mode="2.4G",
+                                vid=vid,
+                                pid=pid,
+                                connected=True,
+                                online=True,
+                                asleep=False,
+                                percent=kb_pct,
+                                support_status=STATUS_PROTOCOL,
+                                status_detail="",
+                                provider_name=self.name,
+                                timestamp=now_ts,
+                                last_success_ts=now_ts,
+                                from_cache=False,
+                                stale=False,
+                            ),
+                            now_mono,
+                        )
                     )
-                )
+                else:
+                    out.append(self._fallback_asleep(kb_id, prev, name=name, brand=brand, vid=vid, pid=pid))
         return out
 
     def poll(self, hid_snapshot: list[dict], force: bool = False) -> list[DeviceBattery]:
@@ -1161,4 +1315,9 @@ class WirelessKeyboardsProvider(BatteryProvider):
         out.extend(self._poll_sonix_keyboards(hid_snapshot, now_mono, force))
         out.extend(self._poll_evision_keyboards(hid_snapshot, now_mono, force))
         out.extend(self._poll_other_keyboards(hid_snapshot, now_mono, force))
+        present_ids = {d.device_id for d in out}
+        for old_id in list(self._cache.keys()):
+            if old_id not in present_ids:
+                del self._cache[old_id]
+        self._proven_shared &= present_ids
         return out

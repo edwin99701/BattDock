@@ -121,12 +121,27 @@
 
 ---
 
-## 八、GitHub 正式发布自主授权规则（仅适用于 BattDock）
+## 八、GitHub 正式发布自主授权与标准命令规范（仅适用于 BattDock）
 
 用户已明确授权 Antigravity 在满足全部发布条件时，自主完成 **BattDock**（当前公开仓库 `edwin99701/BattDock`）的完整正式版本发布流程，无需逐项请求确认（**本授权仅适用于当前 BattDock 项目，不自动适用于其他项目**）：
 
-1. **常规发布自主权限**：在正常发布流程范围内，允许自主执行检查 Git 状态/分支/远端、判定版本号、更新版本信息/`CHANGELOG.md`/`update-summary.json`、执行自动化测试与构建、执行 `git add`/`git commit`/创建附注 Tag、快进推送当前分支与新 Tag、创建并发布 GitHub Release、上传正式安装包/便携版/校验文件、核实线上资产与更新接口，并在完成后使用中文汇报发布结果。
+1. **常规发布自主权限**：在正常发布流程范围内，允许自主执行检查 Git 状态/分支/远端、判定版本号、更新版本信息/`CHANGELOG.md`/`update-summary.json`、执行自动化测试与构建、受控提交与创建附注 Tag、快进推送 `master` 与新 Tag、创建并发布 GitHub Release、逐文件上传正式安装包/便携版/校验文件、核实线上资产与在线更新接口，并在完成后使用中文汇报发布结果。
 2. **正式发布前置条件（全部满足方可自主发布）**：自动化测试通过、构建成功、程序可正常启动、核心功能回归通过、用户配置与旧版本升级兼容性通过、Release 版本号及附件完整正确、无已知阻断性问题。
-3. **禁止执行的高风险操作（未经明确授权严禁执行）**：强制覆盖远程分支（force push）、删除历史 Git Tag、删除或覆盖历史 GitHub Release、删除远程仓库、修改 GitHub 仓库所有权或地址、破坏性 Git 历史重写、删除用户配置与历史备份、上传密钥/Token 或个人隐私信息。
-4. **异常熔断机制**：遇测试失败、构建失败、Git 冲突、远端与本地存在无法安全解决的分歧、更新兼容性风险、核心功能回归或 GitHub 认证/权限失效时，必须立即暂停发布并向用户说明，严禁跳过测试或掩盖错误。
-5. **发布后核验与汇报责任**：发布成功后自主核验 GitHub Release、安装包与便携版附件、SHA-256、在线更新接口、版本号与更新摘要，并同步更新 `PROGRESS.md`，最终以中文汇报版本号、Commit、Tag、Release 地址、附件及分级测试结果。
+3. **标准自主发布流程与纯净命令规范（严禁多行拼接、`Write-Host` 包装、`$(...)` 替换与 `git -c`）**：
+   - **版本号判定**：核实当前分支为 `master`、工作区状态及线上最新正式 Release Tag，按语义化版本递增并同步更新 `brand.py`、`version_info.txt`、`installer/BattDock.iss`、`CHANGELOG.md`、`PROGRESS.md`、`PROJECT_CONTEXT.md`、`README.md`、`README_EN.md`。
+   - **自动测试与构建**：运行 `powershell -NoProfile -ExecutionPolicy Bypass -File ./build_release.ps1`（自动跑通全量单元测试、PyInstaller 打包、Inno Setup 编译、ZIP 打包与 `SHA256SUMS.txt` 生成），生成 `release/assets_vX.Y.Z/update-summary.json` 与纯文本 `RELEASE_NOTES_vX.Y.Z.md`，完成编译版启动与 ZIP/SHA-256 验收。
+   - **受控提交与打标（使用本仓库 `.git/config` 本地作者，严禁 `git add -A`/`.` 或纳入未跟踪参考 PNG）**：
+     - `git add -u`（仅暂存已跟踪修改文件；若确需新增全新源码文件需单独显式审批）
+     - `git commit -m "<类型>: <中文说明> (vX.Y.Z)"`
+     - `git tag -a vX.Y.Z -m "BattDock vX.Y.Z"`
+   - **单条纯净快进推送**：
+     - `git push origin refs/heads/master:refs/heads/master`
+     - `git push origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z`
+   - **GitHub CLI（`gh`）四步标准发布（严格锁定 `--repo edwin99701/BattDock`，严禁 `--clobber`）**：
+     1. 创建草稿：`gh release create vX.Y.Z --repo edwin99701/BattDock --draft --title "BattDock vX.Y.Z" --notes-file release/assets_vX.Y.Z/RELEASE_NOTES_vX.Y.Z.md`
+     2. 逐文件上传 5 个发布资产（不带 `--clobber`）：`gh release upload vX.Y.Z --repo edwin99701/BattDock release/assets_vX.Y.Z/<资产文件名>`（依次上传 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip`、`SHA256SUMS.txt`、`update-summary.json`）
+     3. 核验草稿资产：`gh release view vX.Y.Z --repo edwin99701/BattDock --json tagName,isDraft,assets`
+     4. 正式发布为 Latest：`gh release edit vX.Y.Z --repo edwin99701/BattDock --draft=false --latest`
+4. **禁止执行的高风险操作（未经明确授权严禁执行）**：强制覆盖远程分支（`--force`/`-f`/`--force-with-lease`）、使用 `--clobber` 覆盖历史 Release 附件、删除历史 Git Tag、删除或覆盖历史 GitHub Release、删除远程仓库、修改 GitHub 仓库所有权或地址、破坏性 Git 历史重写（`reset --hard`/`rebase`）、删除用户配置与历史备份、上传密钥/Token 或个人隐私信息。
+5. **异常熔断机制**：遇测试失败、构建失败、Git 冲突、远端与本地存在无法安全解决的分歧、更新兼容性风险、核心功能回归或 GitHub 认证/权限失效时，必须立即暂停发布并向用户说明，严禁跳过测试或掩盖错误。
+6. **发布后核验与汇报责任**：发布成功后自主核验 GitHub Release（`Latest` 与非草稿状态）、5 个附件及 SHA-256、新旧仓库 `releases/latest` API 与国内加速节点 HTTP 200、软件内 `updater.check_for_update()` 检测结果，并同步确认 `PROGRESS.md` 一致，最终以中文汇报版本号、Commit、Tag、Release 地址、附件、SHA-256 及分级测试结果。

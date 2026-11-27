@@ -109,6 +109,7 @@
   .dev-name {
     font-size: 14.5px;
     font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
@@ -318,6 +319,7 @@
     align-items: center;
     justify-content: space-between;
     font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
     color: var(--text-secondary);
   }
 
@@ -561,23 +563,28 @@
     nameEl.title = fullName;
 
     const conn = escHtml(dev.connection_label || "");
-    const hasPct = dev.percent !== null && dev.percent !== undefined;
+    const isStale = Boolean(dev.stale || !dev.online);
+    const livePct = isStale ? null : (dev.live_percent !== undefined ? dev.live_percent : dev.percent);
+    const hasPct = livePct !== null && livePct !== undefined;
 
     if (dev.sub_batteries) {
       let subHtml = "";
-      if (dev.charging) {
+      if (!isStale && dev.charging) {
         subHtml = conn ? `<span>${conn}</span><span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>` : `<span class="chg-inline">${ICONS.bolt}充电中</span>`;
       } else if (!dev.connected) {
         subHtml = conn ? `<span>${conn}</span><span>·</span><span>未连接</span>` : `<span>未连接</span>`;
+      } else if (isStale) {
+        const staleLabel = dev.asleep ? "休眠中" : "读取失败";
+        subHtml = conn ? `<span>${conn}</span><span>·</span><span>${staleLabel}</span>` : `<span>${staleLabel}</span>`;
       } else if (conn) {
         subHtml = `<span>${conn}</span>`;
       }
       el.querySelector(".dev-sub").innerHTML = subHtml;
       const sb = dev.sub_batteries;
       const parts = [
-        ["left", sb.left_percent, sb.left_charging],
-        ["right", sb.right_percent, sb.right_charging],
-        ["case", sb.case_percent, sb.case_charging],
+        ["left", isStale ? null : sb.left_percent, isStale ? false : sb.left_charging],
+        ["right", isStale ? null : sb.right_percent, isStale ? false : sb.right_charging],
+        ["case", isStale ? null : sb.case_percent, isStale ? false : sb.case_charging],
       ];
       parts.forEach(([key, pct, chg]) => {
         const item = el.querySelector(`.sub-item[data-part="${key}"]`);
@@ -600,13 +607,21 @@
       iconBox.dataset.kind = dev.kind || "other";
     }
 
-    // 副标题规范：“连接方式” 或 “连接方式 · 特殊状态”（正常连接不重复写“已连接”，左右不重复状态文案）
+    // 副标题规范：“连接方式” 或 “连接方式 · 特殊状态”（过期/休眠不冒充实时值，仅在副标题弱提示上次采样参考）
     let statePart = "";
     if (!dev.connected) statePart = `<span>未连接</span>`;
     else if (dev.asleep) statePart = `<span>休眠中</span>`;
-    else if (dev.full || (dev.charging && hasPct && dev.percent >= 100)) statePart = `<span class="chg-inline">${ICONS.bolt}已充满</span>`;
+    else if (isStale) statePart = `<span>${escHtml(dev.status_detail || "读取失败")}</span>`;
+    else if (dev.full || (dev.charging && hasPct && livePct >= 100)) statePart = `<span class="chg-inline">${ICONS.bolt}已充满</span>`;
     else if (dev.charging) statePart = `<span class="chg-inline">${ICONS.bolt}充电中</span>`;
     else if (!dev.online && !hasPct) statePart = `<span>未连接</span>`;
+
+    if (isStale && dev.percent !== null && dev.percent !== undefined) {
+      const refTime = dev.last_success_str ? ` (${escHtml(dev.last_success_str)})` : "";
+      statePart = statePart
+        ? `${statePart}<span>·</span><span class="tabular-nums">上次 ${dev.percent}%${refTime}</span>`
+        : `<span class="tabular-nums">上次 ${dev.percent}%${refTime}</span>`;
+    }
 
     const subHtml = conn && statePart
       ? `<span>${conn}</span><span>·</span>${statePart}`
@@ -620,20 +635,20 @@
     const fill = el.querySelector(".progress-fill");
     const nextCls = `progress-fill fill-${lvl}`;
     if (fill.className !== nextCls) fill.className = nextCls;
-    const nextW = `${hasPct ? Math.max(0, Math.min(100, dev.percent)) : 0}%`;
+    const nextW = `${hasPct ? Math.max(0, Math.min(100, livePct)) : 0}%`;
     if (fill.style.width !== nextW) fill.style.width = nextW;
 
     let rightHtml = "";
     if (!hasPct) {
       rightHtml = `<span class="dev-pct muted">—</span>`;
     } else if (lvl === "tier3") {
-      rightHtml = `<span style="color:var(--crit-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill crit">电量紧急</span><span class="dev-pct crit">${dev.percent}%</span>`;
+      rightHtml = `<span style="color:var(--crit-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill crit">电量紧急</span><span class="dev-pct crit">${livePct}%</span>`;
     } else if (lvl === "tier2") {
-      rightHtml = `<span style="color:var(--warn-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill warn">低电量</span><span class="dev-pct warn">${dev.percent}%</span>`;
+      rightHtml = `<span style="color:var(--warn-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill warn">低电量</span><span class="dev-pct warn">${livePct}%</span>`;
     } else if (dev.charging) {
-      rightHtml = `<span class="dev-pct"><span style="color:var(--bat-charging);display:inline-flex">${ICONS.bolt}</span>${dev.percent}%</span>`;
+      rightHtml = `<span class="dev-pct"><span style="color:var(--bat-charging);display:inline-flex">${ICONS.bolt}</span>${livePct}%</span>`;
     } else {
-      rightHtml = `<span class="dev-pct">${dev.percent}%</span>`;
+      rightHtml = `<span class="dev-pct">${livePct}%</span>`;
     }
     const rightEl = el.querySelector(".dev-right");
     if (rightEl.dataset.sig !== rightHtml) {

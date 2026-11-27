@@ -2,7 +2,7 @@
 ; 特点：管理员安装 + 安装目录 users-modify 权限 + runasoriginaluser，支持任意盘符安装、软件内免 UAC 一键自动更新、防重复安装、自动停进程覆盖与标准卸载
 
 #ifndef MyAppVersion
-  #define MyAppVersion "2.7.4"
+  #define MyAppVersion "2.7.5"
 #endif
 
 #define MyAppName "BattDock"

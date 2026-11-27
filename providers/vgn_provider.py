@@ -24,6 +24,7 @@ from .base import (
     STATUS_PROTOCOL,
     STATUS_VERIFIED,
     get_hid_report_lengths,
+    make_cached_device,
 )
 
 # 已知其他 CompX 17 字节鼠标（非主 VGN F2 Pro Max，供扩展识别）
@@ -110,67 +111,79 @@ class VgnCompxProvider(BatteryProvider):
     def get_last_query_stats(self) -> dict[str, object]:
         return dict(self._last_query_stats)
 
-    def _poll_primary_vgn(self, hid_snapshot: list[dict], force: bool = False) -> Optional[DeviceBattery]:
-        # 快速判断当前是否存在 CompX/VGN/ATK 的 FF02:0002 设备
-        has_vgn = any(
-            d.get("vendor_id") in (0x3554, 0x373B)
-            and d.get("usage_page") == 0xFF02
-            and d.get("usage") == 0x0002
-            for d in hid_snapshot
-        )
-        if not has_vgn:
-            self._last_query_stats = {}
-            return None
+    def on_device_change(self) -> None:
+        self._vgn_reader.reset_backoff_for_reconnect()
+        self._mchose_cache.clear()
 
-        r = self._vgn_reader.read(hid_snapshot=hid_snapshot, force=force)
+    def on_power_resume(self) -> None:
+        self._vgn_reader.reset_backoff_for_reconnect()
+        self._mchose_cache.clear()
+
+    def _poll_primary_vgn(self, hid_snapshot: list[dict], force: bool = False) -> list[DeviceBattery]:
+        readings = self._vgn_reader.read_all(hid_snapshot=hid_snapshot, force=force)
         self._last_query_stats = self._vgn_reader.get_last_query_stats()
-        if not r.connected:
-            return None
+        if not readings:
+            self._last_query_stats = {}
+            return []
 
-        # 确定匹配的 VID/PID 以准确标记验证状态
-        matched_vid, matched_pid = 0x3554, 0xFB3E
-        for d in hid_snapshot:
-            if d.get("vendor_id") in (0x3554, 0x373B) and d.get("usage_page") == 0xFF02 and d.get("usage") == 0x0002:
-                matched_vid = int(d.get("vendor_id", 0x3554))
-                matched_pid = int(d.get("product_id", 0xFB3E))
-                break
+        results: list[DeviceBattery] = []
+        seen_vp_ids: dict[str, int] = {}
+        for r in readings:
+            if not r.connected:
+                continue
+            # 严格使用本次实际选中的 HID 设备自身 VID / PID，杜绝从快照列表盲取首个匹配项
+            matched_vid = int(r.vid or 0x3554)
+            matched_pid = int(r.pid or 0xFB3E)
 
-        brand = "VGN"
-        if (matched_vid, matched_pid) in EXTRA_COMPX_MODELS:
-            _, brand, _ = EXTRA_COMPX_MODELS[(matched_vid, matched_pid)]
-        elif "VXE" in r.device_name.upper():
-            brand = "VXE"
-        elif "ATK" in r.device_name.upper():
-            brand = "ATK"
+            brand = "VGN"
+            if (matched_vid, matched_pid) in EXTRA_COMPX_MODELS:
+                _, brand, _ = EXTRA_COMPX_MODELS[(matched_vid, matched_pid)]
+            elif "VXE" in r.device_name.upper():
+                brand = "VXE"
+            elif "ATK" in r.device_name.upper():
+                brand = "ATK"
 
-        # 仅 3554:FB3E / 3554:FB3D 标记为已实机验证，其余诚实标记为协议已实现待实测
-        support_status = (
-            STATUS_VERIFIED
-            if (matched_vid == 0x3554 and matched_pid in (0xFB3E, 0xFB3D))
-            else STATUS_PROTOCOL
-        )
+            # 仅 3554:FB3E / 3554:FB3D 标记为已实机验证，其余诚实标记为协议已实现待实测
+            support_status = (
+                STATUS_VERIFIED
+                if (matched_vid == 0x3554 and matched_pid in (0xFB3E, 0xFB3D))
+                else STATUS_PROTOCOL
+            )
 
-        is_full = bool(r.charging and r.percent is not None and r.percent >= 100)
-        return DeviceBattery(
-            device_id=f"vgn:{matched_vid:04x}:{matched_pid:04x}",
-            name=r.device_name.replace("DragonFly", "Dragonfly"),
-            brand=brand,
-            kind=KIND_MOUSE,
-            connection_mode=r.connection_mode,
-            vid=matched_vid,
-            pid=matched_pid,
-            connected=True,
-            online=r.online,
-            asleep=r.asleep,
-            percent=r.percent,
-            charging=r.charging and not is_full,
-            full=is_full,
-            voltage_mv=r.voltage_mv,
-            support_status=support_status,
-            status_detail="" if r.online else ("休眠中" if r.asleep else "未响应"),
-            provider_name=self.name,
-            timestamp=r.timestamp or time.time(),
-        )
+            base_id = f"vgn:{matched_vid:04x}:{matched_pid:04x}"
+            cnt = seen_vp_ids.get(base_id, 0)
+            seen_vp_ids[base_id] = cnt + 1
+            device_id = base_id if cnt == 0 else f"{base_id}:{r.instance_key or cnt}"
+
+            is_full = bool(r.online and r.charging and r.percent is not None and r.percent >= 100)
+            detail = r.status_detail or ("" if r.online else ("休眠中" if r.asleep else "读取失败"))
+            results.append(
+                DeviceBattery(
+                    device_id=device_id,
+                    name=r.device_name.replace("DragonFly", "Dragonfly"),
+                    brand=brand,
+                    kind=KIND_MOUSE,
+                    connection_mode=r.connection_mode,
+                    vid=matched_vid,
+                    pid=matched_pid,
+                    connected=True,
+                    online=r.online,
+                    asleep=r.asleep,
+                    percent=r.percent,
+                    charging=r.charging and not is_full,
+                    full=is_full,
+                    voltage_mv=r.voltage_mv,
+                    support_status=support_status,
+                    status_detail=detail,
+                    provider_name=self.name,
+                    timestamp=r.timestamp or time.time(),
+                    last_success_ts=r.last_success_ts,
+                    from_cache=r.from_cache,
+                    stale=r.stale,
+                    diagnostic=r.diagnostic,
+                )
+            )
+        return results
 
     def _poll_mchose(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         results: list[DeviceBattery] = []
@@ -186,6 +199,12 @@ class VgnCompxProvider(BatteryProvider):
                 continue
             grouped.setdefault((vid, pid), []).append(d)
 
+        # 清理已拔出 MCHOSE 设备的旧缓存，防止重插/换鼠串用
+        present_keys = {f"mchose:{vid:04x}:{pid:04x}" for (vid, pid) in grouped.keys()}
+        for old_k in list(self._mchose_cache.keys()):
+            if old_k not in present_keys:
+                del self._mchose_cache[old_k]
+
         for (vid, pid), colls in grouped.items():
             # 优先尝试 Interface 2 + FF01/FF0B + FeatureReport >= 21 的集合，避免多集合锁死
             colls.sort(
@@ -195,6 +214,8 @@ class VgnCompxProvider(BatteryProvider):
                 )
             )
             parsed = None
+            t0 = time.perf_counter()
+            hit_feat_len = 21
             for d in colls:
                 path = d["path"]
                 _, _, feat_len = get_hid_report_lengths(path)
@@ -210,6 +231,7 @@ class VgnCompxProvider(BatteryProvider):
                         raw = dev.get_feature_report(0x11, max(65, feat_len))
                         parsed = parse_mchose_feature_reply(raw)
                         if parsed is not None:
+                            hit_feat_len = max(21, feat_len)
                             break
                 except OSError:
                     parsed = None
@@ -218,8 +240,10 @@ class VgnCompxProvider(BatteryProvider):
                         dev.close()
                     except Exception:
                         pass
+            dur_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 
             dev_id = f"mchose:{vid:04x}:{pid:04x}"
+            now_ts = time.time()
             if parsed is not None:
                 lvid, lpid, pct, charging = parsed
                 name = MCHOSE_LOGICAL_NAMES.get(lpid, MCHOSE_MODELS[(vid, pid)])
@@ -239,28 +263,39 @@ class VgnCompxProvider(BatteryProvider):
                     full=is_full,
                     support_status=STATUS_PROTOCOL,
                     provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                    diagnostic={
+                        "charging_state": charging and not is_full,
+                        "raw_percent": pct,
+                        "source_interface": f"feature_0x11({vid:04X}:{pid:04X})",
+                        "report_length": hit_feat_len,
+                        "from_cache": False,
+                        "read_duration_ms": dur_ms,
+                        "last_success_ts": now_ts,
+                        "current_sample_ts": now_ts,
+                        "anomaly_detected": False,
+                        "failure_reason": "",
+                    },
                 )
                 self._mchose_cache[dev_id] = item
                 results.append(item)
             elif dev_id in self._mchose_cache:
                 prev = self._mchose_cache[dev_id]
                 results.append(
-                    DeviceBattery(
-                        device_id=prev.device_id,
-                        name=prev.name,
-                        brand="MCHOSE",
-                        kind=KIND_MOUSE,
-                        connection_mode="休眠",
-                        vid=vid,
-                        pid=pid,
+                    make_cached_device(
+                        prev,
                         connected=True,
                         online=False,
                         asleep=True,
-                        percent=prev.percent,
-                        support_status=STATUS_PROTOCOL,
+                        connection_mode="休眠",
                         status_detail="休眠中",
-                        provider_name=self.name,
-                        timestamp=prev.timestamp,
+                        stale=True,
+                        failure_reason="read_failed_or_asleep",
+                        preserve_charging=True,
+                        now_ts=now_ts,
                     )
                 )
             else:
@@ -280,6 +315,10 @@ class VgnCompxProvider(BatteryProvider):
                         support_status=STATUS_PROTOCOL,
                         status_detail="未响应",
                         provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
                     )
                 )
         return results
@@ -321,9 +360,7 @@ class VgnCompxProvider(BatteryProvider):
 
     def poll(self, hid_snapshot: list[dict], force: bool = False) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
-        primary = self._poll_primary_vgn(hid_snapshot, force=force)
-        if primary is not None:
-            out.append(primary)
+        out.extend(self._poll_primary_vgn(hid_snapshot, force=force))
         out.extend(self._poll_mchose(hid_snapshot))
         out.extend(self._poll_rapoo(hid_snapshot))
         return out

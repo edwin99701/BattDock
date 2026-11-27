@@ -24,6 +24,7 @@ from .base import (
     get_hid_output_report_id,
     get_hid_report_lengths,
     hid_drain,
+    make_cached_device,
     map_range,
     pad_report,
 )
@@ -576,7 +577,7 @@ class WirelessHeadsetsProvider(BatteryProvider):
         self._pulse3d_lock = threading.Lock()
         self._pulse3d_dev: Optional[hid.device] = None
         self._pulse3d_path: Optional[bytes] = None
-        self._pulse3d_last: Optional[tuple[bool, Optional[int], bool]] = None
+        self._pulse3d_last: Optional[tuple[bool, Optional[int], bool, float]] = None
 
     def _close_pulse3d_handle(self, *, clear_cache: bool = False) -> None:
         with self._pulse3d_lock:
@@ -595,10 +596,13 @@ class WirelessHeadsetsProvider(BatteryProvider):
         self._close_pulse3d_handle(clear_cache=True)
 
     def on_device_change(self) -> None:
-        self._close_pulse3d_handle(clear_cache=False)
+        self._v3_cache = None
+        self._mchose_proven.clear()
+        self._close_pulse3d_handle(clear_cache=True)
 
     def on_power_resume(self) -> None:
-        self._close_pulse3d_handle(clear_cache=False)
+        self._v3_cache = None
+        self._close_pulse3d_handle(clear_cache=True)
 
     def __del__(self) -> None:
         try:
@@ -610,7 +614,7 @@ class WirelessHeadsetsProvider(BatteryProvider):
         self._seq = (self._seq + 1) & 0xFF
         return self._seq
 
-    def _poll_razer_headsets(self, hid_snapshot: list[dict], now_mono: float) -> list[DeviceBattery]:
+    def _poll_razer_headsets(self, hid_snapshot: list[dict], now_mono: float, force: bool = False) -> list[DeviceBattery]:
         out: list[DeviceBattery] = []
         grouped: dict[int, list[dict]] = {}
         for d in hid_snapshot:
@@ -637,14 +641,27 @@ class WirelessHeadsetsProvider(BatteryProvider):
                     continue
             grouped.setdefault(pid, []).append(d)
 
+        if 0x057A not in grouped:
+            self._v3_cache = None
+
         for pid, colls in grouped.items():
             key, name, proto, is_wired = RAZER_HEADSETS[pid]
-            # BlackShark V3 高频轮询会断连，强制 5 分钟节流（在线）或 60 秒（离线）
-            if proto == "report02_v3" and self._v3_cache is not None:
+            # BlackShark V3 高频轮询会断连，常规轮询 5 分钟节流（充电时 60 秒 / 离线 60 秒）；手动刷新/热插拔 force=True 立即穿透
+            if proto == "report02_v3" and not force and self._v3_cache is not None:
                 ts_c, dev_c = self._v3_cache
-                wait_s = 300.0 if dev_c.online else 60.0
+                wait_s = 60.0 if (not dev_c.online or dev_c.charging) else 300.0
                 if (now_mono - ts_c) < wait_s:
-                    out.append(dev_c)
+                    out.append(
+                        make_cached_device(
+                            dev_c,
+                            connected=True,
+                            online=dev_c.online,
+                            asleep=dev_c.asleep,
+                            stale=not dev_c.online,
+                            failure_reason="throttled",
+                            preserve_charging=True,
+                        )
+                    )
                     continue
 
             online, pct, chg, full = False, None, False, False
@@ -748,6 +765,7 @@ class WirelessHeadsetsProvider(BatteryProvider):
                 if online:
                     break
 
+            now_ts = time.time()
             item = DeviceBattery(
                 device_id=f"headset:{key}",
                 name=name,
@@ -765,6 +783,10 @@ class WirelessHeadsetsProvider(BatteryProvider):
                 support_status=STATUS_PROTOCOL,
                 status_detail="" if online else "耳机离线或休眠",
                 provider_name=self.name,
+                timestamp=now_ts,
+                last_success_ts=now_ts if online else None,
+                from_cache=False,
+                stale=not online,
             )
             if proto == "report02_v3":
                 self._v3_cache = (now_mono, item)
@@ -1829,11 +1851,17 @@ class WirelessHeadsetsProvider(BatteryProvider):
                         old.close()
                     except Exception:
                         pass
+            now_ts = time.time()
             if parsed is not None:
-                self._pulse3d_last = parsed
+                self._pulse3d_last = (parsed[0], parsed[1], parsed[2], now_ts)
             last = self._pulse3d_last
 
-        online, pct, chg = last if last else (False, None, False)
+        if last is not None:
+            online, pct, chg, sample_ts = last
+            from_cache = parsed is None
+        else:
+            online, pct, chg, sample_ts = False, None, False, time.time()
+            from_cache = False
         return [
             DeviceBattery(
                 device_id="headset:sony-pulse-3d",
@@ -1851,13 +1879,17 @@ class WirelessHeadsetsProvider(BatteryProvider):
                 support_status=STATUS_PROTOCOL,
                 status_detail="" if online else "耳机离线或等待状态上报",
                 provider_name=self.name,
+                timestamp=sample_ts,
+                last_success_ts=sample_ts if online else None,
+                from_cache=from_cache,
+                stale=not online,
             )
         ]
 
     def poll(self, hid_snapshot: list[dict], force: bool = False) -> list[DeviceBattery]:
         now_mono = time.monotonic()
         out: list[DeviceBattery] = []
-        out.extend(self._poll_razer_headsets(hid_snapshot, now_mono))
+        out.extend(self._poll_razer_headsets(hid_snapshot, now_mono, force=force))
         out.extend(self._poll_centurion_and_astro(hid_snapshot))
         out.extend(self._poll_jbl_epos_airoha_cmedia(hid_snapshot))
         out.extend(self._poll_airoha_race_headsets(hid_snapshot))

@@ -27,6 +27,7 @@ from .base import (
     get_hid_report_lengths,
     hid_drain,
     interpolate_voltage,
+    make_cached_device,
     pad_report,
 )
 
@@ -356,9 +357,10 @@ def parse_sony_inzone_buds(raw: list[int] | bytes) -> tuple[bool, Optional[int],
     if not _is_sony_inzone_reply(d, 6):
         return (False, None, False, None)
     p = d[13:19]  # [left_state, left_lvl, right_state, right_lvl, case_state, case_lvl]
-    left = p[1] if p[1] <= 100 else None
-    right = p[3] if p[3] <= 100 else None
-    case = p[5] if p[5] <= 100 else None
+    # 状态位为 0 表示对应单耳/充电盒未连接或未上报，绝不将 0 当作 0% 电量
+    left = int(p[1]) if (p[0] != 0 and 1 <= p[1] <= 100) else None
+    right = int(p[3]) if (p[2] != 0 and 1 <= p[3] <= 100) else None
+    case = int(p[5]) if (p[4] != 0 and 1 <= p[5] <= 100) else None
     valid_buds = [x for x in (left, right) if x is not None]
     if not valid_buds and case is None:
         return (False, None, False, None)
@@ -384,6 +386,12 @@ class ExtraBrandsProvider(BatteryProvider):
 
     def __init__(self) -> None:
         self._cache: dict[str, DeviceBattery] = {}
+
+    def on_device_change(self) -> None:
+        self._cache.clear()
+
+    def on_power_resume(self) -> None:
+        self._cache.clear()
 
     def _ask_asus_report(
         self,
@@ -457,27 +465,71 @@ class ExtraBrandsProvider(BatteryProvider):
                         break
             dev_id = f"asus:{pid:04x}"
             prev = self._cache.get(dev_id)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=spec.name,
-                brand="ASUS ROG",
-                kind=KIND_MOUSE,
-                connection_mode="有线" if spec.is_wired else "2.4G",
-                vid=ASUS_VID,
-                pid=pid,
-                connected=True,
-                online=online,
-                asleep=asleep or not online,
-                percent=pct if online else (prev.percent if prev else None),
-                charging=chg,
-                full=chg and pct == 100,
-                support_status=STATUS_PROTOCOL,
-                status_detail=detail,
-                provider_name=self.name,
-            )
+            now_ts = time.time()
             if online:
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=spec.name,
+                    brand="ASUS ROG",
+                    kind=KIND_MOUSE,
+                    connection_mode="有线" if spec.is_wired else "2.4G",
+                    vid=ASUS_VID,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=chg,
+                    full=chg and pct == 100,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail=detail,
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
                 self._cache[dev_id] = item
-            results.append(item)
+                results.append(item)
+            elif prev is not None:
+                results.append(
+                    make_cached_device(
+                        prev,
+                        connected=True,
+                        online=False,
+                        asleep=asleep or True,
+                        status_detail=detail or "休眠中",
+                        stale=True,
+                        failure_reason="device_asleep_or_read_failed",
+                        preserve_charging=True,
+                        now_ts=now_ts,
+                    )
+                )
+            else:
+                results.append(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=spec.name,
+                        brand="ASUS ROG",
+                        kind=KIND_MOUSE,
+                        connection_mode="有线" if spec.is_wired else "2.4G",
+                        vid=ASUS_VID,
+                        pid=pid,
+                        connected=True,
+                        online=False,
+                        asleep=asleep or True,
+                        percent=None,
+                        charging=False,
+                        full=False,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail=detail,
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
+                    )
+                )
 
         for pid, colls in kb_groups.items():
             name, is_wired, lvl_off = ASUS_KEYBOARDS[pid]
@@ -491,27 +543,71 @@ class ExtraBrandsProvider(BatteryProvider):
                         break
             dev_id = f"asus:{pid:04x}"
             prev = self._cache.get(dev_id)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=name,
-                brand="ASUS ROG",
-                kind=KIND_KEYBOARD,
-                connection_mode="有线" if is_wired else "2.4G",
-                vid=ASUS_VID,
-                pid=pid,
-                connected=True,
-                online=online,
-                asleep=asleep or not online,
-                percent=pct if online else (prev.percent if prev else None),
-                charging=chg,
-                full=chg and pct == 100,
-                support_status=STATUS_PROTOCOL,
-                status_detail=detail,
-                provider_name=self.name,
-            )
+            now_ts = time.time()
             if online:
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand="ASUS ROG",
+                    kind=KIND_KEYBOARD,
+                    connection_mode="有线" if is_wired else "2.4G",
+                    vid=ASUS_VID,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=chg,
+                    full=chg and pct == 100,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail=detail,
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
                 self._cache[dev_id] = item
-            results.append(item)
+                results.append(item)
+            elif prev is not None:
+                results.append(
+                    make_cached_device(
+                        prev,
+                        connected=True,
+                        online=False,
+                        asleep=asleep or True,
+                        status_detail=detail or "休眠中",
+                        stale=True,
+                        failure_reason="device_asleep_or_read_failed",
+                        preserve_charging=True,
+                        now_ts=now_ts,
+                    )
+                )
+            else:
+                results.append(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand="ASUS ROG",
+                        kind=KIND_KEYBOARD,
+                        connection_mode="有线" if is_wired else "2.4G",
+                        vid=ASUS_VID,
+                        pid=pid,
+                        connected=True,
+                        online=False,
+                        asleep=asleep or True,
+                        percent=None,
+                        charging=False,
+                        full=False,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail=detail,
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
+                    )
+                )
 
     def _poll_asus_receivers(self, entries: list[dict], results: list[DeviceBattery]) -> None:
         recv_entries = [
@@ -648,27 +744,71 @@ class ExtraBrandsProvider(BatteryProvider):
                             dev.close()
                         except Exception:
                             pass
-                item = DeviceBattery(
-                    device_id=dev_id,
-                    name=name,
-                    brand="ASUS ROG",
-                    kind=KIND_HEADSET,
-                    connection_mode="2.4G",
-                    vid=ASUS_VID,
-                    pid=pid,
-                    connected=True,
-                    online=online,
-                    asleep=not online,
-                    percent=pct if online else (prev.percent if prev else None),
-                    charging=chg,
-                    voltage_mv=mv if online else (prev.voltage_mv if prev else None),
-                    support_status=STATUS_PROTOCOL,
-                    status_detail="" if online else "未响应 / 休眠",
-                    provider_name=self.name,
-                )
+                now_ts = time.time()
                 if online:
+                    item = DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand="ASUS ROG",
+                        kind=KIND_HEADSET,
+                        connection_mode="2.4G",
+                        vid=ASUS_VID,
+                        pid=pid,
+                        connected=True,
+                        online=True,
+                        asleep=False,
+                        percent=pct,
+                        charging=chg,
+                        voltage_mv=mv,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="",
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=now_ts,
+                        from_cache=False,
+                        stale=False,
+                    )
                     self._cache[dev_id] = item
-                results.append(item)
+                    results.append(item)
+                elif prev is not None:
+                    results.append(
+                        make_cached_device(
+                            prev,
+                            connected=True,
+                            online=False,
+                            asleep=True,
+                            status_detail="未响应 / 休眠",
+                            stale=True,
+                            failure_reason="device_asleep_or_offline",
+                            preserve_charging=True,
+                            now_ts=now_ts,
+                        )
+                    )
+                else:
+                    results.append(
+                        DeviceBattery(
+                            device_id=dev_id,
+                            name=name,
+                            brand="ASUS ROG",
+                            kind=KIND_HEADSET,
+                            connection_mode="2.4G",
+                            vid=ASUS_VID,
+                            pid=pid,
+                            connected=True,
+                            online=False,
+                            asleep=True,
+                            percent=None,
+                            charging=False,
+                            voltage_mv=None,
+                            support_status=STATUS_PROTOCOL,
+                            status_detail="未响应 / 休眠",
+                            provider_name=self.name,
+                            timestamp=now_ts,
+                            last_success_ts=None,
+                            from_cache=False,
+                            stale=True,
+                        )
+                    )
             else:
                 online = False
                 pct = None
@@ -724,28 +864,73 @@ class ExtraBrandsProvider(BatteryProvider):
                             dev.close()
                         except Exception:
                             pass
-                item = DeviceBattery(
-                    device_id=dev_id,
-                    name=name,
-                    brand="ASUS ROG",
-                    kind=KIND_EARBUDS if "cetra" in proto else KIND_HEADSET,
-                    connection_mode="2.4G",
-                    vid=ASUS_VID,
-                    pid=pid,
-                    connected=True,
-                    online=online,
-                    asleep=not online,
-                    percent=pct if online else (prev.percent if prev else None),
-                    charging=chg,
-                    full=chg and pct == 100,
-                    sub_batteries=sub if online else (prev.sub_batteries if prev else None),
-                    support_status=STATUS_PROTOCOL,
-                    status_detail="" if online else "未响应 / 休眠",
-                    provider_name=self.name,
-                )
+                now_ts = time.time()
                 if online:
+                    item = DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand="ASUS ROG",
+                        kind=KIND_EARBUDS if "cetra" in proto else KIND_HEADSET,
+                        connection_mode="2.4G",
+                        vid=ASUS_VID,
+                        pid=pid,
+                        connected=True,
+                        online=True,
+                        asleep=False,
+                        percent=pct,
+                        charging=chg,
+                        full=chg and pct == 100,
+                        sub_batteries=sub,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="",
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=now_ts,
+                        from_cache=False,
+                        stale=False,
+                    )
                     self._cache[dev_id] = item
-                results.append(item)
+                    results.append(item)
+                elif prev is not None:
+                    results.append(
+                        make_cached_device(
+                            prev,
+                            connected=True,
+                            online=False,
+                            asleep=True,
+                            status_detail="未响应 / 休眠",
+                            stale=True,
+                            failure_reason="device_asleep_or_offline",
+                            preserve_charging=True,
+                            now_ts=now_ts,
+                        )
+                    )
+                else:
+                    results.append(
+                        DeviceBattery(
+                            device_id=dev_id,
+                            name=name,
+                            brand="ASUS ROG",
+                            kind=KIND_EARBUDS if "cetra" in proto else KIND_HEADSET,
+                            connection_mode="2.4G",
+                            vid=ASUS_VID,
+                            pid=pid,
+                            connected=True,
+                            online=False,
+                            asleep=True,
+                            percent=None,
+                            charging=False,
+                            full=False,
+                            sub_batteries=None,
+                            support_status=STATUS_PROTOCOL,
+                            status_detail="未响应 / 休眠",
+                            provider_name=self.name,
+                            timestamp=now_ts,
+                            last_success_ts=None,
+                            from_cache=False,
+                            stale=True,
+                        )
+                    )
 
     def _poll_sony_inzone(self, entries: list[dict], results: list[DeviceBattery]) -> None:
         grouped: dict[int, list[dict]] = {}
@@ -799,28 +984,73 @@ class ExtraBrandsProvider(BatteryProvider):
                         pass
             dev_id = f"sony:{pid:04x}"
             prev = self._cache.get(dev_id)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=name,
-                brand="Sony",
-                kind=KIND_EARBUDS if mode == "buds" else KIND_HEADSET,
-                connection_mode="2.4G",
-                vid=SONY_VID,
-                pid=pid,
-                connected=True,
-                online=online,
-                asleep=not online,
-                percent=pct if online else (prev.percent if prev else None),
-                charging=chg,
-                full=chg and pct == 100,
-                sub_batteries=sub if online else (prev.sub_batteries if prev else None),
-                support_status=STATUS_PROTOCOL,
-                status_detail="" if online else "未连接耳机 / 充电盒内",
-                provider_name=self.name,
-            )
+            now_ts = time.time()
             if online:
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand="Sony",
+                    kind=KIND_EARBUDS if mode == "buds" else KIND_HEADSET,
+                    connection_mode="2.4G",
+                    vid=SONY_VID,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=chg,
+                    full=chg and pct == 100,
+                    sub_batteries=sub,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="",
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
                 self._cache[dev_id] = item
-            results.append(item)
+                results.append(item)
+            elif prev is not None:
+                results.append(
+                    make_cached_device(
+                        prev,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        status_detail="未连接耳机 / 充电盒内",
+                        stale=True,
+                        failure_reason="device_asleep_or_offline",
+                        preserve_charging=True,
+                        now_ts=now_ts,
+                    )
+                )
+            else:
+                results.append(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand="Sony",
+                        kind=KIND_EARBUDS if mode == "buds" else KIND_HEADSET,
+                        connection_mode="2.4G",
+                        vid=SONY_VID,
+                        pid=pid,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        percent=None,
+                        charging=False,
+                        full=False,
+                        sub_batteries=None,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="未连接耳机 / 充电盒内",
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
+                    )
+                )
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         results: list[DeviceBattery] = []
@@ -834,4 +1064,8 @@ class ExtraBrandsProvider(BatteryProvider):
         if sony_entries:
             self._poll_sony_inzone(sony_entries, results)
 
+        present_ids = {d.device_id for d in results}
+        for old_id in list(self._cache.keys()):
+            if old_id not in present_ids:
+                del self._cache[old_id]
         return results

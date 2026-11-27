@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from datetime import datetime
 import io
 import os
 import sys
@@ -19,6 +20,33 @@ from providers import DeviceBattery, KIND_EARBUDS, KIND_HEADSET, KIND_KEYBOARD, 
 from providers.device_naming import format_device_subtitle
 
 EDGE_MARGIN = 16
+
+_FONT_FAMILY_CACHE: dict[bool, str] = {}
+
+
+def resolve_winforms_font_family(*, numeric: bool = False) -> str:
+    """选择本机已安装的最佳现代桌面字体（零外部下载，保证 Win10/11 中文清晰无宋体回退）。"""
+    cached = _FONT_FAMILY_CACHE.get(numeric)
+    if cached:
+        return cached
+    candidates = (
+        ("Inter", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI")
+        if numeric
+        else ("Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI")
+    )
+    chosen = "Microsoft YaHei UI"
+    try:
+        from System.Drawing.Text import InstalledFontCollection
+
+        installed = {f.Name for f in InstalledFontCollection().Families}
+        for name in candidates:
+            if name in installed:
+                chosen = name
+                break
+    except Exception:
+        chosen = "Microsoft YaHei UI"
+    _FONT_FAMILY_CACHE[numeric] = chosen
+    return chosen
 
 
 QUNS_NOT_PRESENT = 1
@@ -582,8 +610,9 @@ class DesktopFloatingWidget:
             x, y = right - w - margin, bottom - h - margin
 
         is_dark = theme == "dark"
-        pct = device.percent if device else None
-        charging = bool(device.charging) if device else False
+        is_stale = bool(device and (getattr(device, "stale", False) or not device.online))
+        pct = None if (device is None or is_stale) else device.percent
+        charging = bool(device.charging) if (device is not None and not is_stale) else False
         kind = device.kind if device else KIND_MOUSE
         pct_text = f"{pct}%" if pct is not None else "—"
         if charging and pct is not None:
@@ -593,9 +622,15 @@ class DesktopFloatingWidget:
             if device is not None:
                 sub = format_device_subtitle(
                     device.connection_mode, device.connected, device.online,
-                    device.asleep, device.charging, device.full, device.percent,
+                    device.asleep, device.charging, device.full, pct,
                 )
-                hover_detail = f"{device.name}\n{sub} · {pct_text}" if sub else f"{device.name}\n{pct_text}"
+                if is_stale and device.percent is not None:
+                    last_ts = getattr(device, "last_success_ts", None) or device.timestamp
+                    ts_s = datetime.fromtimestamp(last_ts).strftime("%H:%M") if last_ts else ""
+                    ref_txt = f"上次 {device.percent}% ({ts_s})" if ts_s else f"上次 {device.percent}%"
+                    hover_detail = f"{device.name}\n{sub} · {ref_txt}" if sub else f"{device.name}\n{ref_txt}"
+                else:
+                    hover_detail = f"{device.name}\n{sub} · {pct_text}" if sub else f"{device.name}\n{pct_text}"
             else:
                 hover_detail = "BattDock · 当前未检测到已连接外设"
 
@@ -778,7 +813,7 @@ class DesktopFloatingWidget:
                 name_font = self._font_cache.get(name_font_key)
                 if name_font is None:
                     name_font = Font(
-                        "Microsoft YaHei UI",
+                        resolve_winforms_font_family(numeric=False),
                         8.8 if fcfg.size == "small" else (9.5 if fcfg.size == "medium" else 10.2),
                         FontStyle.Bold,
                     )
@@ -788,7 +823,7 @@ class DesktopFloatingWidget:
                 pct_font = self._font_cache.get(pct_font_key)
                 if pct_font is None:
                     pct_font = Font(
-                        "Microsoft YaHei UI",
+                        resolve_winforms_font_family(numeric=True),
                         9.0 if fcfg.size == "small" else (9.8 if fcfg.size == "medium" else 10.5),
                         FontStyle.Bold,
                     )

@@ -23,6 +23,7 @@ from .base import (
     STATUS_UNSUPPORTED,
     STATUS_VERIFIED,
     clear_hid_caps_cache,
+    redact_diagnostics_data,
 )
 from .bluetooth_provider import BluetoothBatteryProvider
 from .corsair_hid import CorsairHidProvider
@@ -38,9 +39,10 @@ from .wireless_headsets import WirelessHeadsetsProvider
 from .wireless_keyboards import WirelessKeyboardsProvider
 
 
-def _device_score(dev: DeviceBattery) -> tuple[int, int, int, int]:
-    """同 device_id 去重时的优先级评分（在线 > 有电量 > 充电中 > 已验证）。"""
+def _device_score(dev: DeviceBattery) -> tuple[int, int, int, int, int]:
+    """同 device_id 去重时的优先级评分（非过期实时 > 在线 > 有电量 > 充电中 > 已验证）。"""
     return (
+        0 if dev.stale else 1,
         1 if dev.online else 0,
         1 if dev.percent is not None else 0,
         1 if dev.charging else 0,
@@ -49,7 +51,7 @@ def _device_score(dev: DeviceBattery) -> tuple[int, int, int, int]:
 
 
 def sanitize_device_reading(dev: DeviceBattery) -> DeviceBattery:
-    """强制数据一致性与标准显示名称规范：保留原始硬件名，离线/未知绝不伪造 0%。"""
+    """强制数据一致性与标准显示名称规范：保留原始硬件名，离线/未知绝不伪造 0% 与 timestamp。"""
     if not dev.raw_name:
         dev.raw_name = dev.name
     dev.name = normalize_device_display_name(
@@ -63,8 +65,13 @@ def sanitize_device_reading(dev: DeviceBattery) -> DeviceBattery:
             dev.percent = None
     if dev.percent is not None:
         dev.percent = max(0, min(100, int(dev.percent)))
-        if dev.charging and dev.percent >= 100:
+        if dev.online and not dev.stale and dev.charging and dev.percent >= 100:
             dev.full = True
+    if dev.online and not dev.stale and not dev.from_cache and dev.last_success_ts is None:
+        dev.last_success_ts = dev.timestamp
+    if dev.stale and dev.last_success_ts is not None:
+        # 过期/缓存数据绝不伪造为当前时间，严格对齐最后一次真实采样时间
+        dev.timestamp = dev.last_success_ts
     return dev
 
 
@@ -108,6 +115,10 @@ class DeviceManager:
 
         # 轻量内存诊断环形缓冲（默认零持续磁盘写入；仅显式开启调试模式时才写本地日志）
         self._poll_history: deque[dict[str, Any]] = deque(maxlen=60)
+        self._transition_events: deque[dict[str, Any]] = deque(maxlen=60)
+        self._device_history: dict[str, dict[str, Any]] = {}
+        self._last_tray_sync: dict[str, Any] = {}
+        self._poll_seq: int = 0
         self._total_polls: int = 0
         self._total_full_scans: int = 0
         self._total_timeouts: int = 0
@@ -323,11 +334,14 @@ class DeviceManager:
                 dedup.values(),
                 key=lambda d: (
                     0 if d.support_status == STATUS_VERIFIED else 1,
-                    0 if d.online else (1 if d.asleep else 2),
+                    0 if (d.online and not d.stale) else (1 if d.asleep else 2),
                     d.brand.lower(),
                     d.name.lower(),
                 ),
             )
+            self._poll_seq += 1
+            poll_now_ts = time.time()
+            self._enrich_device_diagnostics(ordered, poll_now_ts=poll_now_ts, reason=reason)
             self._last_devices = ordered
 
             duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
@@ -337,6 +351,7 @@ class DeviceManager:
             self._total_retries += round_retries
 
             record: dict[str, Any] = {
+                "poll_seq": self._poll_seq,
                 "start_time": start_iso,
                 "end_time": end_iso,
                 "duration_ms": duration_ms,
@@ -358,12 +373,140 @@ class DeviceManager:
 
             return ordered
 
+    def _enrich_device_diagnostics(
+        self,
+        devices: list[DeviceBattery],
+        *,
+        poll_now_ts: float,
+        reason: str,
+    ) -> None:
+        """为每台设备补齐统一充电变化、跳变与真实采样诊断记录，并清理已拔出设备历史。"""
+        present_ids = {d.device_id for d in devices}
+        for old_id in list(self._device_history.keys()):
+            if old_id not in present_ids:
+                del self._device_history[old_id]
+
+        for d in devices:
+            prev = self._device_history.get(d.device_id)
+            existing = dict(d.diagnostic) if isinstance(d.diagnostic, dict) else {}
+
+            prev_chg = existing.get("previous_charging_state", prev["charging"] if prev else None)
+            prev_pct = existing.get("previous_raw_percent", prev["percent"] if prev else None)
+            prev_mv = existing.get("previous_voltage_mv", prev["voltage_mv"] if prev else None)
+
+            cur_chg = bool(d.charging)
+            cur_pct = d.percent
+            cur_mv = d.voltage_mv
+            last_ok = d.last_success_ts if d.last_success_ts is not None else (prev["last_success_ts"] if prev else None)
+            delta = existing.get("percentage_delta")
+            if delta is None and cur_pct is not None and prev_pct is not None:
+                delta = int(cur_pct) - int(prev_pct)
+
+            chg_trans = existing.get("charging_transition")
+            if not chg_trans:
+                if prev_chg is None or bool(prev_chg) == cur_chg or not d.online or d.stale:
+                    chg_trans = "none"
+                elif cur_chg:
+                    chg_trans = "started_charging"
+                else:
+                    chg_trans = "stopped_charging"
+
+            anomaly = bool(existing.get("anomaly_detected", False))
+            if not anomaly and d.online and not d.stale and delta is not None:
+                if abs(int(delta)) >= 15 or ((not cur_chg) and (not bool(prev_chg)) and int(delta) >= 10):
+                    anomaly = True
+
+            src_if = existing.get("source_interface") or (
+                f"{d.connection_mode}({d.vid:04X}:{d.pid:04X})"
+                if (d.vid and d.pid)
+                else d.connection_mode
+            )
+            diag: dict[str, Any] = {
+                "charging_state": cur_chg,
+                "previous_charging_state": prev_chg,
+                "raw_percent": existing.get("raw_percent", cur_pct),
+                "previous_raw_percent": prev_pct,
+                "voltage_mv": cur_mv,
+                "previous_voltage_mv": prev_mv,
+                "last_success_ts": last_ok,
+                "current_sample_ts": existing.get("current_sample_ts", poll_now_ts),
+                "percentage_delta": delta,
+                "charging_transition": chg_trans,
+                "source_interface": src_if,
+                "report_length": existing.get("report_length"),
+                "from_cache": bool(d.from_cache),
+                "read_duration_ms": existing.get("read_duration_ms"),
+                "anomaly_detected": anomaly,
+            }
+            for extra_key in (
+                "raw_charging_flag",
+                "anomaly_resolution",
+                "confirmation_reads",
+                "raw_frame_hex",
+                "interface_switched",
+                "failure_reason",
+            ):
+                if extra_key in existing:
+                    diag[extra_key] = existing[extra_key]
+            d.diagnostic = diag
+
+            if chg_trans != "none" or anomaly:
+                self._transition_events.append(
+                    {
+                        "event_time": datetime.fromtimestamp(poll_now_ts).isoformat(timespec="milliseconds"),
+                        "poll_seq": self._poll_seq,
+                        "reason": reason,
+                        "device_id": d.device_id,
+                        "brand": d.brand,
+                        "name": d.name,
+                        "charging_transition": chg_trans,
+                        "anomaly_detected": anomaly,
+                        "diagnostic": dict(diag),
+                    }
+                )
+
+            if d.online and not d.stale and not d.from_cache:
+                self._device_history[d.device_id] = {
+                    "charging": cur_chg,
+                    "percent": cur_pct,
+                    "voltage_mv": cur_mv,
+                    "last_success_ts": last_ok or poll_now_ts,
+                }
+
+    def record_tray_sync(
+        self,
+        device_id: Optional[str],
+        *,
+        percent: Optional[int],
+        charging: bool,
+        connected: bool,
+        stale: bool = False,
+        updated_ts: Optional[float] = None,
+    ) -> None:
+        """记录系统托盘完成图标同步的时间与状态，供充电延迟诊断核验。"""
+        with self._poll_lock:
+            now_ts = time.time() if updated_ts is None else float(updated_ts)
+            latency_ms = round(max(0.0, (now_ts - self._last_poll_ts) * 1000.0), 2) if self._last_poll_ts > 0 else 0.0
+            self._last_tray_sync = {
+                "device_id": device_id or "",
+                "percent": percent,
+                "charging": bool(charging),
+                "connected": bool(connected),
+                "stale": bool(stale),
+                "tray_updated_ts": now_ts,
+                "tray_sync_latency_ms": latency_ms,
+            }
+
+    def get_poll_seq(self) -> int:
+        with self._poll_lock:
+            return self._poll_seq
+
     def get_last_devices(self) -> list[DeviceBattery]:
         with self._poll_lock:
             return list(self._last_devices)
 
     def get_poll_diagnostics(self) -> dict[str, Any]:
-        """返回轻量级本地轮询与 HID 通信诊断汇总。"""
+        """返回轻量级本地轮询、充电切换与 HID 通信诊断汇总。"""
         with self._poll_lock:
             records = list(self._poll_history)
             durations = [float(r["duration_ms"]) for r in records]
@@ -376,6 +519,8 @@ class DeviceManager:
                 "avg_poll_ms": round(sum(durations) / len(durations), 2) if durations else 0.0,
                 "max_poll_ms": round(max(durations), 2) if durations else 0.0,
                 "recent_polls": records[-20:],
+                "battery_transitions": list(self._transition_events)[-20:],
+                "last_tray_sync": dict(self._last_tray_sync),
             }
 
     def stop(self) -> None:
@@ -433,7 +578,7 @@ class DeviceManager:
                 force_query=True,
                 active_monitor_tasks=active_monitor_tasks,
             )
-            return {
+            report = {
                 "generated_at": datetime.now().isoformat(timespec="seconds"),
                 "app_version": APP_VERSION,
                 "system": {
@@ -458,3 +603,4 @@ class DeviceManager:
                     STATUS_UNSUPPORTED: "暂不支持读取真实电量",
                 },
             }
+            return redact_diagnostics_data(report)

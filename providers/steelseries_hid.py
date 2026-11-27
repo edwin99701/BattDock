@@ -21,8 +21,10 @@ from .base import (
     KIND_HEADSET,
     KIND_MOUSE,
     STATUS_PROTOCOL,
+    SubBattery,
     get_hid_report_lengths,
     hid_drain,
+    make_cached_device,
     map_range,
     pad_report,
 )
@@ -145,23 +147,31 @@ def parse_steelseries_mouse(reply: list[int] | bytes, protocol: str, command: in
 
 
 def parse_steelseries_headset(proto: str, reply: list[int] | bytes) -> Optional[tuple[bool, Optional[int], bool]]:
-    """解析 SteelSeries 无线耳机状态回包，返回 (online, percent, charging)。"""
+    """解析 SteelSeries 无线耳机状态回包，严格拒绝越界杂包，返回 (online, percent, charging)。"""
     r = list(reply)
     if not r:
         return None
     if proto == "arctis1" and len(r) > 3:
         if r[2] == 0x01:
             return (False, None, False)
-        return (True, min(100, r[3]), False)
+        if r[3] > 100:
+            return None
+        return (True, int(r[3]), False)
     if proto == "arctis7" and len(r) > 2:
-        return (True, min(100, r[2]), False)
+        if r[2] > 100:
+            return None
+        return (True, int(r[2]), False)
     if proto == "arctis9" and len(r) > 4:
         if r[4] == 0xFF:
             return (False, None, False)
+        if not (0x50 <= r[3] <= 0xB0):
+            return None
         return (True, map_range(r[3], 0x64, 0x9A), r[4] == 0x01)
     if proto == "nova_pro" and len(r) >= 16 and r[1] == 0xB0:
         if r[15] == 0x01:
             return (False, None, False)
+        if r[6] > 8:
+            return None
         return (True, map_range(r[6], 0, 8), r[15] == 0x02)
     if proto in ("nova_elite", "nova_omni") and len(r) >= 16 and r[0] == 0x01 and r[1] == 0xB0:
         omni = proto == "nova_omni"
@@ -174,20 +184,43 @@ def parse_steelseries_headset(proto: str, reply: list[int] | bytes) -> Optional[
     if proto == "arctis7p" and len(r) >= 4:
         if r[1] == 0x01:
             return (False, None, False)
+        if r[2] > 4:
+            return None
         return (True, map_range(r[2], 0, 4), r[3] == 0x01)
     if proto in ("nova7_steps", "nova7_pct") and len(r) >= 4:
         if r[3] == 0x00:
             return (False, None, False)
-        pct = map_range(r[2], 0, 4) if proto == "nova7_steps" else min(100, r[2])
+        if proto == "nova7_steps":
+            if r[2] > 4:
+                return None
+            pct = map_range(r[2], 0, 4)
+        else:
+            if r[2] > 100:
+                return None
+            pct = int(r[2])
         return (True, pct, r[3] in (0x01, 0x02))
     if proto == "nova5" and len(r) >= 5:
         if r[1] == 0x02:
             return (False, None, False)
-        return (True, min(100, r[3]), r[4] == 0x01)
+        if r[3] > 100:
+            return None
+        return (True, int(r[3]), r[4] == 0x01)
     if proto == "gamebuds" and len(r) >= 7:
         vals = [pct for st, pct in ((r[3], r[5]), (r[4], r[6])) if st == 0x03 and pct <= 100]
         return (True, min(vals), False) if vals else (False, None, False)
     return None
+
+
+def parse_steelseries_gamebuds_sub(reply: list[int] | bytes) -> Optional[SubBattery]:
+    """解析 Arctis GameBuds 左右耳独立电量。"""
+    r = list(reply)
+    if len(r) < 7:
+        return None
+    left = int(r[5]) if (r[3] == 0x03 and r[5] <= 100) else None
+    right = int(r[6]) if (r[4] == 0x03 and r[6] <= 100) else None
+    if left is None and right is None:
+        return None
+    return SubBattery(left_percent=left, right_percent=right, case_percent=None)
 
 
 class SteelSeriesHidProvider(BatteryProvider):
@@ -196,6 +229,12 @@ class SteelSeriesHidProvider(BatteryProvider):
 
     def __init__(self) -> None:
         self._cache: dict[str, DeviceBattery] = {}
+
+    def on_device_change(self) -> None:
+        self._cache.clear()
+
+    def on_power_resume(self) -> None:
+        self._cache.clear()
 
     def _poll_mice(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
         by_pid: dict[int, list[dict]] = {}
@@ -240,28 +279,72 @@ class SteelSeriesHidProvider(BatteryProvider):
 
             dev_id = f"steelseries:{model.key}"
             prev = self._cache.get(dev_id)
-            pct, charging, full = parsed if parsed else (prev.percent if prev else None, False, False)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=model.name,
-                brand="SteelSeries",
-                kind=KIND_MOUSE,
-                connection_mode="有线" if (not model.wireless or charging) else "2.4G",
-                vid=STEELSERIES_VID,
-                pid=pid,
-                connected=True,
-                online=parsed is not None,
-                asleep=parsed is None,
-                percent=pct,
-                charging=charging and not full,
-                full=full,
-                support_status=STATUS_PROTOCOL,
-                status_detail="" if parsed is not None else "休眠中",
-                provider_name=self.name,
-            )
+            now_ts = time.time()
             if parsed is not None:
+                pct, charging, full = parsed
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=model.name,
+                    brand="SteelSeries",
+                    kind=KIND_MOUSE,
+                    connection_mode="有线" if (not model.wireless or charging) else "2.4G",
+                    vid=STEELSERIES_VID,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=charging and not full,
+                    full=full,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="",
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
                 self._cache[dev_id] = item
-            out.append(item)
+                out.append(item)
+            elif prev is not None:
+                out.append(
+                    make_cached_device(
+                        prev,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        status_detail="休眠中",
+                        stale=True,
+                        failure_reason="device_asleep_or_read_failed",
+                        preserve_charging=True,
+                        now_ts=now_ts,
+                    )
+                )
+            else:
+                out.append(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=model.name,
+                        brand="SteelSeries",
+                        kind=KIND_MOUSE,
+                        connection_mode="有线" if not model.wireless else "2.4G",
+                        vid=STEELSERIES_VID,
+                        pid=pid,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        percent=None,
+                        charging=False,
+                        full=False,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="休眠中",
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
+                    )
+                )
         return out
 
     def _poll_headsets(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
@@ -303,6 +386,7 @@ class SteelSeriesHidProvider(BatteryProvider):
         for pid, colls in grouped.items():
             key, name, proto, _iface, _up, kind = HEADSET_MODELS[pid]
             parsed = None
+            sub_bat: Optional[SubBattery] = None
             for d in colls:
                 path = d["path"]
                 in_len, out_len, _ = get_hid_report_lengths(path)
@@ -317,7 +401,7 @@ class SteelSeriesHidProvider(BatteryProvider):
                         if link and link[0] != 0x02:
                             dev.write(pad_report(max(31, out_len), [0x40, 0xAA]))
                             bat = dev.read(rlen, 250)
-                            if bat:
+                            if bat and bat[0] <= 4:
                                 parsed = (True, map_range(bat[0], 0, 4), False)
                         else:
                             parsed = (False, None, False)
@@ -334,6 +418,8 @@ class SteelSeriesHidProvider(BatteryProvider):
                                 continue
                             parsed = parse_steelseries_headset(proto, raw)
                             if parsed is not None:
+                                if proto == "gamebuds":
+                                    sub_bat = parse_steelseries_gamebuds_sub(raw)
                                 break
                     if parsed is not None and parsed[0]:
                         break
@@ -348,27 +434,76 @@ class SteelSeriesHidProvider(BatteryProvider):
             dev_id = f"steelseries:{key}"
             prev = self._cache.get(dev_id)
             online, pct, charging = parsed if parsed else (False, None, False)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=name,
-                brand="SteelSeries",
-                kind=kind,
-                connection_mode="2.4G",
-                vid=STEELSERIES_VID,
-                pid=pid,
-                connected=True,
-                online=online,
-                asleep=not online,
-                percent=pct if online else (prev.percent if prev else None),
-                charging=charging,
-                support_status=STATUS_PROTOCOL,
-                status_detail="" if online else "耳机离线或休眠",
-                provider_name=self.name,
-            )
+            now_ts = time.time()
             if online:
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand="SteelSeries",
+                    kind=kind,
+                    connection_mode="2.4G",
+                    vid=STEELSERIES_VID,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=charging,
+                    sub_batteries=sub_bat,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="",
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
                 self._cache[dev_id] = item
-            out.append(item)
+                out.append(item)
+            elif prev is not None:
+                out.append(
+                    make_cached_device(
+                        prev,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        status_detail="耳机离线或休眠",
+                        stale=True,
+                        failure_reason="device_asleep_or_offline",
+                        preserve_charging=True,
+                        now_ts=now_ts,
+                    )
+                )
+            else:
+                out.append(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand="SteelSeries",
+                        kind=kind,
+                        connection_mode="2.4G",
+                        vid=STEELSERIES_VID,
+                        pid=pid,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        percent=None,
+                        charging=False,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="耳机离线或休眠",
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
+                    )
+                )
         return out
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
-        return self._poll_mice(hid_snapshot) + self._poll_headsets(hid_snapshot)
+        res = self._poll_mice(hid_snapshot) + self._poll_headsets(hid_snapshot)
+        present_ids = {d.device_id for d in res}
+        for old_id in list(self._cache.keys()):
+            if old_id not in present_ids:
+                del self._cache[old_id]
+        return res

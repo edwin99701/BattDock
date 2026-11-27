@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import hid
@@ -24,6 +25,7 @@ from .base import (
     get_hid_report_lengths,
     hid_drain,
     interpolate_voltage,
+    make_cached_device,
     pad_report,
     round_half_up,
 )
@@ -149,6 +151,12 @@ class HyperXHidProvider(BatteryProvider):
     def __init__(self) -> None:
         self._cache: dict[str, DeviceBattery] = {}
 
+    def on_device_change(self) -> None:
+        self._cache.clear()
+
+    def on_power_resume(self) -> None:
+        self._cache.clear()
+
     def _ask(self, dev: hid.device, pkt: list[int], match_fn, read_len: int = 64) -> Optional[list[int]]:
         try:
             dev.write(pkt)
@@ -192,7 +200,7 @@ class HyperXHidProvider(BatteryProvider):
                     return (False, None, False, False)
                 pwr = self._ask(dev, pad_report(62, [0x66, 0x8A]), lambda d: len(d) > 2 and d[0] == 0x66 and d[1] in (0x8A, 0x0C))
                 bat = self._ask(dev, pad_report(62, [0x66, 0x89]), lambda d: len(d) > 4 and d[0] == 0x66 and d[1] in (0x89, 0x0D))
-                pct = min(100, bat[4]) if (bat and (bat[2] | bat[3]) != 0) else None
+                pct = int(bat[4]) if (bat and (bat[2] | bat[3]) != 0 and bat[4] <= 100) else None
                 pcode = pwr[2] if pwr else 0
                 return (True, pct, pcode == 1, pcode == 2)
 
@@ -303,6 +311,11 @@ class HyperXHidProvider(BatteryProvider):
                     continue
             grouped.setdefault((vid, pid), []).append(d)
 
+        present_ids = {f"hyperx:{HYPERX_DEVICES[vp][0]}" for vp in grouped.keys()}
+        for old_id in list(self._cache.keys()):
+            if old_id not in present_ids:
+                del self._cache[old_id]
+
         for (vid, pid), colls in grouped.items():
             key, name, kind, proto, _up, _u = HYPERX_DEVICES[(vid, pid)]
             res = None
@@ -315,25 +328,69 @@ class HyperXHidProvider(BatteryProvider):
             online, pct, charging, full = res if res else (False, None, False, False)
             dev_id = f"hyperx:{key}"
             prev = self._cache.get(dev_id)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=name,
-                brand="HyperX",
-                kind=kind,
-                connection_mode="2.4G",
-                vid=vid,
-                pid=pid,
-                connected=True,
-                online=online,
-                asleep=not online,
-                percent=pct if online else (prev.percent if prev else None),
-                charging=charging and not full,
-                full=full,
-                support_status=STATUS_PROTOCOL,
-                status_detail="" if online else "离线或休眠",
-                provider_name=self.name,
-            )
+            now_ts = time.time()
             if online:
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand="HyperX",
+                    kind=kind,
+                    connection_mode="2.4G",
+                    vid=vid,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=charging and not full,
+                    full=full,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="",
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
                 self._cache[dev_id] = item
-            out.append(item)
+                out.append(item)
+            elif prev is not None:
+                out.append(
+                    make_cached_device(
+                        prev,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        status_detail="离线或休眠",
+                        stale=True,
+                        failure_reason="device_asleep_or_offline",
+                        preserve_charging=True,
+                        now_ts=now_ts,
+                    )
+                )
+            else:
+                out.append(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand="HyperX",
+                        kind=kind,
+                        connection_mode="2.4G",
+                        vid=vid,
+                        pid=pid,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        percent=None,
+                        charging=False,
+                        full=False,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="离线或休眠",
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
+                    )
+                )
         return out

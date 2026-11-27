@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from providers import (
     DeviceManager,
     KIND_EARBUDS,
     KIND_HEADSET,
+    KIND_KEYBOARD,
     KIND_MOUSE,
     STATUS_PROTOCOL,
     STATUS_VERIFIED,
@@ -2089,6 +2092,485 @@ class TestWin10GameFocusAndWhiteScreenRegression(unittest.TestCase):
                     f.Dispose()
                 except Exception:
                     pass
+
+
+class TestV275BatteryAccuracyChargingAndFonts(unittest.TestCase):
+    """v2.7.5 电量真实性、充电快速检测、异常跳变复核、跨品牌缓存与全局字体回归测试。"""
+
+    @staticmethod
+    def _vgn_reply(pct: int, charging: bool = False, mv: int = 3920) -> list[int]:
+        frame = [0x08, 0x04, 0x00, 0x00, 0x00, 0x00, pct & 0xFF, 1 if charging else 0, (mv >> 8) & 0xFF, mv & 0xFF] + [0] * 6
+        frame.append((0x55 - sum(frame)) % 256)
+        return frame
+
+    def test_vgn_17b_vs_compx_20b_isolation_and_exact_vid_pid(self) -> None:
+        from unittest.mock import patch
+        from providers.vgn_provider import VgnCompxProvider
+
+        # 20B CompX 键盘 (3554:FA09) 排在 17B VGN 鼠标 (3554:FB3D 有线 + 3554:FB3E 2.4G) 前面
+        snap = [
+            {
+                "vendor_id": 0x3554,
+                "product_id": 0xFA09,
+                "usage_page": 0xFF02,
+                "usage": 0x0002,
+                "interface_number": 1,
+                "path": b"kb-20b-path",
+                "product_string": "AULA F75 2.4G Receiver",
+            },
+            {
+                "vendor_id": 0x3554,
+                "product_id": 0xFB3E,
+                "usage_page": 0xFF02,
+                "usage": 0x0002,
+                "interface_number": 1,
+                "path": b"vgn-24g-path",
+                "product_string": "VGN DragonFly F2 Pro Max",
+            },
+            {
+                "vendor_id": 0x3554,
+                "product_id": 0xFB3D,
+                "usage_page": 0xFF02,
+                "usage": 0x0002,
+                "interface_number": 1,
+                "path": b"vgn-wired-path",
+                "product_string": "VGN DragonFly F2 Pro Max",
+            },
+        ]
+
+        def fake_lengths(path: bytes) -> tuple[int, int, int]:
+            if path == b"kb-20b-path":
+                return (20, 20, 0)
+            return (17, 17, 0)
+
+        prov = VgnCompxProvider()
+        queried_paths: list[bytes] = []
+
+        def fake_query(path: bytes, max_attempts: int = 2):
+            queried_paths.append(path)
+            return self._vgn_reply(80, charging=True, mv=4100), {
+                "ok": True, "duration_ms": 12.0, "timeouts": 0, "retries": 0, "io_error": False, "skipped_backoff": False
+            }
+
+        with patch("vgn_battery._safe_report_lengths", side_effect=fake_lengths), \
+                patch.object(prov._vgn_reader, "_query_once", side_effect=fake_query):
+            devs = prov.poll(snap, force=True)
+
+        # 20B 键盘被严格隔离；优先有线 FB3D 且使用其自身 VID/PID，不取快照首个匹配项
+        self.assertEqual(queried_paths, [b"vgn-wired-path"])
+        self.assertEqual(len(devs), 1)
+        self.assertEqual(devs[0].vid, 0x3554)
+        self.assertEqual(devs[0].pid, 0xFB3D)
+        self.assertEqual(devs[0].device_id, "vgn:3554:fb3d")
+        self.assertEqual(devs[0].percent, 80)
+        self.assertTrue(devs[0].charging)
+        self.assertFalse(devs[0].from_cache)
+        self.assertFalse(devs[0].stale)
+
+    def test_vgn_unplug_clears_cache_and_failures_never_fake_online_or_flip_charging(self) -> None:
+        from unittest.mock import patch
+        from vgn_battery import VgnBatteryReader
+
+        snap_mouse_a = [{
+            "vendor_id": 0x3554, "product_id": 0xFB3E, "usage_page": 0xFF02, "usage": 0x0002,
+            "interface_number": 1, "path": b"mouse-a", "product_string": "VGN DragonFly F2 Pro Max",
+        }]
+        reader = VgnBatteryReader()
+
+        ok_stats = {"ok": True, "duration_ms": 8.0, "timeouts": 0, "retries": 0, "io_error": False, "skipped_backoff": False}
+        fail_stats = {"ok": False, "duration_ms": 15.0, "timeouts": 1, "retries": 1, "io_error": False, "skipped_backoff": False}
+
+        with patch("vgn_battery._safe_report_lengths", return_value=(17, 17, 0)):
+            # 1. 首次成功读取 60% 充电中
+            with patch.object(reader, "_query_once", return_value=(self._vgn_reply(60, charging=True, mv=4050), ok_stats)):
+                r1 = reader.read(hid_snapshot=snap_mouse_a, force=True)
+            self.assertTrue(r1.online)
+            self.assertTrue(r1.charging)
+            self.assertEqual(r1.percent, 60)
+            self.assertFalse(r1.stale)
+            ok_ts = r1.last_success_ts
+            self.assertIsNotNone(ok_ts)
+
+            # 2. 连续 2 次读取失败：绝不伪装在线、不伪造 timestamp、不错误翻转充电状态
+            time.sleep(0.02)
+            with patch.object(reader, "_query_once", return_value=(None, fail_stats)):
+                r_fail1 = reader.read(hid_snapshot=snap_mouse_a, force=True)
+                r_fail2 = reader.read(hid_snapshot=snap_mouse_a, force=True)
+            for rf in (r_fail1, r_fail2):
+                self.assertFalse(rf.online)
+                self.assertFalse(rf.asleep)
+                self.assertTrue(rf.from_cache)
+                self.assertTrue(rf.stale)
+                self.assertTrue(rf.charging)  # 读取失败不能错误把充电态切为 False
+                self.assertEqual(rf.timestamp, ok_ts)
+                self.assertEqual(rf.last_success_ts, ok_ts)
+
+            # 3. 拔出设备：彻底清理 _last_valid 与状态表
+            r_unplug = reader.read(hid_snapshot=[], force=False)
+            self.assertFalse(r_unplug.connected)
+            self.assertIsNone(reader._last_valid)
+            self.assertEqual(len(reader._device_states), 0)
+
+            # 4. 重新插入设备若首轮失败：绝不返回拔出前的旧 60%
+            with patch.object(reader, "_query_once", return_value=(None, fail_stats)):
+                r_replug_fail = reader.read(hid_snapshot=snap_mouse_a, force=True)
+            self.assertIsNone(r_replug_fail.percent)
+            self.assertFalse(r_replug_fail.online)
+            self.assertTrue(r_replug_fail.stale)
+
+    def test_vgn_multi_device_no_crosstalk(self) -> None:
+        from unittest.mock import patch
+        from providers.vgn_provider import VgnCompxProvider
+
+        snap_two = [
+            {
+                "vendor_id": 0x3554, "product_id": 0xFB3E, "usage_page": 0xFF02, "usage": 0x0002,
+                "interface_number": 1, "path": b"f2-path", "product_string": "VGN DragonFly F2 Pro Max",
+            },
+            {
+                "vendor_id": 0x3554, "product_id": 0xF58A, "usage_page": 0xFF02, "usage": 0x0002,
+                "interface_number": 1, "path": b"r1-path", "product_string": "VXE R1 Pro Max",
+            },
+        ]
+        prov = VgnCompxProvider()
+        ok_stats = {"ok": True, "duration_ms": 5.0, "timeouts": 0, "retries": 0, "io_error": False, "skipped_backoff": False}
+
+        def fake_query(path: bytes, max_attempts: int = 2):
+            if path == b"f2-path":
+                return self._vgn_reply(85, charging=False, mv=4020), ok_stats
+            return self._vgn_reply(35, charging=True, mv=3790), ok_stats
+
+        with patch("vgn_battery._safe_report_lengths", return_value=(17, 17, 0)), \
+                patch.object(prov._vgn_reader, "_query_once", side_effect=fake_query):
+            devs = prov.poll(snap_two, force=True)
+
+        by_id = {d.device_id: d for d in devs}
+        self.assertEqual(len(by_id), 2)
+        self.assertEqual(by_id["vgn:3554:fb3e"].percent, 85)
+        self.assertFalse(by_id["vgn:3554:fb3e"].charging)
+        self.assertEqual(by_id["vgn:3554:f58a"].percent, 35)
+        self.assertTrue(by_id["vgn:3554:f58a"].charging)
+
+    def test_vgn_50_to_75_jump_confirmation_and_transient_spike_rejection(self) -> None:
+        from unittest.mock import patch
+        from vgn_battery import VgnBatteryReader
+
+        snap = [{
+            "vendor_id": 0x3554, "product_id": 0xFB3E, "usage_page": 0xFF02, "usage": 0x0002,
+            "interface_number": 1, "path": b"vgn-jump", "product_string": "VGN DragonFly F2 Pro Max",
+        }]
+        ok_stats = {"ok": True, "duration_ms": 6.0, "timeouts": 0, "retries": 0, "io_error": False, "skipped_backoff": False}
+
+        # 场景 A：50% -> 75% 且复核连续返回 75% -> 接受真实 75%，绝不人为压成 50%/55%
+        reader_a = VgnBatteryReader()
+        seq_a = iter([
+            (self._vgn_reply(50, charging=False, mv=3810), ok_stats),
+            (self._vgn_reply(75, charging=True, mv=4010), ok_stats),   # 首次跳变
+            (self._vgn_reply(75, charging=True, mv=4012), ok_stats),   # 复核确认
+        ])
+        with patch("vgn_battery._safe_report_lengths", return_value=(17, 17, 0)), \
+                patch("vgn_battery.time.sleep"), \
+                patch.object(reader_a, "_query_once", side_effect=lambda *a, **kw: next(seq_a)):
+            r1 = reader_a.read(snap, force=True)
+            r2 = reader_a.read(snap, force=True)
+        self.assertEqual(r1.percent, 50)
+        self.assertEqual(r2.percent, 75)
+        self.assertTrue(r2.online)
+        self.assertTrue(r2.charging)
+        self.assertTrue(r2.diagnostic["anomaly_detected"])
+        self.assertEqual(r2.diagnostic["anomaly_resolution"], "confirmed_hardware_reading")
+        self.assertEqual(r2.diagnostic["percentage_delta"], 25)
+        self.assertEqual(r2.diagnostic["charging_transition"], "started_charging")
+        self.assertGreaterEqual(len(r2.diagnostic["confirmation_reads"]), 1)
+
+        # 场景 B：50% -> 单次异常 75% -> 复核回到 50% -> 拒绝异常值覆盖，保持 50%
+        reader_b = VgnBatteryReader()
+        seq_b = iter([
+            (self._vgn_reply(50, charging=False, mv=3810), ok_stats),
+            (self._vgn_reply(75, charging=True, mv=4010), ok_stats),   # 瞬时异常帧
+            (self._vgn_reply(50, charging=True, mv=3820), ok_stats),   # 复核 1 回落
+            (self._vgn_reply(50, charging=True, mv=3820), ok_stats),   # 复核 2 稳定
+        ])
+        with patch("vgn_battery._safe_report_lengths", return_value=(17, 17, 0)), \
+                patch("vgn_battery.time.sleep"), \
+                patch.object(reader_b, "_query_once", side_effect=lambda *a, **kw: next(seq_b)):
+            reader_b.read(snap, force=True)
+            r_spike = reader_b.read(snap, force=True)
+        self.assertEqual(r_spike.percent, 50)
+        self.assertTrue(r_spike.charging)  # 充电状态正常更新且不人为提高电量
+        self.assertTrue(r_spike.diagnostic["anomaly_detected"])
+        self.assertEqual(r_spike.diagnostic["anomaly_resolution"], "rejected_transient_spike")
+
+        # 场景 C：50% 未充 -> 50% 充电中：充电状态变化不人为提高电量
+        reader_c = VgnBatteryReader()
+        seq_c = iter([
+            (self._vgn_reply(50, charging=False, mv=3810), ok_stats),
+            (self._vgn_reply(50, charging=True, mv=3980), ok_stats),
+        ])
+        with patch("vgn_battery._safe_report_lengths", return_value=(17, 17, 0)), \
+                patch.object(reader_c, "_query_once", side_effect=lambda *a, **kw: next(seq_c)):
+            reader_c.read(snap, force=True)
+            r_chg = reader_c.read(snap, force=True)
+        self.assertEqual(r_chg.percent, 50)
+        self.assertTrue(r_chg.charging)
+        self.assertEqual(r_chg.diagnostic["percentage_delta"], 0)
+        self.assertEqual(r_chg.diagnostic["charging_transition"], "started_charging")
+        self.assertFalse(r_chg.diagnostic["anomaly_detected"])
+
+    def test_all_adapters_cache_fallback_never_forges_timestamp_and_clears_on_unplug(self) -> None:
+        from providers.base import make_cached_device
+        from providers.razer_hid import RazerHidProvider
+        from providers.steelseries_hid import SteelSeriesHidProvider
+        from providers.corsair_hid import CorsairHidProvider
+        from providers.hyperx_hid import HyperXHidProvider
+        from providers.extra_brands import ExtraBrandsProvider
+        from providers.standard_hid import StandardHidBatteryProvider
+
+        old_ts = 1700000123.0
+        base_dev = DeviceBattery(
+            device_id="razer:viper-v3-pro", name="Razer Viper V3 Pro", brand="Razer",
+            kind=KIND_MOUSE, vid=0x1532, pid=0x00C1, connected=True, online=True,
+            percent=68, charging=True, timestamp=old_ts, last_success_ts=old_ts,
+        )
+        fb = make_cached_device(base_dev, asleep=True, status_detail="休眠中", now_ts=old_ts + 3600.0)
+        self.assertEqual(fb.timestamp, old_ts)
+        self.assertEqual(fb.last_success_ts, old_ts)
+        self.assertTrue(fb.from_cache)
+        self.assertTrue(fb.stale)
+        self.assertFalse(fb.online)
+        self.assertTrue(fb.charging)  # 保留原充电态不误翻转
+
+        # 各品牌适配器均支持热插拔清理内部缓存
+        for cls in (RazerHidProvider, SteelSeriesHidProvider, CorsairHidProvider, HyperXHidProvider, ExtraBrandsProvider):
+            p = cls()
+            p._cache["dummy"] = base_dev
+            p.on_device_change()
+            self.assertEqual(len(p._cache), 0)
+
+        # StandardHid 120s 节流期内对已拔出设备立即过滤
+        std = StandardHidBatteryProvider()
+        std._cached = [
+            DeviceBattery("stdhid:1234:5678", "Test HID", "Wireless", KIND_MOUSE, vid=0x1234, pid=0x5678, online=True, percent=70, timestamp=old_ts, last_success_ts=old_ts)
+        ]
+        std._last_poll_mono = time.monotonic()
+        self.assertEqual(std.poll(hid_snapshot=[], force=False), [])
+        # 在场设备命中节流时保留原 last_success_ts，不伪造 timestamp
+        in_snap = [{"vendor_id": 0x1234, "product_id": 0x5678, "path": b"std-p"}]
+        throttled = std.poll(hid_snapshot=in_snap, force=False)
+        self.assertEqual(len(throttled), 1)
+        self.assertTrue(throttled[0].from_cache)
+        self.assertEqual(throttled[0].timestamp, old_ts)
+        self.assertEqual(throttled[0].last_success_ts, old_ts)
+
+    def test_protocol_accuracy_razer_logitech_steelseries_sony_bluetooth(self) -> None:
+        from providers.razer_hid import build_razer_request, parse_razer_reply
+        from providers.logitech_hidpp import parse_hidpp_battery
+        from providers.steelseries_hid import parse_steelseries_headset, parse_steelseries_gamebuds_sub
+        from providers.extra_brands import parse_sony_inzone_buds
+        from providers.bluetooth_provider import aggregate_bluetooth_pnp_nodes
+
+        # 1. Razer 拒绝 0x01 BUSY、错 TID 和坏 CRC
+        req = build_razer_request(0x1F, 0x07, 0x80)
+        busy = list(req)
+        busy[1] = 0x01
+        self.assertIsNone(parse_razer_reply(busy, 0x07, 0x80, expected_tid=0x1F, verify_crc=True))
+        bad_tid = list(req)
+        bad_tid[1] = 0x02
+        bad_tid[2] = 0x3F
+        self.assertIsNone(parse_razer_reply(bad_tid, 0x07, 0x80, expected_tid=0x1F, verify_crc=True))
+        bad_crc = list(req)
+        bad_crc[1] = 0x02
+        bad_crc[10] = 200  # 未重算 CRC
+        self.assertIsNone(parse_razer_reply(bad_crc, 0x07, 0x80, expected_tid=0x1F, verify_crc=True))
+        good = list(bad_crc)
+        crc = 0
+        for b in good[3:89]:
+            crc ^= b
+        good[89] = crc
+        self.assertIsNotNone(parse_razer_reply(good, 0x07, 0x80, expected_tid=0x1F, verify_crc=True))
+
+        # 2. Logitech 0x1001 干电池 (1500mV / 3000mV) 绝不误套锂电曲线算成 0%
+        _, pct_1aa, _, _, mv_1aa = parse_hidpp_battery(0x1001, [0x05, 0xDC, 0x00])  # 1500mV
+        self.assertIsNone(pct_1aa)
+        self.assertEqual(mv_1aa, 1500)
+        _, pct_2aa, _, _, mv_2aa = parse_hidpp_battery(0x1001, [0x0B, 0xB8, 0x00])  # 3000mV
+        self.assertIsNone(pct_2aa)
+        self.assertEqual(mv_2aa, 3000)
+
+        # 3. SteelSeries 拒绝越界杂包 (0xFF 不硬截断为 100%) + GameBuds SubBattery
+        self.assertIsNone(parse_steelseries_headset("arctis1", [0x06, 0x12, 0x00, 0xFF]))
+        self.assertIsNone(parse_steelseries_headset("nova5", [0xB0, 0x01, 0x00, 0xFF, 0x00]))
+        self.assertIsNone(parse_steelseries_headset("arctis7p", [0xB0, 0x00, 0x09, 0x00]))
+        sub_gb = parse_steelseries_gamebuds_sub([0xB0, 0, 0, 0x03, 0x03, 65, 80])
+        self.assertIsNotNone(sub_gb)
+        self.assertEqual((sub_gb.left_percent, sub_gb.right_percent), (65, 80))
+
+        # 4. Sony INZONE Buds 单耳离线 (state=0, lvl=0) 返回 None，不误报 0%
+        buds_one_off = [0x02, 20, 0x04, 0xFF, 0, 0, 0x96, 0xC3, 0x10, 0x04, 0xA0, 0x02, 0x00, 0, 0, 1, 78, 1, 90, 0]
+        ok, main_pct, _, sub = parse_sony_inzone_buds(buds_one_off)
+        self.assertTrue(ok)
+        self.assertEqual(main_pct, 78)
+        self.assertIsNone(sub.left_percent)
+        self.assertEqual(sub.right_percent, 78)
+
+        # 5. 蓝牙根节点明确断开 (root_connected=False) 不被滞后子节点误判在线
+        bt_nodes = [
+            {"instance_id": "BTHENUM\\DEV_AABBCCDDEEFF\\8&1", "name": "iKF King", "battery": None, "is_connected": False},
+            {"instance_id": "BTHENUM\\{0000111E-0000-1000-8000-00805F9B34FB}\\8&1&AABBCCDDEEFF_C00000000", "name": "Hands-Free", "battery": 70, "is_connected": True},
+        ]
+        self.assertEqual(aggregate_bluetooth_pnp_nodes(bt_nodes), [])
+
+    def test_bluetooth_mac_redacted_in_diagnostics_export(self) -> None:
+        bt_dev = DeviceBattery(
+            device_id="bt:aabbccddeeff",
+            name="iKF King",
+            brand="iKF",
+            kind=KIND_HEADSET,
+            connection_mode="蓝牙",
+            connected=True,
+            online=True,
+            percent=80,
+        )
+        air_dev = DeviceBattery(
+            device_id="airpods:112233445566",
+            name="AirPods Pro (第 2 代)",
+            brand="Apple",
+            kind=KIND_EARBUDS,
+            connection_mode="蓝牙 BLE",
+            connected=True,
+            online=True,
+            percent=90,
+        )
+        mgr = DeviceManager(providers=[_DummyProvider([bt_dev, air_dev])])
+        diag = mgr.export_diagnostics(hid_snapshot=[])
+        serialized = json.dumps(diag, ensure_ascii=False)
+        self.assertNotIn("aabbccddeeff", serialized.lower())
+        self.assertNotIn("112233445566", serialized.lower())
+        self.assertIn("bt:anon_", serialized)
+        self.assertIn("airpods:anon_", serialized)
+
+    def test_stale_and_cached_data_blocked_from_alerts_and_live_ui(self) -> None:
+        from app_config import AppConfig
+        from mouse_battery_app import MouseBatteryApp, evaluate_tiered_alerts
+
+        cfg = AppConfig()
+        stale_dev = DeviceBattery(
+            device_id="vgn:3554:fb3e", name="VGN Dragonfly F2 Pro Max", brand="VGN",
+            kind=KIND_MOUSE, connected=True, online=False, asleep=False,
+            percent=8, charging=False, from_cache=True, stale=True, last_success_ts=1700000000.0,
+        )
+        cached_online = DeviceBattery(
+            device_id="kb-compx:3554:fa09", name="AULA F75", brand="AULA",
+            kind=KIND_KEYBOARD, connected=True, online=True, asleep=False,
+            percent=10, charging=False, from_cache=True, stale=False, last_success_ts=1700000000.0,
+        )
+        # 过期数据与缓存数据绝不触发低电量提醒
+        self.assertEqual(evaluate_tiered_alerts([stale_dev, cached_online], cfg, {}), [])
+
+        # 主窗口序列化：过期数据 live_percent 必须为 None，alert_level 为 offline
+        app = MouseBatteryApp(start_hidden=True)
+        app.devices = [stale_dev]
+        serialized = app._sorted_devices()
+        self.assertEqual(len(serialized), 1)
+        self.assertIsNone(serialized[0]["live_percent"])
+        self.assertEqual(serialized[0]["alert_level"], "offline")
+
+    def test_charging_fast_response_tray_sync_pending_merge_and_monotonic_guard(self) -> None:
+        from unittest.mock import MagicMock
+        from mouse_battery_app import MouseBatteryApp
+
+        app = MouseBatteryApp(start_hidden=True)
+        app.cfg.poll_interval_sec = 25
+        tray_mock = MagicMock()
+        tray_mock.set_icon.return_value = True
+        app._tray = tray_mock
+        app._sync_floating_widget = MagicMock()
+        app._push_state_to_ui = MagicMock()
+        app._check_low_batteries = MagicMock()
+
+        # 1. 无线放电 50% -> 插入充电线 50% 充电中 -> 立即刷新托盘并进入 10s 充电自适应周期
+        d_dis = DeviceBattery("vgn:3554:fb3e", "VGN Dragonfly F2 Pro Max", "VGN", KIND_MOUSE, connected=True, online=True, percent=50, charging=False)
+        d_chg = DeviceBattery("vgn:3554:fb3e", "VGN Dragonfly F2 Pro Max", "VGN", KIND_MOUSE, connected=True, online=True, percent=50, charging=True)
+        app.manager = DeviceManager(providers=[_DummyProvider([d_dis])])
+        self.assertTrue(app._poll_once(reason="startup", force_rescan=True, force_query=True))
+        self.assertEqual(app._compute_next_poll_interval(), 25)  # 常规放电保持 25s，绝不降成 1s
+        self.assertEqual(tray_mock.set_icon.call_count, 1)
+
+        app.manager.providers = [_DummyProvider([d_chg])]
+        self.assertTrue(app._poll_once(reason="device_change", force_rescan=True, force_query=True))
+        self.assertEqual(tray_mock.set_icon.call_count, 2)  # 充电切换立即更新托盘图标
+        self.assertEqual(app._compute_next_poll_interval(), 10)  # 充电期间自适应 10s
+        diag = app.manager.get_poll_diagnostics()
+        self.assertTrue(diag["last_tray_sync"]["charging"])
+        self.assertEqual(diag["battery_transitions"][-1]["charging_transition"], "started_charging")
+
+        # 2. 并发高优先级请求在锁忙时合并为单一 _pending_poll，绝不丢弃也不产生请求堆积
+        app._poll_lock.acquire()
+        try:
+            self.assertFalse(app._poll_once(reason="device_change", force_rescan=True, force_query=True))
+            self.assertFalse(app._poll_once(reason="wakeup", force_rescan=False, force_query=True))
+            self.assertIsNotNone(app._pending_poll)
+            self.assertEqual(app._pending_poll, ("device_change", True, True))
+        finally:
+            app._pending_poll = None
+            app._poll_lock.release()
+
+        # 3. 单调 poll_seq 防旧结果覆盖新结果
+        app._last_applied_poll_seq = 999
+        app.manager.providers = [_DummyProvider([d_dis])]
+        self.assertFalse(app._poll_once(reason="scheduled"))
+        self.assertTrue(app.devices[0].charging)  # 旧序号不得覆盖已应用的充电状态
+
+    def test_long_run_consistency_and_global_font_standards(self) -> None:
+        from unittest.mock import patch
+        from floating_widget import resolve_winforms_font_family
+        from vgn_battery import VgnBatteryReader
+
+        # 1. 连续 60 轮交替（正常/丢包/休眠/唤醒/拔插/充电）数据一致性无崩溃无伪造 timestamp
+        snap = [{
+            "vendor_id": 0x3554, "product_id": 0xFB3E, "usage_page": 0xFF02, "usage": 0x0002,
+            "interface_number": 1, "path": b"vgn-long", "product_string": "VGN DragonFly F2 Pro Max",
+        }]
+        ok_stats = {"ok": True, "duration_ms": 4.0, "timeouts": 0, "retries": 0, "io_error": False, "skipped_backoff": False}
+        fail_stats = {"ok": False, "duration_ms": 8.0, "timeouts": 1, "retries": 0, "io_error": False, "skipped_backoff": False}
+        reader = VgnBatteryReader()
+
+        with patch("vgn_battery._safe_report_lengths", return_value=(17, 17, 0)), patch("vgn_battery.time.sleep"):
+            last_ok_ts = None
+            for i in range(60):
+                if i % 15 == 10:
+                    # 模拟拔出
+                    r = reader.read([], force=False)
+                    self.assertFalse(r.connected)
+                    last_ok_ts = None
+                elif i % 5 in (2, 3):
+                    # 模拟偶发失败
+                    with patch.object(reader, "_query_once", return_value=(None, fail_stats)):
+                        r = reader.read(snap, force=True)
+                    self.assertFalse(r.online)
+                    if last_ok_ts is not None:
+                        self.assertEqual(r.timestamp, last_ok_ts)
+                else:
+                    pct = 70 if (i % 15 < 7) else 75
+                    chg = i % 15 >= 7
+                    with patch.object(reader, "_query_once", return_value=(self._vgn_reply(pct, charging=chg), ok_stats)):
+                        r = reader.read(snap, force=True)
+                    self.assertTrue(r.online)
+                    self.assertFalse(r.stale)
+                    last_ok_ts = r.last_success_ts
+
+        # 2. 全局字体栈与 tabular-nums 规范校验
+        root = Path(__file__).resolve().parent.parent
+        common_css = (root / "ui" / "common.css").read_text(encoding="utf-8")
+        index_html = (root / "ui" / "index.html").read_text(encoding="utf-8")
+        settings_html = (root / "ui" / "settings.html").read_text(encoding="utf-8")
+
+        self.assertIn('Inter, "Segoe UI Variable", "Noto Sans SC", "Microsoft YaHei UI"', common_css)
+        self.assertIn('"Cascadia Code", "JetBrains Mono", Consolas, monospace', common_css)
+        self.assertIn("tabular-nums", index_html)
+        self.assertIn("var(--font-mono)", settings_html)
+        self.assertTrue(len(resolve_winforms_font_family(numeric=False)) > 0)
+        self.assertTrue(len(resolve_winforms_font_family(numeric=True)) > 0)
 
 
 if __name__ == "__main__":

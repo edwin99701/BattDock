@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md — BattDock 权威技术架构文档
 
-> 本文档以当前源码（**BattDock v2.7.4**，`master` 分支）为唯一事实来源，系统记录项目技术栈、模块职责、核心流程、兼容性方案及命名映射关系。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
+> 本文档以当前源码（**BattDock v2.7.5**，`master` 分支）为唯一事实来源，系统记录项目技术栈、模块职责、核心流程、兼容性方案及命名映射关系。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
 
 ---
 
@@ -45,7 +45,7 @@
 
 ```text
 BattDock/
-├── brand.py                     # 品牌常量与版本号单一真值来源（BattDock / 2.7.4 / EXE / AUMID / 互斥量 / 仓库地址）
+├── brand.py                     # 品牌常量与版本号单一真值来源（BattDock / 2.7.5 / EXE / AUMID / 互斥量 / 仓库地址）
 ├── mouse_battery_app.py         # 主入口与核心控制器（主窗口/设置窗口生命周期、提醒弹窗、状态机、JS 桥、后台服务）
 ├── tray_icon.py                 # 自研独立原生 Win32 NotifyIcon 动态电池托盘控制器
 ├── floating_widget.py           # 原生 WinForms 桌面悬浮窗、动态电池绘图、Win10/11 圆角与细边工具、提示音
@@ -83,7 +83,7 @@ BattDock/
 │   ├── BattDock.iss             # Inno Setup 6 安装脚本（UTF-8 BOM，管理员安装 + users-modify + runasoriginaluser）
 │   └── ChineseSimplified.isl    # 简体中文安装向导语言包（UTF-8 BOM，Microsoft YaHei UI）
 ├── tests/
-│   └── test_providers.py        # 47 项自动化单元测试与核心生命周期/游戏焦点回归门禁
+│   └── test_providers.py        # 57 项自动化单元测试与核心生命周期/电量准确性/充电响应/游戏焦点回归门禁
 ├── docs/screenshots/            # README 展示截图（v2.4.0 实拍与演示截图）
 ├── .github/ISSUE_TEMPLATE/      # Bug 反馈与设备适配申请模板
 ├── build_release.ps1            # 一键单测 → PyInstaller → Inno Setup → ZIP 打包 → SHA256SUMS.txt
@@ -218,11 +218,11 @@ BattDock/
 
 ## 13. GitHub 仓库及发布流程
 
-- **公开仓库**：`https://github.com/edwin99701/BattDock`（主分支 `master`，当前最新正式版 `v2.7.4`；原历史仓库名 `wireless-peripheral-battery-monitor`）。
-- **旧仓库迁移与重定向兼容说明**：仓库已正式更名为 `BattDock`，经 Python 3.12 实网测试验证，旧版客户端（`v2.2.0–v2.7.3`）使用的旧 GitHub API、`releases/latest/download/update-summary.json`、`SHA256SUMS.txt` 及安装包/便携版直连与全部 4 个国内加速节点均通过 GitHub 301 重定向正常可用；未来版本统一使用新仓库地址（切勿在同账号下重建同名旧仓库 `wireless-peripheral-battery-monitor`，以免覆盖重定向）。
+- **公开仓库**：`https://github.com/edwin99701/BattDock`（主分支 `master`，当前最新正式版 `v2.7.5`；原历史仓库名 `wireless-peripheral-battery-monitor`）。
+- **旧仓库迁移与重定向兼容说明**：仓库已正式更名为 `BattDock`，经 Python 3.12 实网测试验证，旧版客户端（`v2.2.0–v2.7.4`）使用的旧 GitHub API、`releases/latest/download/update-summary.json`、`SHA256SUMS.txt` 及安装包/便携版直连与全部 4 个国内加速节点均通过 GitHub 301 重定向正常可用；未来版本统一使用新仓库地址（切勿在同账号下重建同名旧仓库 `wireless-peripheral-battery-monitor`，以免覆盖重定向）。
 - **标准构建与发布流程**：
   1. 版本递增：同步更新 `brand.py`、`version_info.txt`、`installer/BattDock.iss` 默认版本、`CHANGELOG.md`、`PROGRESS.md`、`README.md`、`README_EN.md`。
-  2. 一键构建：运行 `powershell -ExecutionPolicy Bypass -File .\build_release.ps1`，自动跑通全部 47 项单元测试，生成 `release\assets_vX.Y.Z\` 下的 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip` 与 `SHA256SUMS.txt`。
+  2. 一键构建：运行 `powershell -ExecutionPolicy Bypass -File .\build_release.ps1`，自动跑通全部 57 项单元测试，生成 `release\assets_vX.Y.Z\` 下的 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip` 与 `SHA256SUMS.txt`。
   3. 准备 `update-summary.json`（3–5 条简明中文摘要）与纯文本 Release 正文（无 `•`/Markdown 噪音/HTML 注释）。
   4. 按 `RELEASE_CHECKLIST.md` 完成隐私扫描与回归核验，提交并打附注标签 `git tag -a vX.Y.Z -m "BattDock vX.Y.Z"`，推送 `master` 与 tag。
   5. 执行 `gh release create vX.Y.Z --draft ...` → 核验 5 个资产均已上传 → `gh release edit vX.Y.Z --draft=false --latest` → 线上验证 `updater.check_for_update()` 与资产直链 HTTP 200。

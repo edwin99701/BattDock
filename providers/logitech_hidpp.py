@@ -28,6 +28,7 @@ from .base import (
     get_hid_report_lengths,
     hid_drain,
     interpolate_voltage,
+    make_cached_device,
     pad_report,
 )
 
@@ -95,8 +96,9 @@ def parse_hidpp_battery(feature_id: int, params: list[int] | bytes) -> Optional[
         flags = params[2]
         powered = bool(flags & 0x80)
         full = powered and bool(flags & 0x01)
-        pct = interpolate_voltage(mv, LI_ION_CURVE) if mv > 2000 else None
-        return (True, pct, powered and not full, full, mv if mv > 2000 else None)
+        # 仅在明确属于单节锂电电压区间 (>= 3300mV) 时套用锂电曲线；干电池 (1.5V/3.0V) 绝不套锂电曲线误算为 0%
+        pct = interpolate_voltage(mv, LI_ION_CURVE) if mv >= 3300 else None
+        return (True, pct, powered and not full, full, mv if mv >= 800 else None)
 
     if feature_id == 0x1F20:  # ADC measurement (headsets)
         mv = (params[0] << 8) | params[1]
@@ -140,6 +142,9 @@ class _SlotCache:
     feature_id: int = 0
     last_percent: Optional[int] = None
     last_voltage: Optional[int] = None
+    last_charging: bool = False
+    last_full: bool = False
+    last_success_ts: Optional[float] = None
 
 
 class _HidppLink:
@@ -230,7 +235,7 @@ class _HidppLink:
             r = self._read_reply(dev_idx, 200)
             if not r:
                 break
-            if r[0] == 0x11 and r[2] == feat_idx and (r[3] & 0x0F) == SW_ID:
+            if r[0] == 0x11 and r[2] == feat_idx and (r[3] & 0x0F) == SW_ID and ((r[3] >> 4) & 0x0F) == (func_id & 0x0F):
                 return r[4:]
             if r[2] == 0xFF and len(r) >= 6:  # HID++ 2.0 error
                 return None
@@ -248,6 +253,14 @@ class LogitechHidppProvider(BatteryProvider):
     def __init__(self) -> None:
         self._slots: dict[str, _SlotCache] = {}
         self._headset_cache: dict[str, DeviceBattery] = {}
+
+    def on_device_change(self) -> None:
+        self._slots.clear()
+        self._headset_cache.clear()
+
+    def on_power_resume(self) -> None:
+        self._slots.clear()
+        self._headset_cache.clear()
 
     def _describe_slot(self, link: _HidppLink, dev_idx: int, pid: int) -> Optional[_SlotCache]:
         slot = _SlotCache(
@@ -304,6 +317,12 @@ class LogitechHidppProvider(BatteryProvider):
                 continue
             grouped.setdefault(pid, []).append(d)
 
+        # 清理已拔出的 Logitech G 耳机缓存
+        present_hs_ids = {f"logitech:headset:{pid:04x}" for pid in grouped.keys()}
+        for old_id in list(self._headset_cache.keys()):
+            if old_id not in present_hs_ids:
+                del self._headset_cache[old_id]
+
         for pid, colls in grouped.items():
             name, _up, _u, fidx, cmd, curve = LOGITECH_HEADSETS[pid]
             parsed = None
@@ -339,27 +358,71 @@ class LogitechHidppProvider(BatteryProvider):
             dev_id = f"logitech:headset:{pid:04x}"
             prev = self._headset_cache.get(dev_id)
             online, pct, charging, mv = parsed if parsed else (False, None, False, None)
-            item = DeviceBattery(
-                device_id=dev_id,
-                name=name,
-                brand="Logitech",
-                kind=KIND_HEADSET,
-                connection_mode="2.4G",
-                vid=LOGITECH_VID,
-                pid=pid,
-                connected=True,
-                online=online,
-                asleep=not online,
-                percent=pct if online else (prev.percent if prev else None),
-                charging=charging,
-                voltage_mv=mv if online else (prev.voltage_mv if prev else None),
-                support_status=STATUS_PROTOCOL,
-                status_detail="" if online else "耳机离线或休眠",
-                provider_name=self.name,
-            )
+            now_ts = time.time()
             if online:
+                item = DeviceBattery(
+                    device_id=dev_id,
+                    name=name,
+                    brand="Logitech",
+                    kind=KIND_HEADSET,
+                    connection_mode="2.4G",
+                    vid=LOGITECH_VID,
+                    pid=pid,
+                    connected=True,
+                    online=True,
+                    asleep=False,
+                    percent=pct,
+                    charging=charging,
+                    voltage_mv=mv,
+                    support_status=STATUS_PROTOCOL,
+                    status_detail="",
+                    provider_name=self.name,
+                    timestamp=now_ts,
+                    last_success_ts=now_ts,
+                    from_cache=False,
+                    stale=False,
+                )
                 self._headset_cache[dev_id] = item
-            out.append(item)
+                out.append(item)
+            elif prev is not None:
+                out.append(
+                    make_cached_device(
+                        prev,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        status_detail="耳机离线或休眠",
+                        stale=True,
+                        failure_reason="device_asleep_or_offline",
+                        preserve_charging=True,
+                        now_ts=now_ts,
+                    )
+                )
+            else:
+                out.append(
+                    DeviceBattery(
+                        device_id=dev_id,
+                        name=name,
+                        brand="Logitech",
+                        kind=KIND_HEADSET,
+                        connection_mode="2.4G",
+                        vid=LOGITECH_VID,
+                        pid=pid,
+                        connected=True,
+                        online=False,
+                        asleep=True,
+                        percent=None,
+                        charging=False,
+                        voltage_mv=None,
+                        support_status=STATUS_PROTOCOL,
+                        status_detail="耳机离线或休眠",
+                        provider_name=self.name,
+                        timestamp=now_ts,
+                        last_success_ts=None,
+                        from_cache=False,
+                        stale=True,
+                    )
+                )
         return out
 
     def poll(self, hid_snapshot: list[dict]) -> list[DeviceBattery]:
@@ -381,10 +444,25 @@ class LogitechHidppProvider(BatteryProvider):
                 continue
             channels.setdefault(_channel_key(path), []).append(d)
 
+        # 清理已拔出通道的历史槽位缓存，防止重插/更换接收器串线
+        present_ch_keys = set(channels.keys())
+        for old_sk in list(self._slots.keys()):
+            if old_sk.rsplit("#", 1)[0] not in present_ch_keys:
+                del self._slots[old_sk]
+
+        # 统计同 PID 接收器数量，若插入多个同 PID 接收器则附加通道短序号防 device_id 冲突
+        pid_channel_counts: dict[int, int] = {}
+        for _ck, _cols in channels.items():
+            p0 = int(_cols[0].get("product_id", 0))
+            pid_channel_counts[p0] = pid_channel_counts.get(p0, 0) + 1
+        pid_seen_idx: dict[int, int] = {}
+
         for ch_key, colls in channels.items():
             short_path: Optional[bytes] = None
             long_path: Optional[bytes] = None
             pid = colls[0].get("product_id", 0)
+            ch_ord = pid_seen_idx.get(pid, 0)
+            pid_seen_idx[pid] = ch_ord + 1
             for c in colls:
                 if c.get("usage_page", 0) < 0xFF00:
                     continue
@@ -405,15 +483,21 @@ class LogitechHidppProvider(BatteryProvider):
                 link = _HidppLink(short_path, long_path)
                 for dev_idx in indices:
                     slot_key = f"{ch_key}#{dev_idx}"
+                    dev_id = (
+                        f"logitech:{pid:04x}:{dev_idx}"
+                        if pid_channel_counts.get(pid, 1) <= 1 or ch_ord == 0
+                        else f"logitech:{pid:04x}:{dev_idx}:r{ch_ord}"
+                    )
                     ping_res = link.ping(dev_idx)
                     if ping_res == "empty":
                         continue
                     if ping_res == "offline":
                         cached = self._slots.get(slot_key)
                         if cached and cached.feature_index:
+                            last_ok = cached.last_success_ts
                             results.append(
                                 DeviceBattery(
-                                    device_id=f"logitech:{pid:04x}:{dev_idx}",
+                                    device_id=dev_id,
                                     name=cached.name,
                                     brand="Logitech",
                                     kind=cached.kind,
@@ -424,10 +508,16 @@ class LogitechHidppProvider(BatteryProvider):
                                     online=False,
                                     asleep=True,
                                     percent=cached.last_percent,
+                                    charging=cached.last_charging,
+                                    full=cached.last_full,
                                     voltage_mv=cached.last_voltage,
                                     support_status=STATUS_PROTOCOL,
                                     status_detail="休眠中",
                                     provider_name=self.name,
+                                    timestamp=last_ok if last_ok is not None else time.time(),
+                                    last_success_ts=last_ok,
+                                    from_cache=last_ok is not None,
+                                    stale=True,
                                 )
                             )
                         continue
@@ -445,16 +535,48 @@ class LogitechHidppProvider(BatteryProvider):
                     func_id = 1 if slot.feature_id == 0x1004 else 0
                     params = link.call_20(dev_idx, slot.feature_index, func_id)
                     parsed = parse_hidpp_battery(slot.feature_id, params) if params else None
+                    now_ts = time.time()
                     if parsed is None:
+                        if slot.last_success_ts is not None:
+                            results.append(
+                                DeviceBattery(
+                                    device_id=dev_id,
+                                    name=slot.name,
+                                    brand="Logitech",
+                                    kind=slot.kind,
+                                    connection_mode=conn_mode,
+                                    vid=LOGITECH_VID,
+                                    pid=pid,
+                                    connected=True,
+                                    online=False,
+                                    asleep=False,
+                                    percent=slot.last_percent,
+                                    charging=slot.last_charging,
+                                    full=slot.last_full,
+                                    voltage_mv=slot.last_voltage,
+                                    support_status=STATUS_PROTOCOL,
+                                    status_detail="读取失败",
+                                    provider_name=self.name,
+                                    timestamp=slot.last_success_ts,
+                                    last_success_ts=slot.last_success_ts,
+                                    from_cache=True,
+                                    stale=True,
+                                )
+                            )
                         continue
                     online, pct, charging, full, mv = parsed
-                    if pct is not None:
-                        slot.last_percent = pct
-                    if mv is not None:
-                        slot.last_voltage = mv
+                    if online:
+                        if pct is not None:
+                            slot.last_percent = pct
+                        if mv is not None:
+                            slot.last_voltage = mv
+                        slot.last_charging = charging
+                        slot.last_full = full
+                        slot.last_success_ts = now_ts
+                    sample_ts = now_ts if online else (slot.last_success_ts or now_ts)
                     results.append(
                         DeviceBattery(
-                            device_id=f"logitech:{pid:04x}:{dev_idx}",
+                            device_id=dev_id,
                             name=slot.name,
                             brand="Logitech",
                             kind=slot.kind,
@@ -465,12 +587,16 @@ class LogitechHidppProvider(BatteryProvider):
                             online=online,
                             asleep=not online,
                             percent=pct if online else slot.last_percent,
-                            charging=charging,
-                            full=full,
-                            voltage_mv=mv,
+                            charging=charging if online else slot.last_charging,
+                            full=full if online else slot.last_full,
+                            voltage_mv=mv if online else slot.last_voltage,
                             support_status=STATUS_PROTOCOL,
                             status_detail="" if online else "休眠中",
                             provider_name=self.name,
+                            timestamp=sample_ts,
+                            last_success_ts=slot.last_success_ts,
+                            from_cache=not online and slot.last_success_ts is not None,
+                            stale=not online,
                         )
                     )
             except OSError:

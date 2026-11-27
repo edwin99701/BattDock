@@ -2,6 +2,32 @@
 
 > 本文件完整保留 BattDock（含早期历史版本）的真实发布记录，不篡改历史事实。后续新版本统一按「新增功能 / 功能优化 / Bug 修复 / 兼容性改进 / 已知问题」分类记录。
 
+## BattDock v2.7.5（2026-11-28）— 电量读取准确性专项修复、充电状态快速响应、异常跳变复核与全局字体优化
+
+### Bug 修复（电量真实性与跨品牌准确性）
+- **统一全适配器电量缓存语义与真实采样时间戳（`providers/base.py`、`providers/manager.py` 及全部 11 个适配器）**：
+  - 为 `DeviceBattery` 新增 `last_success_ts`、`from_cache`、`stale`、`diagnostic` 字段；全部适配器在读取失败或设备休眠回退缓存时，严格保留最近一次真实成功采样时间，绝不伪造 `timestamp`，绝不错误翻转充电状态，并在拔出与热插拔事件中及时清理旧缓存防跨设备污染；
+  - 过期/缓存数据不再冒充实时电量：主窗口、桌面悬浮窗与系统托盘图标统一展示 `—`（并在副标题/悬停提示中弱化标注「上次 XX% (HH:MM)」供参考），低电量提醒状态机严格屏蔽 `stale` 与 `from_cache` 数据，杜绝过期缓存误报。
+- **VGN / VXE / ATK 专项隔离与多设备加固（`vgn_battery.py`、`providers/vgn_provider.py`）**：
+  - 严格校验 17 字节鼠标报告并排除 20 字节 CompX 键盘 PID（`3554:FA09`、`3554:FB40`）；直接使用实际选中设备自身的 VID/PID，杜绝有线/接收器共存或跨设备串线；
+  - 修复读取失败第 1–2 次仍伪装 `online=True` 以及拔出未清空 `_last_valid` 的缺陷；支持多只 CompX 鼠标独立隔离读取，继续原样保留 VGN `Byte[6]` 原始百分比直传（不插值、不擅自改为电压换算）。
+- **多品牌已确认协议漏洞与隐私修复**：
+  - **Razer**：补齐 91B 回包 XOR CRC 与 Transaction ID 校验，拒绝 `0x01 (STATUS_BUSY)` 脏帧并自动重试；BlackShark V3 响应手动刷新与热插拔；
+  - **Logitech**：修复 `0x1001` 干电池（1.5V/3.0V）误套锂电曲线算成 `0%`、多同 PID 接收器 `device_id` 冲突及 `call_20` 未校验 `func_id`；
+  - **SteelSeries / Corsair / HyperX / Sony / 蓝牙**：拒绝越界杂包硬截断为 `100%`，补全 Arctis GameBuds 左右耳独立电量，修复 Sony INZONE Buds 单耳离线误报 `0%` 与 PULSE 3D 唤醒旧在线态残留，修复无线键盘充电态 180s 僵死及 `standard_hid` 拔出滞留，修复蓝牙根节点断开被子节点覆盖的误判，并在 `export_diagnostics()` 中对蓝牙 MAC 单向哈希脱敏。
+
+### 功能优化（充电状态响应、异常跳变复核与全局字体）
+- **充电状态即时响应与零卡顿调度（`mouse_battery_app.py`、`providers/manager.py`）**：
+  - 优化 `WM_DEVICECHANGE`（`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE` 0.35s 快速响应且防连续事件饿死）并新增 `PBT_APMPOWERSTATUSCHANGE` 监听；热插拔/唤醒/充电检查遇轮询锁忙改为合并挂起（`_pending_poll`）绝不静默丢弃、无线程堆积；
+  - 新增单调 `poll_seq` 防并发旧结果覆盖新结果，常规放电保持 25s 零打扰鼠标流畅度，充电期间自动切换至 10s 自适应更新，充电变化后立即同步系统托盘、悬浮窗与主窗口，并在诊断报告中记录 `charging_transition` 与 `last_tray_sync`。
+- **电量异常大幅跳变复核与脱敏诊断（`vgn_battery.py`、`providers/manager.py`）**：
+  - 当单次电量变化异常（如 50% 骤跳至 75%）时，自动记录原始报文、前后电量/电压/充电标志与接口信息，并执行额外有效性复核读取：连续确认稳定则如实接受硬件新值（绝不人为平滑/限制），单次瞬态异常帧则自动拦截不覆盖最后确认的有效电量。
+- **全局现代桌面字体优化（`ui/common.css`、`ui/index.html`、`ui/settings.html`、`floating_widget.py`、`mouse_battery_app.py`）**：
+  - 统一普通界面字体栈（`Inter, "Segoe UI Variable", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif`）与技术等宽字体栈（`"Cascadia Code", "JetBrains Mono", Consolas, monospace`），强化设备名 Semibold 层级、全局数字 `tabular-nums` 等宽对齐，并在原生 WinForms 悬浮窗与低电量提醒中同步匹配系统已安装现代字体（零外部下载，Win10/11 中文清晰无回退异常）。
+- **新增 10 组（覆盖 24 项场景）准确性、充电响应与跳变复核自动化测试**（全量 `57 / 57` 项单元测试全部通过）。
+
+---
+
 ## BattDock v2.7.4（2026-11-27）— 游戏场景防白屏与防抢焦点加固、低电量提醒独立置顶优化及仓库地址统一
 
 ### Bug 修复
