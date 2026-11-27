@@ -34,9 +34,10 @@ LEGACY_MUTEX_NAME = "Local\\VGNMouseBatteryMonitor_SingleInstance"
 SHOW_EVENT_NAME = "Local\\BattDock_ShowEvent"
 LEGACY_SHOW_EVENT_NAME = "Local\\VGNMouseBatteryMonitor_ShowEvent"
 
-# GitHub 公开仓库与 Releases 更新源（保持原仓库地址，确保 v2.2.0 等旧版本在线更新 100% 兼容）
+# GitHub 公开仓库与 Releases 更新源（已由原仓库 wireless-peripheral-battery-monitor 正式更名为 BattDock；
+# GitHub 自动保留旧地址 301 重定向，且经实测 v2.2.0–v2.7.3 直连与 4 个国内加速节点均兼容；切勿重建同名旧仓库）
 GITHUB_OWNER = "edwin99701"
-GITHUB_REPO = "wireless-peripheral-battery-monitor"
+GITHUB_REPO = "BattDock"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
 RELEASES_PAGE_URL = f"{GITHUB_REPO_URL}/releases"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"

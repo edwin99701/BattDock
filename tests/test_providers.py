@@ -451,7 +451,7 @@ class TestUpdater(unittest.TestCase):
             "tag_name": "v2.4.0",
             "draft": False,
             "prerelease": False,
-            "html_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/tag/v2.4.0",
+            "html_url": "https://github.com/edwin99701/BattDock/releases/tag/v2.4.0",
             "body": "## 更新内容\n- 新增设备支持",
             "published_at": "2026-11-26T04:00:00Z",
             "assets": [
@@ -1205,7 +1205,7 @@ class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
         self.assertEqual(updater.normalize_mirror_prefix("http://insecure.example/"), "")
         self.assertEqual(updater.normalize_mirror_prefix("not-a-url"), "")
 
-        raw_url = "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.6.0/BattDock-v2.6.0-Windows-x64-Portable.zip"
+        raw_url = "https://github.com/edwin99701/BattDock/releases/download/v2.6.0/BattDock-v2.6.0-Windows-x64-Portable.zip"
 
         # 2. 四种线路策略生成的候选列表顺序与兜底
         auto_list = updater.build_candidate_urls(raw_url, "auto")
@@ -1614,11 +1614,11 @@ class TestV260WirelessHeadsetsAndKeyboards(unittest.TestCase):
                     "tag_name": "v2.7.2",
                     "draft": False,
                     "prerelease": False,
-                    "html_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/tag/v2.7.2",
+                    "html_url": "https://github.com/edwin99701/BattDock/releases/tag/v2.7.2",
                     "body": "• 静默回退测试",
                     "assets": [{
                         "name": "BattDock-v2.7.2-Windows-x64-Portable.zip",
-                        "browser_download_url": "https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.2/BattDock-v2.7.2-Windows-x64-Portable.zip",
+                        "browser_download_url": "https://github.com/edwin99701/BattDock/releases/download/v2.7.2/BattDock-v2.7.2-Windows-x64-Portable.zip",
                         "size": 123456,
                     }],
                 }).encode("utf-8")

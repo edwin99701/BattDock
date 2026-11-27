@@ -6,16 +6,16 @@
 
 **轻量化 Windows 无线外设电量管理工具**
 
-[![Release](https://img.shields.io/github/v/release/edwin99701/wireless-peripheral-battery-monitor?label=Release&style=flat-square&color=111827)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest)
-[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=flat-square)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest)
-[![License](https://img.shields.io/github/license/edwin99701/wireless-peripheral-battery-monitor?label=Open%20Source&style=flat-square&color=16A34A)](./LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/edwin99701/wireless-peripheral-battery-monitor/total?label=Downloads&style=flat-square&color=2563EB)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases)
+[![Release](https://img.shields.io/github/v/release/edwin99701/BattDock?label=Release&style=flat-square&color=111827)](https://github.com/edwin99701/BattDock/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=flat-square)](https://github.com/edwin99701/BattDock/releases/latest)
+[![License](https://img.shields.io/github/license/edwin99701/BattDock?label=Open%20Source&style=flat-square&color=16A34A)](./LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/edwin99701/BattDock/total?label=Downloads&style=flat-square&color=2563EB)](https://github.com/edwin99701/BattDock/releases)
 
 **简体中文** · [English](./README_EN.md)
 
 <br />
 
-<a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
+<a href="https://github.com/edwin99701/BattDock/releases/latest">
   <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.7.3-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
 </a>
 
@@ -116,12 +116,12 @@
 - 注：当前已在 Windows 11 x64 完成本机实测；Windows 10 22H2 x64 兼容性已完成代码核查与单元测试，待实体机进一步复核。
 
 ### 发布产物说明
-前往 [GitHub Releases（最新版本）](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) 下载（国内用户可直接点击下方国内加速直链）：
+前往 [GitHub Releases（最新版本）](https://github.com/edwin99701/BattDock/releases/latest) 下载（国内用户可直接点击下方国内加速直链）：
 
 - **`BattDock-v2.7.3-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内免 UAC 一键自动更新。
-  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.3/BattDock-v2.7.3-Setup.exe) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.3/BattDock-v2.7.3-Setup.exe)
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/BattDock/releases/download/v2.7.3/BattDock-v2.7.3-Setup.exe) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/BattDock/releases/download/v2.7.3/BattDock-v2.7.3-Setup.exe)
 - **`BattDock-v2.7.3-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
-  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.3/BattDock-v2.7.3-Windows-x64-Portable.zip) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/download/v2.7.3/BattDock-v2.7.3-Windows-x64-Portable.zip)
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/BattDock/releases/download/v2.7.3/BattDock-v2.7.3-Windows-x64-Portable.zip) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/BattDock/releases/download/v2.7.3/BattDock-v2.7.3-Windows-x64-Portable.zip)
 - **`SHA256SUMS.txt`**：所有发布文件的 SHA-256 校验值清单，用于核对文件完整性。
 - **`update-summary.json`**：供软件内部直接读取的简明中文更新摘要。
 - **`VGNMouseBattery-v2.7.3-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。

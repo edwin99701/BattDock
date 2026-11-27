@@ -6,16 +6,16 @@
 
 **A lightweight Windows battery monitor for wireless mice, keyboards, headsets, and other peripherals.**
 
-[![Release](https://img.shields.io/github/v/release/edwin99701/wireless-peripheral-battery-monitor?label=Release&style=flat-square&color=111827)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest)
-[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=flat-square)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest)
-[![License](https://img.shields.io/github/license/edwin99701/wireless-peripheral-battery-monitor?label=Open%20Source&style=flat-square&color=16A34A)](./LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/edwin99701/wireless-peripheral-battery-monitor/total?label=Downloads&style=flat-square&color=2563EB)](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases)
+[![Release](https://img.shields.io/github/v/release/edwin99701/BattDock?label=Release&style=flat-square&color=111827)](https://github.com/edwin99701/BattDock/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?style=flat-square)](https://github.com/edwin99701/BattDock/releases/latest)
+[![License](https://img.shields.io/github/license/edwin99701/BattDock?label=Open%20Source&style=flat-square&color=16A34A)](./LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/edwin99701/BattDock/total?label=Downloads&style=flat-square&color=2563EB)](https://github.com/edwin99701/BattDock/releases)
 
 [简体中文](./README.md) · **English**
 
 <br />
 
-<a href="https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest">
+<a href="https://github.com/edwin99701/BattDock/releases/latest">
   <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.7.3-111827?style=for-the-badge" alt="Download Latest BattDock" />
 </a>
 
@@ -74,7 +74,7 @@
 
 ## Download & Installation
 
-1. Go to [GitHub Releases](https://github.com/edwin99701/wireless-peripheral-battery-monitor/releases/latest) and download **`BattDock-v2.7.3-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.7.3-Windows-x64-Portable.zip`** (portable archive).
+1. Go to [GitHub Releases](https://github.com/edwin99701/BattDock/releases/latest) and download **`BattDock-v2.7.3-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.7.3-Windows-x64-Portable.zip`** (portable archive).
 2. Run the installer or extract the ZIP and launch **`BattDock.exe`** (requires Windows 10 22H2 x64+ or Windows 11 x64).
 3. Settings are stored in `%LOCALAPPDATA%\BattDock\config.json` and preserved across updates. Legacy `VGNMouseBattery` configurations and autostart entries migrate automatically on first launch.
 

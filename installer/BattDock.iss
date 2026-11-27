@@ -7,7 +7,7 @@
 
 #define MyAppName "BattDock"
 #define MyAppPublisher "BattDock"
-#define MyAppURL "https://github.com/edwin99701/wireless-peripheral-battery-monitor"
+#define MyAppURL "https://github.com/edwin99701/BattDock"
 #define MyAppExeName "BattDock.exe"
 #define MyAppDesc "轻量化 Windows 无线外设电量管理工具"
 

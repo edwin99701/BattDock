@@ -218,8 +218,8 @@ BattDock/
 
 ## 13. GitHub 仓库及发布流程
 
-- **公开仓库**：`https://github.com/edwin99701/wireless-peripheral-battery-monitor`（主分支 `master`，当前最新正式版 `v2.7.3`）。
-- **仓库名保留说明**：为保障已发布 `v2.2.0–v2.7.3` 客户端的在线更新 API 与 4 个国内加速镜像代理链接长期不中断，当前继续保留原 GitHub 仓库路径，对外展示名称、程序名、安装包与文档全面统一为 **BattDock**。
+- **公开仓库**：`https://github.com/edwin99701/BattDock`（主分支 `master`，当前最新正式版 `v2.7.3`；原历史仓库名 `wireless-peripheral-battery-monitor`）。
+- **旧仓库迁移与重定向兼容说明**：仓库已正式更名为 `BattDock`，经 Python 3.12 实网测试验证，旧版客户端（`v2.2.0–v2.7.3`）使用的旧 GitHub API、`releases/latest/download/update-summary.json`、`SHA256SUMS.txt` 及安装包/便携版直连与全部 4 个国内加速节点均通过 GitHub 301 重定向正常可用；未来版本统一使用新仓库地址（切勿在同账号下重建同名旧仓库 `wireless-peripheral-battery-monitor`，以免覆盖重定向）。
 - **标准构建与发布流程**：
   1. 版本递增：同步更新 `brand.py`、`version_info.txt`、`installer/BattDock.iss` 默认版本、`CHANGELOG.md`、`PROGRESS.md`、`README.md`、`README_EN.md`。
   2. 一键构建：运行 `powershell -ExecutionPolicy Bypass -File .\build_release.ps1`，自动跑通全部 43 项单元测试，生成 `release\assets_vX.Y.Z\` 下的 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip` 与 `SHA256SUMS.txt`。
@@ -281,4 +281,5 @@ flowchart TD
 | 开机自启键 | `HKCU\...\Run\BattDock` | `HKCU\...\Run\VGNMouseBattery` | 启动/安装/更新/桥接四重自动迁移清理 |
 | 单实例互斥量 | `Local\BattDock_SingleInstance` | `Local\VGNMouseBatteryMonitor_SingleInstance` | 同时申请双互斥量防新旧共存 |
 | 窗口唤醒事件 | `Local\BattDock_ShowEvent` | `Local\VGNMouseBatteryMonitor_ShowEvent` | 同时监听双事件防唤醒失效 |
+| GitHub 公开仓库 | `edwin99701/BattDock` | `edwin99701/wireless-peripheral-battery-monitor` | 已正式更名，GitHub 301 重定向兼容旧版直连与国内 4 节点（严禁重建同名旧仓库） |
 | 保留原名内部模块 | `mouse_battery_app.py`、`vgn_battery.py`、`providers/vgn_provider.py` | 同左 | 职责清晰且牵涉入口/自启/测试，不强行改名 |

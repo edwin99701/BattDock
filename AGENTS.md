@@ -105,7 +105,7 @@
 
 ## 七、在线更新、打包、GitHub 发布与安全纪律
 
-1. **仓库与历史保护**：公开仓库为 `edwin99701/wireless-peripheral-battery-monitor`。未经完整兼容性评估与用户明确确认，**严禁擅自更改 GitHub 远程仓库名称**；严禁删除历史 Release、修改既有 Git Tag 或重写 Git 历史，以保证旧版本在线更新链路（含国内加速节点）长期可用。
+1. **仓库与历史保护**：公开仓库为 `edwin99701/BattDock`（原仓库名 `wireless-peripheral-battery-monitor`，已完成正式更名并由 GitHub 自动保留 301 重定向）。**严禁在同账号下重新创建同名旧仓库 `wireless-peripheral-battery-monitor`**（会破坏旧版本重定向链路）；未经完整兼容性评估与用户明确确认，严禁再次更改仓库名称，严禁删除历史 Release、修改既有 Git Tag 或重写 Git 历史，以保证旧版本在线更新链路（含国内加速节点）长期可用。
 2. **标准发布产物命名（与现有更新器 100% 兼容）**：
    - 主程序：`BattDock.exe`
    - 安装程序：`BattDock-v<版本号>-Setup.exe`
