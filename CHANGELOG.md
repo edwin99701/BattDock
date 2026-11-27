@@ -2,6 +2,19 @@
 
 > 本文件完整保留 BattDock（含早期历史版本）的真实发布记录，不篡改历史事实。后续新版本统一按「新增功能 / 功能优化 / Bug 修复 / 兼容性改进 / 已知问题」分类记录。
 
+## BattDock v2.7.4（2026-11-27）— 游戏场景防白屏与防抢焦点加固、低电量提醒独立置顶优化及仓库地址统一
+
+### Bug 修复
+- **修复 WinForms `Opacity` 动画抹除 `WS_EX_NOACTIVATE` / `WS_EX_TOOLWINDOW` 缺陷（`floating_widget.py`、`mouse_battery_app.py`）**：改用原生 Win32 `SetWindowLongW` + `SetLayeredWindowAttributes` + `SetWindowPos(SWP_NOACTIVATE | SWP_NOOWNERZORDER)` 管理低电量提醒弹窗与桌面悬浮窗的透明度和淡入淡出动画，彻底防止 WinForms `Form.Opacity` / `Form.TopMost` 触发 `UpdateStyles()` 清除不抢焦点和工具窗扩展样式，杜绝游戏场景误抢焦点与混入 Alt+Tab 列表。
+- **修复桌面悬浮窗每 25 秒无条件刷新与 GDI 字体持续新建问题（`floating_widget.py`）**：为悬浮窗补充 `WS_EX_NOACTIVATE`，新增布局/样式/文案状态签名差异检查（无变化轮询零 Win32/DWM 扰动与零重绘），缓存并复用 `Font` 对象并在关闭时统一释放。
+- **消除隐藏窗口多余后台刷新与显示变更重绘（`mouse_battery_app.py`、`tray_icon.py`）**：后台定时轮询不再向已隐藏的 WebView2 主/设置窗口注入 JS；Win10 圆角重算钩子跳过不可见或最小化窗口；托盘与热插拔原生隐藏消息窗口补齐 `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`。
+
+### 功能优化与兼容性改进
+- **低电量提醒窗口独立最高优先级与防打扰机制（`mouse_battery_app.py`、`floating_widget.py`）**：提醒窗口设为独立非模态顶层窗（`Owner=None`），通过 `SWP_NOOWNERZORDER | SWP_NOACTIVATE` 单独提升显示优先级（不连带主窗口、设置窗口或悬浮窗置顶，不改变 `GetForegroundWindow()`），关闭前显式降级释放置顶状态；基于 `SHQueryUserNotificationState` 仅在 Direct3D 独占全屏游戏（`QUNS_RUNNING_D3D_FULL_SCREEN`）下静默避让悬浮窗并暂缓低电量弹窗（不消耗档位，退出全屏后补提醒），无边框窗口与普通窗口模式正常兼容。
+- **统一 GitHub 新仓库地址与在线更新验证（`brand.py`、`installer/BattDock.iss`）**：未来版本更新源统一指向 `edwin99701/BattDock`，实网验证旧版本直连与 4 个国内加速节点通过 301 重定向继续兼容；新增 4 组窗口焦点、独立置顶与全屏防干扰自动化回归测试（全量 47/47 项通过）。
+
+---
+
 ## BattDock v2.7.3（2026-11-27）— 彻底修复系统托盘动态电池图标消失回归并建立长期回归保护机制
 
 ### 系统托盘核心功能根治修复

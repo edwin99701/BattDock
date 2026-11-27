@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md — BattDock 权威技术架构文档
 
-> 本文档以当前源码（**BattDock v2.7.3**，`master` 分支）为唯一事实来源，系统记录项目技术栈、模块职责、核心流程、兼容性方案及命名映射关系。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
+> 本文档以当前源码（**BattDock v2.7.4**，`master` 分支）为唯一事实来源，系统记录项目技术栈、模块职责、核心流程、兼容性方案及命名映射关系。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
 
 ---
 
@@ -45,7 +45,7 @@
 
 ```text
 BattDock/
-├── brand.py                     # 品牌常量与版本号单一真值来源（BattDock / 2.7.3 / EXE / AUMID / 互斥量 / 仓库地址）
+├── brand.py                     # 品牌常量与版本号单一真值来源（BattDock / 2.7.4 / EXE / AUMID / 互斥量 / 仓库地址）
 ├── mouse_battery_app.py         # 主入口与核心控制器（主窗口/设置窗口生命周期、提醒弹窗、状态机、JS 桥、后台服务）
 ├── tray_icon.py                 # 自研独立原生 Win32 NotifyIcon 动态电池托盘控制器
 ├── floating_widget.py           # 原生 WinForms 桌面悬浮窗、动态电池绘图、Win10/11 圆角与细边工具、提示音
@@ -83,7 +83,7 @@ BattDock/
 │   ├── BattDock.iss             # Inno Setup 6 安装脚本（UTF-8 BOM，管理员安装 + users-modify + runasoriginaluser）
 │   └── ChineseSimplified.isl    # 简体中文安装向导语言包（UTF-8 BOM，Microsoft YaHei UI）
 ├── tests/
-│   └── test_providers.py        # 43 项自动化单元测试与核心生命周期回归门禁
+│   └── test_providers.py        # 47 项自动化单元测试与核心生命周期/游戏焦点回归门禁
 ├── docs/screenshots/            # README 展示截图（v2.4.0 实拍与演示截图）
 ├── .github/ISSUE_TEMPLATE/      # Bug 反馈与设备适配申请模板
 ├── build_release.ps1            # 一键单测 → PyInstaller → Inno Setup → ZIP 打包 → SHA256SUMS.txt
@@ -184,14 +184,14 @@ BattDock/
 
 - **状态机（`mouse_battery_app.py:evaluate_tiered_alerts()`）**：默认三级阈值 `30%`（一级黄「电量偏低」）、`20%`（二级橙「电量不足」）、`10%`（三级红「电量紧急」），支持单设备覆盖；引入 `+5%` 迟滞回升防抖与充电重置，同一轮跨越多个档位仅弹最紧急档位，可选重复提醒间隔。
 - **展示载体**：
-  - **原生 WinForms 迷你弹窗**：按 `TextRenderer.MeasureText` 动态计算宽度（`250–360×56` 逻辑像素，圆角 `8px`），带 `WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` 避免抢夺游戏/全屏焦点，钳制在工作区内停留 5 秒，左侧单色实心设备图标不变色，第二行优先显示自定义名或完整标准型号；
+  - **原生 WinForms 独立最高置顶迷你弹窗**：按 `TextRenderer.MeasureText` 动态计算宽度（`250–360×56` 逻辑像素，圆角 `8px`），设为独立非模态窗（`Owner=None`），使用原生 Win32 `apply_non_activating_tool_style`（`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED`）+ `SetLayeredWindowAttributes` 淡入淡出 + `SetWindowPos(HWND_TOPMOST, SWP_NOACTIVATE | SWP_NOOWNERZORDER)` 实现独立最高置顶而不连带主/设置/悬浮窗置顶、不改变 `GetForegroundWindow()`，关闭前显式降级释放置顶；Direct3D 独占全屏游戏（`QUNS_RUNNING_D3D_FULL_SCREEN`）下暂缓弹窗不切屏，退出全屏后补提醒；
   - **Windows 系统通知与提示音**：可选经由 `TrayIconController.notify()` 推送气泡通知与 `play_alert_sound()` 播放系统提示音。
 
 ---
 
 ## 10. 桌面悬浮窗实现方式
 
-- 实现于 `floating_widget.py`（`DesktopFloatingWidget`），基于原生 WinForms 窗体（零额外 WebView2 进程），经主窗体 UI 线程 `BeginInvoke` 刷新。
+- 实现于 `floating_widget.py`（`DesktopFloatingWidget`），基于原生 WinForms 窗体（零额外 WebView2 进程），经主窗体 UI 线程 `BeginInvoke` 刷新；全程使用原生 Win32 扩展样式（`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED`）、`SetLayeredWindowAttributes` 与状态签名差异更新（无变化轮询零 Win32/DWM/重绘扰动），并缓存复用 GDI 字体；Direct3D 独占全屏游戏期间静默隐藏、退出后自动恢复。
 - **内容与交互**：黑白实心设备图标 + 默认精简品牌名（`resolve_compact_device_label()`，同品牌多设备自动补全型号、支持自定义显示名与悬停查看完整详情）+ 百分比 + 平滑电量条 + 1px 抗锯齿圆角细边（`paint_winforms_rounded_border()`）。
 - 支持透明度（`40%–100%`）、小/中/大尺寸、四角预设与自由拖拽坐标持久化、位置锁定、指定设备或自动跟随、双击唤出主窗口，以及系统托盘右键与设置页双向实时开关。
 
@@ -218,11 +218,11 @@ BattDock/
 
 ## 13. GitHub 仓库及发布流程
 
-- **公开仓库**：`https://github.com/edwin99701/BattDock`（主分支 `master`，当前最新正式版 `v2.7.3`；原历史仓库名 `wireless-peripheral-battery-monitor`）。
+- **公开仓库**：`https://github.com/edwin99701/BattDock`（主分支 `master`，当前最新正式版 `v2.7.4`；原历史仓库名 `wireless-peripheral-battery-monitor`）。
 - **旧仓库迁移与重定向兼容说明**：仓库已正式更名为 `BattDock`，经 Python 3.12 实网测试验证，旧版客户端（`v2.2.0–v2.7.3`）使用的旧 GitHub API、`releases/latest/download/update-summary.json`、`SHA256SUMS.txt` 及安装包/便携版直连与全部 4 个国内加速节点均通过 GitHub 301 重定向正常可用；未来版本统一使用新仓库地址（切勿在同账号下重建同名旧仓库 `wireless-peripheral-battery-monitor`，以免覆盖重定向）。
 - **标准构建与发布流程**：
   1. 版本递增：同步更新 `brand.py`、`version_info.txt`、`installer/BattDock.iss` 默认版本、`CHANGELOG.md`、`PROGRESS.md`、`README.md`、`README_EN.md`。
-  2. 一键构建：运行 `powershell -ExecutionPolicy Bypass -File .\build_release.ps1`，自动跑通全部 43 项单元测试，生成 `release\assets_vX.Y.Z\` 下的 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip` 与 `SHA256SUMS.txt`。
+  2. 一键构建：运行 `powershell -ExecutionPolicy Bypass -File .\build_release.ps1`，自动跑通全部 47 项单元测试，生成 `release\assets_vX.Y.Z\` 下的 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip` 与 `SHA256SUMS.txt`。
   3. 准备 `update-summary.json`（3–5 条简明中文摘要）与纯文本 Release 正文（无 `•`/Markdown 噪音/HTML 注释）。
   4. 按 `RELEASE_CHECKLIST.md` 完成隐私扫描与回归核验，提交并打附注标签 `git tag -a vX.Y.Z -m "BattDock vX.Y.Z"`，推送 `master` 与 tag。
   5. 执行 `gh release create vX.Y.Z --draft ...` → 核验 5 个资产均已上传 → `gh release edit vX.Y.Z --draft=false --latest` → 线上验证 `updater.check_for_update()` 与资产直链 HTTP 200。

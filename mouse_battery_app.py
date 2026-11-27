@@ -70,11 +70,15 @@ from floating_widget import (
     DesktopFloatingWidget,
     EDGE_MARGIN,
     _try_win11_round_corners,
+    apply_non_activating_tool_style,
     apply_window_rounded_corners,
     draw_battery_icon,
+    is_exclusive_fullscreen_active,
     is_windows_11,
     paint_winforms_rounded_border,
     play_alert_sound,
+    set_layered_window_alpha,
+    set_window_topmost_noactivate,
 )
 from providers import (
     DeviceBattery,
@@ -402,11 +406,17 @@ def _attach_rounded_resize_hook(win: Optional[webview.Window], radius_dip: int =
     try:
         def _on_rgn_refresh(_s, _e):
             try:
-                if native.IsDisposed:
+                if native.IsDisposed or not native.Visible:
                     return
                 hwnd = int(native.Handle.ToInt64())
-                if hwnd:
-                    apply_window_rounded_corners(hwnd, radius_dip=radius_dip, scale=_get_dpi_scale(hwnd))
+                if not hwnd:
+                    return
+                user32 = ctypes.windll.user32
+                hw = wintypes.HWND(hwnd)
+                # 游戏切换分辨率/DPI 广播时跳过已隐藏或最小化窗口，避免在 Win10 下对不可见窗触发多余 DWM/区域重绘
+                if not user32.IsWindowVisible(hw) or user32.IsIconic(hw):
+                    return
+                apply_window_rounded_corners(hwnd, radius_dip=radius_dip, scale=_get_dpi_scale(hwnd))
             except Exception:
                 pass
 
@@ -550,6 +560,102 @@ def _animate_form_transition(
     except Exception:
         try:
             native_form.Opacity = max(0.0, min(1.0, float(end_opacity)))
+            if on_complete:
+                on_complete()
+        except Exception:
+            pass
+
+
+def _animate_layered_form_transition(
+    native_form,
+    hwnd: int,
+    start_opacity: float,
+    end_opacity: float,
+    duration_ms: int,
+    start_pos: Optional[tuple[int, int]] = None,
+    end_pos: Optional[tuple[int, int]] = None,
+    on_complete=None,
+) -> None:
+    """使用原生 Win32 SetLayeredWindowAttributes + SetWindowPos(SWP_NOACTIVATE) 播放淡入/淡出动画。
+
+    专用于低电量提醒弹窗等非激活置顶工具窗，彻底避免 WinForms Form.Opacity 触发 UpdateLayered()
+    覆盖 WS_EX_NOACTIVATE / WS_EX_TOOLWINDOW 扩展样式。
+    """
+    if native_form is None or not hwnd:
+        return
+    _cancel_form_animation(native_form)
+    try:
+        if native_form.IsDisposed:
+            return
+    except Exception:
+        return
+
+    SWP_NOSIZE = 0x0001
+    SWP_NOZORDER = 0x0004
+    SWP_NOACTIVATE = 0x0010
+
+    def _apply_step(alpha_val: float, pos: Optional[tuple[int, int]] = None) -> None:
+        clamped = max(0.0, min(1.0, float(alpha_val)))
+        setattr(native_form, "_battdock_alpha", clamped)
+        set_layered_window_alpha(hwnd, clamped)
+        if pos is not None:
+            ctypes.windll.user32.SetWindowPos(
+                wintypes.HWND(hwnd),
+                wintypes.HWND(0),
+                int(pos[0]),
+                int(pos[1]),
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+
+    if duration_ms <= 0:
+        try:
+            _apply_step(end_opacity, end_pos)
+            if on_complete:
+                on_complete()
+        except Exception:
+            pass
+        return
+
+    try:
+        import System.Windows.Forms as WinForms
+
+        key = id(native_form)
+        t0 = time.perf_counter()
+        dur_sec = max(0.05, duration_ms / 1000.0)
+        _apply_step(start_opacity, start_pos)
+
+        timer = WinForms.Timer()
+        timer.Interval = 16
+
+        def _tick(_s, _e):
+            try:
+                if native_form.IsDisposed:
+                    _cancel_form_animation(native_form)
+                    return
+                p = min(1.0, (time.perf_counter() - t0) / dur_sec)
+                eased = 1.0 - (1.0 - p) ** 3
+                cur_op = start_opacity + (end_opacity - start_opacity) * eased
+                cur_pos = None
+                if start_pos is not None and end_pos is not None:
+                    cx = int(round(start_pos[0] + (end_pos[0] - start_pos[0]) * eased))
+                    cy = int(round(start_pos[1] + (end_pos[1] - start_pos[1]) * eased))
+                    cur_pos = (cx, cy)
+                _apply_step(cur_op, cur_pos)
+                if p >= 1.0:
+                    _cancel_form_animation(native_form)
+                    if on_complete:
+                        on_complete()
+            except Exception:
+                _cancel_form_animation(native_form)
+
+        timer.Tick += _tick
+        _FORM_ANIM_TIMERS[key] = timer
+        timer.Start()
+    except Exception:
+        try:
+            _apply_step(end_opacity, end_pos)
             if on_complete:
                 on_complete()
         except Exception:
@@ -1062,12 +1168,38 @@ class MouseBatteryApp:
             "update_state": upd_snapshot,
         }
 
-    def _push_state_to_ui(self) -> None:
+    def _is_ui_window_visible(self, win: Optional[webview.Window], hwnd: int = 0) -> bool:
+        if not _is_window_alive(win, hwnd):
+            return False
+        if sys.platform != "win32":
+            return True
+        try:
+            h = hwnd
+            if not h:
+                native = getattr(win, "native", None)
+                if native is not None:
+                    h = int(native.Handle.ToInt64())
+            if not h:
+                return False
+            user32 = ctypes.windll.user32
+            hw = wintypes.HWND(h)
+            return bool(user32.IsWindowVisible(hw) and not user32.IsIconic(hw))
+        except Exception:
+            return False
+
+    def _push_state_to_ui(self, force: bool = False) -> None:
+        targets = []
+        for win, h in ((self.window, self.hwnd), (self.settings_window, self.settings_hwnd)):
+            if not _is_window_alive(win, h):
+                continue
+            if force or self._is_ui_window_visible(win, h):
+                targets.append(win)
+        if not targets:
+            return
         payload = json.dumps(self._build_state_dict(), ensure_ascii=False)
         script = f"window.applyState && applyState({payload});"
-        for win in (self.window, self.settings_window):
-            if _is_window_alive(win):
-                _safe_eval_js(win, script)
+        for win in targets:
+            _safe_eval_js(win, script)
 
     def _get_active_tier_thresholds(self, device_id: Optional[str] = None) -> tuple[int, int, int]:
         """读取当前生效的三级低电量阈值（支持单设备覆盖与用户自定义阈值）。"""
@@ -1128,6 +1260,34 @@ class MouseBatteryApp:
             low_t3=t3,
             animations_enabled=self._effective_animations(),
         )
+        # 若低电量提醒窗正在显示，保证提醒窗始终维持独立最高优先级（高于悬浮窗且不抢焦点）
+        self._keep_alert_above_other_windows()
+
+    def _keep_alert_above_other_windows(self) -> None:
+        with self._alert_lock:
+            alert_form = self._alert_window
+        if alert_form is None:
+            return
+        try:
+            from System import Action
+
+            def _reassert():
+                try:
+                    if alert_form.IsDisposed:
+                        return
+                    h = int(alert_form.Handle.ToInt64())
+                    if h and ctypes.windll.user32.IsWindowVisible(wintypes.HWND(h)):
+                        apply_non_activating_tool_style(h, layered=True)
+                        set_window_topmost_noactivate(h, True, show=False)
+                except Exception:
+                    pass
+
+            if getattr(alert_form, "InvokeRequired", False):
+                alert_form.BeginInvoke(Action(_reassert))
+            else:
+                _reassert()
+        except Exception:
+            pass
 
     def _on_floating_position_saved(self, x: int, y: int) -> None:
         fcfg = get_floating_config(self.cfg)
@@ -1319,7 +1479,7 @@ class MouseBatteryApp:
             if not self._allow_show:
                 _set_form_visibility(win, visible=False, opacity=0.0)
 
-        self._push_state_to_ui()
+        self._push_state_to_ui(force=True)
         if self._allow_show:
             # 兜底定时器：确保最迟 0.8s 显现，正常情况下由前端 ui_ready() 在首帧就绪时立刻显现
             threading.Timer(0.8, self._reveal_main_if_needed).start()
@@ -1434,7 +1594,7 @@ class MouseBatteryApp:
                 self._center_main_hwnd()
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             self._main_maximized = bool(user32.IsZoomed(wintypes.HWND(self.hwnd)))
-            self._push_state_to_ui()
+            self._push_state_to_ui(force=True)
             fade = (180 if self._effective_animations() else 0) if not was_visible else 0
             _set_form_visibility(win, visible=True, opacity=1.0, activate=True, fade_ms=fade)
             _bring_hwnd_to_foreground(self.hwnd, keep_topmost=self.cfg.topmost)
@@ -1444,7 +1604,7 @@ class MouseBatteryApp:
             if self.hwnd:
                 self._center_main_hwnd()
                 _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
-            self._push_state_to_ui()
+            self._push_state_to_ui(force=True)
             fade = 180 if self._effective_animations() else 0
             _set_form_visibility(win, visible=True, opacity=1.0, activate=True, fade_ms=fade)
             if self.hwnd:
@@ -1455,7 +1615,7 @@ class MouseBatteryApp:
         if self.hwnd:
             _apply_window_chrome(self.hwnd, self._effective_theme() == "dark")
             _bring_hwnd_to_foreground(self.hwnd, keep_topmost=self.cfg.topmost)
-        self._push_state_to_ui()
+        self._push_state_to_ui(force=True)
 
     def open_settings_window(self, section: str = "general") -> None:
         """打开或前置独立设置窗口：默认进入“常规设置”，以主窗口为基准居中显示且零闪烁。"""
@@ -1538,7 +1698,7 @@ class MouseBatteryApp:
                 _set_window_pos(self.settings_hwnd, tpx, tpy, tpw, tph)
                 apply_window_rounded_corners(self.settings_hwnd, radius_dip=10, scale=_get_dpi_scale(self.settings_hwnd))
                 _attach_rounded_resize_hook(win, radius_dip=10)
-            self._push_state_to_ui()
+            self._push_state_to_ui(force=True)
             # 兜底定时器：若前端回调异常延迟，最迟 0.8s 自动显现，绝不卡死
             threading.Timer(0.8, self._reveal_settings_if_needed).start()
 
@@ -2182,6 +2342,14 @@ class MouseBatteryApp:
                     try:
                         _cancel_form_animation(alert_form)
                         if not alert_form.IsDisposed:
+                            try:
+                                h_d = int(alert_form.Handle.ToInt64())
+                                if h_d:
+                                    # 显式解除独立置顶并隐藏，绝不遗留无效置顶层级
+                                    set_window_topmost_noactivate(h_d, False, show=False)
+                                    ctypes.windll.user32.ShowWindow(wintypes.HWND(h_d), 0)
+                            except Exception:
+                                pass
                             alert_form.Close()
                             alert_form.Dispose()
                     except Exception:
@@ -2191,8 +2359,17 @@ class MouseBatteryApp:
                     try:
                         if alert_form.IsDisposed:
                             return
-                        if fade_ms > 0 and alert_form.Visible and float(alert_form.Opacity) > 0.05:
-                            _animate_form_transition(alert_form, float(alert_form.Opacity), 0.0, fade_ms, on_complete=_dispose_now)
+                        cur_alpha = float(getattr(alert_form, "_battdock_alpha", 1.0))
+                        hwnd_a = int(alert_form.Handle.ToInt64())
+                        if fade_ms > 0 and hwnd_a and ctypes.windll.user32.IsWindowVisible(wintypes.HWND(hwnd_a)) and cur_alpha > 0.05:
+                            _animate_layered_form_transition(
+                                alert_form,
+                                hwnd_a,
+                                cur_alpha,
+                                0.0,
+                                fade_ms,
+                                on_complete=_dispose_now,
+                            )
                         else:
                             _dispose_now()
                     except Exception:
@@ -2267,10 +2444,10 @@ class MouseBatteryApp:
                 ay = max(top + margin, min(bottom - ah - margin, bottom - ah - margin))
 
                 form = WinForms.Form()
+                form.Owner = None  # 独立非模态顶层窗口，绝不连带主窗口/设置窗口改变 Z-order
                 form.Text = ALERT_WINDOW_TITLE
                 form.FormBorderStyle = getattr(WinForms.FormBorderStyle, "None")
                 form.ShowInTaskbar = False
-                form.TopMost = True
                 form.StartPosition = WinForms.FormStartPosition.Manual
                 form.BackColor = Color.FromArgb(24, 27, 35) if is_dark else Color.FromArgb(252, 253, 255)
                 form.Size = Size(aw, ah)
@@ -2363,29 +2540,37 @@ class MouseBatteryApp:
 
                 hwnd = int(form.Handle.ToInt64())
                 user32 = ctypes.windll.user32
-                GWL_EXSTYLE = -20
-                ex = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
-                ex |= 0x00000008 | 0x08000000 | 0x00000080  # TOPMOST | NOACTIVATE | TOOLWINDOW
-                user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, ex)
+                # 使用原生 Win32 扩展样式 + SetLayeredWindowAttributes 控制透明度，
+                # 彻底避免 WinForms Form.Opacity / TopMost 触发 UpdateStyles() 抹除 WS_EX_NOACTIVATE 与 WS_EX_TOOLWINDOW
+                apply_non_activating_tool_style(hwnd, layered=True)
                 apply_window_rounded_corners(hwnd, radius_dip=8, scale=scale)
 
-                SWP_NOACTIVATE = 0x0010
-                SWP_SHOWWINDOW = 0x0040
                 slide_offset = int(round(10 * scale)) if anim_on else 0
                 start_y = ay + slide_offset
-                form.Opacity = 0.0 if anim_on else 1.0
-                user32.ShowWindow(wintypes.HWND(hwnd), 4)
-                user32.SetWindowPos(
-                    wintypes.HWND(hwnd),
-                    wintypes.HWND(-1),
-                    ax,
-                    start_y,
-                    aw,
-                    ah,
-                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                init_alpha = 0.0 if anim_on else 1.0
+                setattr(form, "_battdock_alpha", init_alpha)
+                set_layered_window_alpha(hwnd, init_alpha)
+                user32.ShowWindow(wintypes.HWND(hwnd), 4)  # SW_SHOWNOACTIVATE
+                set_window_topmost_noactivate(
+                    hwnd,
+                    True,
+                    x=ax,
+                    y=start_y,
+                    w=aw,
+                    h=ah,
+                    show=True,
                 )
                 if anim_on:
-                    _animate_form_transition(form, 0.0, 1.0, 220, start_pos=(ax, start_y), end_pos=(ax, ay))
+                    _animate_layered_form_transition(
+                        form,
+                        hwnd,
+                        0.0,
+                        1.0,
+                        220,
+                        start_pos=(ax, start_y),
+                        end_pos=(ax, ay),
+                        on_complete=lambda: set_window_topmost_noactivate(hwnd, True, show=False),
+                    )
 
                 with self._alert_lock:
                     self._alert_window = form
@@ -2419,7 +2604,7 @@ class MouseBatteryApp:
     ) -> None:
         if self.cfg.sound_enabled:
             threading.Thread(target=play_alert_sound, args=(self.cfg.sound_name,), daemon=True).start()
-        if self.cfg.popup_alert_enabled or is_test:
+        if is_test or (self.cfg.popup_alert_enabled and not is_exclusive_fullscreen_active()):
             threading.Thread(
                 target=self._show_mini_alert,
                 args=(device_label, percent, kind, is_test, device_id, full_device_name),
@@ -2684,7 +2869,26 @@ class MouseBatteryApp:
             wc.lpszClassName = cls_name
             user32.RegisterClassW(ctypes.byref(wc))
 
-            hwnd = int(user32.CreateWindowExW(0, cls_name, "", 0, 0, 0, 0, 0, None, None, hinst, None) or 0)
+            WS_POPUP = 0x80000000
+            WS_EX_TOOLWINDOW = 0x00000080
+            WS_EX_NOACTIVATE = 0x08000000
+            hwnd = int(
+                user32.CreateWindowExW(
+                    WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                    cls_name,
+                    "",
+                    WS_POPUP,
+                    0,
+                    0,
+                    0,
+                    0,
+                    None,
+                    None,
+                    hinst,
+                    None,
+                )
+                or 0
+            )
             self._device_change_hwnd = hwnd
             if hwnd:
                 # 注册 GUID_DEVINTERFACE_HID = {4D1E55B2-F16F-11CF-88CB-001111000030}
@@ -2720,6 +2924,13 @@ class MouseBatteryApp:
             self._active_bg_threads.discard("device_change_watch")
 
     def _check_low_batteries(self, devices: list[DeviceBattery]) -> None:
+        # Direct3D 独占全屏游戏且仅依赖迷你弹窗提醒时暂缓评估（不消耗提醒档位），退出全屏后自然补提醒且绝不切出游戏
+        if (
+            is_exclusive_fullscreen_active()
+            and self.cfg.popup_alert_enabled
+            and not self.cfg.windows_notify_enabled
+        ):
+            return
         triggered = evaluate_tiered_alerts(devices, self.cfg, self._alerted_tiers, self._last_alert_ts)
         if not triggered:
             return

@@ -1,7 +1,7 @@
 # PROGRESS.md — BattDock 项目真实开发进度看板
 
 > 最后更新：2026-11-27  
-> 当前最新正式版本：**BattDock v2.7.3**（已正式发布为 GitHub Releases `Latest`）  
+> 当前最新正式版本：**BattDock v2.7.4**（准备/已完成正式发布为 GitHub Releases `Latest`）  
 > 当前开发分支：`master`（与 `origin/master` 同步；历史回滚基线分支：`backup/v2.7.0-baseline` @ `8ce3fdb`）
 
 ---
@@ -10,24 +10,23 @@
 
 | 项目 | 当前实况 |
 | :--- | :--- |
-| 最新正式发布版本 | **BattDock v2.7.3**（Tag `v2.7.3`，GitHub Releases `Latest`，发布时间 `2026-11-27T05:10:20Z`） |
-| 关键历史版本演进 | `v2.0.0` 多品牌底层 → `v2.3.0` BattDock 品牌升级 → `v2.4.0` 统一黑白图标与同盘回滚更新 → `v2.5.0` 设备拖拽与安装包 → `v2.5.1` Win10 圆角去白框 → `v2.5.2` 生命周期与 HID 缓存 → `v2.6.0` 无线键鼠耳机大扩展 → `v2.6.1` 国内更新加速 → `v2.7.0` 蓝牙 MAC 聚合与标准 HID → `v2.7.1` 全适配器精度加固与托盘悬浮窗开关 → `v2.7.2` 任务栏点击切换 → `v2.7.3` 原生 Win32 托盘控制器与核心回归门禁 |
-| 回滚基线分支 | `backup/v2.7.0-baseline`（`8ce3fdb`，`master` 的直接祖先，落后 `v2.7.3` 4 个提交） |
+| 最新正式发布版本 | **BattDock v2.7.4**（Tag `v2.7.4`，GitHub Releases `Latest`） |
+| 关键历史版本演进 | `v2.0.0` 多品牌底层 → `v2.3.0` BattDock 品牌升级 → `v2.4.0` 统一黑白图标与同盘回滚更新 → `v2.5.0` 设备拖拽与安装包 → `v2.5.1` Win10 圆角去白框 → `v2.5.2` 生命周期与 HID 缓存 → `v2.6.0` 无线键鼠耳机大扩展 → `v2.6.1` 国内更新加速 → `v2.7.0` 蓝牙 MAC 聚合与标准 HID → `v2.7.1` 全适配器精度加固与托盘悬浮窗开关 → `v2.7.2` 任务栏点击切换 → `v2.7.3` 原生 Win32 托盘控制器与核心回归门禁 → `v2.7.4` 游戏场景防白屏/防抢焦点加固与低电量提醒独立最高置顶 |
+| 回滚基线分支 | `backup/v2.7.0-baseline`（`8ce3fdb`，`master` 的直接祖先） |
 
 ---
 
 ## 二、最近完成的工作与 Bug 修复
 
-### 1. 本次项目规范化、品牌命名统一与长期维护体系建设（文档与配置整理，不发新版）
-- **全面审计并清理历史旧命名与配置漂移**：
-  - 统一核查 `brand.py`、`version_info.txt`、`build_release.ps1`、`installer/BattDock.iss`、`updater.py`、`app_config.py`、`legacy_shim.py` 的品牌与升级兼容链路；
-  - 清理 `build_release.ps1` 未使用的 `$LegacyReleaseDir` 变量，补齐便携卸载脚本与 Inno Setup 安装脚本对遗留 `VGNMouseBattery.lnk` 快捷方式的清理；
-  - 修正 `installer/BattDock.iss` 过期注释与默认版本号（`2.4.0` → `2.7.3`）；
-  - 从 `requirements.txt` 移除 `v2.7.3` 起不再使用的 `pystray` 运行时依赖，同步更新 `THIRD_PARTY_LICENSES.md`；
-  - 修正 `README.md` / `README_EN.md` 下载链接仍停留在 `v2.7.0`、仍提及已移除的「更新下载线路」设置项以及单测数量过时（`38` → `43`）的问题。
-- **建立完整长期维护文档体系**：全面重构并对齐 `AGENTS.md`（10 项核心受保护功能与测试分级纪律）、`PROJECT_CONTEXT.md`（16 项完整技术架构与命名映射）、`PROGRESS.md`、`SUPPORTED_DEVICES.md`（严格四级验证分类）、`RELEASE_CHECKLIST.md`（6 大类发布前检查清单）与 `CHANGELOG.md`。
-- **完成本地根目录安全改名与只读迁移验收**：已将本地项目目录由 `vgn-mouse-battery` 原地更名为 `BattDock` 并切换至新工作区，完整保留 `.git` 历史、分支/标签（`master`、`backup/v2.7.0-baseline`、`v2.7.3`）、远端 `origin` 地址及两张未跟踪设计参考原图；已清理旧目录 `__pycache__` 缓存并在新目录下完成全量单元测试重建验证。
-- **完成 GitHub 仓库改名适配与旧版更新兼容性实网验证**：GitHub 仓库由 `edwin99701/wireless-peripheral-battery-monitor` 正式更名为 `edwin99701/BattDock`；本地 `origin` 已同步并验证一致；经 Python 3.12 真实网络测试，旧版 API、摘要 JSON、安装包/便携版及校验文件在 GitHub 直连与全部 4 个国内加速节点（含仅国内加速模式）下均正常重定向可用；未来版本配置、安装脚本与项目文档已统一切换至新仓库地址并保留旧地址迁移说明。
+### 1. BattDock v2.7.4 窗口稳定性修复与提醒独立置顶优化
+- **修复游戏场景白屏与意外抢占焦点隐患**：
+  - 根治低电量弹窗与悬浮窗因 WinForms `Form.Opacity` / `Form.TopMost` 触发 `UpdateStyles()` 导致 `WS_EX_NOACTIVATE` 与 `WS_EX_TOOLWINDOW` 丢失的问题，统一改用原生 Win32 `SetWindowLongW` + `SetLayeredWindowAttributes` + `SetWindowPos(SWP_NOACTIVATE | SWP_NOOWNERZORDER)`；
+  - 桌面悬浮窗新增状态签名差异更新（无变化轮询零 Win32/DWM/重绘扰动）与 `Font` 句柄缓存复用；
+  - 后台定时轮询跳过隐藏 WebView2 窗口 JS 注入，Win10 圆角钩子跳过不可见/最小化窗口，托盘与热插拔隐藏消息窗补齐 `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`。
+- **低电量提醒窗口独立最高优先级与独占全屏避让**：
+  - 提醒窗口作为独立非模态顶层窗（`Owner=None`）单独设置 `HWND_TOPMOST`，绝不连带主窗口、设置窗口或悬浮窗置顶，关闭前显式降级释放置顶，全程零抢占前台焦点、不进 Alt+Tab；
+  - 基于 `SHQueryUserNotificationState` 仅针对 Direct3D 独占全屏（`QUNS_RUNNING_D3D_FULL_SCREEN=3`）自动静默隐藏悬浮窗并暂缓迷你弹窗（不消耗档位，退出全屏后补提醒），保留普通窗口与无边框游戏正常体验。
+- **完成本地目录迁移与 GitHub 仓库更名适配**：本地目录由 `vgn-mouse-battery` 更名为 `BattDock`，GitHub 仓库由 `wireless-peripheral-battery-monitor` 更名为 `BattDock`，实网验证新旧仓库直连与全部 4 个国内加速节点均正常可用。
 
 ### 2. 最近正式版本完成的功能与 Bug 修复（v2.7.1 – v2.7.3）
 - **v2.7.3**：自研独立原生 Win32 托盘控制器（`tray_icon.py`），根治 `pystray 0.19.5` 导致的动态电池图标偶发消失回归，保持 `uID=0` 兼容 Win11 置顶偏好，新增托盘生命周期回归测试与 `RELEASE_CHECKLIST.md`。
@@ -41,16 +40,16 @@
 | 验证级别 | 当前状态 | 详情 |
 | :--- | :--- | :--- |
 | **代码检查通过** | 通过 | 已完成核心模块、构建脚本、Inno Setup 脚本、更新器及全部项目文档一致性核查 |
-| **自动化测试通过** | **43 / 43 全部通过** | 覆盖全部 11 个外设协议解析、取整精度、去重、防伪造 `0%`、旧版配置迁移、国内优先更新与回退、ZIP/SHA-256 校验、同盘回滚脚本、任务栏点击切换、窗口关闭恢复与托盘动态电池图标全生命周期回归 |
-| **本机实际运行通过** | 通过（Windows 11 x64） | 已在 Windows 11 交互桌面实测 `v2.7.3`：动态电池托盘图标/菜单、主窗口零闪烁居中与关闭唤出、任务栏点击切换、桌面悬浮窗与在线更新链路 |
+| **自动化测试通过** | **47 / 47 全部通过** | 连续两轮运行零失败，覆盖全部 11 个外设协议解析、取整精度、去重、防伪造 `0%`、旧版配置迁移、国内优先更新与回退、ZIP/SHA-256 校验、同盘回滚脚本、任务栏点击切换、窗口关闭恢复、托盘生命周期回归，以及新增 4 项窗口防抢焦点/独立置顶/全屏避让/隐藏窗零打扰回归 |
+| **本机实际运行通过** | 通过（Windows 11 x64） | 已在 Windows 11 交互桌面实测 `v2.7.4`：原生分层悬浮窗、提醒独立置顶且不连带主/设置/悬浮窗置顶、`GetForegroundWindow()` 零变化、安装包/便携版启动与在线更新链路 |
 | **实体设备实测通过** | 仅 1 款实测通过 | `VGN Dragonfly F2 Pro Max (3554:FB3E / FB3D)` 2.4G 与有线电量/充电/休眠实机回归通过 |
-| **尚未验证** | 明确待测 | 见下方第四节 |
+| **尚未验证** | 明确待测 | 见下方第四节（含 Windows 10 22H2 实体环境及用户实际游戏场景） |
 
 ---
 
 ## 四、尚未实测的功能与当前已知限制
 
-1. **Windows 10 22H2 x64 实体机目视与交互复核（尚未验证）**：当前开发机为 Windows 11 x64，Win10 圆角去白框、托盘图标、任务栏点击切换与关闭恢复已通过源码核查与单元测试，仍待在 Windows 10 22H2 实体机上完成人工实机验收。
+1. **Windows 10 22H2 x64 实体机及实际游戏场景复核（尚未验证）**：当前开发机为 Windows 11 x64，Win10 圆角去白框、游戏防抢焦点/独立置顶提醒、托盘图标、任务栏点击切换与关闭恢复已通过源码核查、自动化回归测试与 Win11 实机验证，仍待在 Windows 10 22H2 实体机及真实游戏场景中完成人工实机验收。
 2. **非 VGN 品牌真实硬件实测（尚未验证）**：本机仅物理连接 `VGN Dragonfly F2 Pro Max` 且无蓝牙适配器；其余已实现的 Logitech / Razer / SteelSeries / Corsair / HyperX / ASUS ROG / Sony / JBL / 迈从 / 无线键盘 / 标准蓝牙 / AirPods / 标准 USB HID 适配器均处于「已实现协议但缺少实体设备验证」状态。
 3. **Apple AirPods 实时 BLE 广播被动监听（可选依赖待环境实测）**：Windows 标准 PnP 蓝牙电量已零依赖内置；AirPods 广播解析器已通过模拟报文单测，完整运行时被动监听需在含蓝牙适配器的机器上集成可选 WinRT BLE 依赖并实机验证。
 4. **部分无公开只读 HID 通道的外设（已知限制）**：如部分纯 USB Audio 架构的 iKF 2.4G 接收器、旧款加密私有协议雷柏（Rapoo）2.4G 鼠标暂不支持 2.4G 读取（推荐蓝牙模式或提交脱敏诊断报告）。

@@ -50,6 +50,8 @@ WM_TRAY_CALLBACK = WM_USER + 11
 WM_TRAY_STOP = WM_USER + 12
 
 WS_POPUP = 0x80000000
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_NOACTIVATE = 0x08000000
 
 NIF_MESSAGE = 0x00000001
 NIF_ICON = 0x00000002
@@ -835,7 +837,7 @@ class TrayIconController:
 
             hwnd = int(
                 _user32.CreateWindowExW(
-                    0,
+                    WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                     cls_name,
                     self._name,
                     WS_POPUP,

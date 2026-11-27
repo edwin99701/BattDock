@@ -1854,5 +1854,242 @@ class TestCoreTrayLifecycleRegression(unittest.TestCase):
         self.assertIsNone(app._tray)
 
 
+class TestWin10GameFocusAndWhiteScreenRegression(unittest.TestCase):
+    """Windows 10/11 游戏全屏防抢焦点、防 Alt+Tab 残留、防白屏与隐藏窗零打扰回归测试。"""
+
+    def test_non_activating_layered_style_survives_alpha_transitions_and_preserves_foreground(self):
+        import ctypes
+        from ctypes import wintypes
+        import floating_widget as fw
+
+        if sys.platform != "win32":
+            self.skipTest("仅在 Windows 上验证 WinForms/Win32 扩展样式")
+
+        import clr
+        clr.AddReference("System.Windows.Forms")
+        clr.AddReference("System.Drawing")
+        import System.Windows.Forms as WinForms
+        from System.Drawing import Color, Point, Size
+
+        user32 = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        fg_before = int(user32.GetForegroundWindow() or 0)
+
+        form = WinForms.Form()
+        try:
+            form.FormBorderStyle = getattr(WinForms.FormBorderStyle, "None")
+            form.ShowInTaskbar = False
+            form.StartPosition = WinForms.FormStartPosition.Manual
+            form.BackColor = Color.FromArgb(26, 30, 39)
+            form.Size = Size(260, 56)
+            form.Location = Point(24, 24)
+            hwnd = int(form.Handle.ToInt64())
+
+            ex_init = fw.apply_non_activating_tool_style(hwnd, layered=True)
+            self.assertTrue(bool(ex_init & fw.WS_EX_NOACTIVATE))
+            self.assertTrue(bool(ex_init & fw.WS_EX_TOOLWINDOW))
+            self.assertTrue(bool(ex_init & fw.WS_EX_LAYERED))
+            self.assertFalse(bool(ex_init & fw.WS_EX_APPWINDOW))
+
+            # 模拟淡入 -> 100% 不透明 -> 淡出全过程：绝不能像 Form.Opacity 那样抹除 NOACTIVATE/TOOLWINDOW
+            for alpha in (0.0, 0.45, 1.0, 0.92, 0.0):
+                self.assertTrue(fw.set_layered_window_alpha(hwnd, alpha))
+                if alpha == 0.0:
+                    user32.ShowWindow(wintypes.HWND(hwnd), fw.SW_SHOWNOACTIVATE)
+                    fw.set_window_topmost_noactivate(hwnd, True, x=24, y=24, w=260, h=56, show=True)
+                WinForms.Application.DoEvents()
+                ex_now = int(user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)) & 0xFFFFFFFF
+                self.assertTrue(bool(ex_now & fw.WS_EX_NOACTIVATE), f"alpha={alpha} 丢失 WS_EX_NOACTIVATE")
+                self.assertTrue(bool(ex_now & fw.WS_EX_TOOLWINDOW), f"alpha={alpha} 丢失 WS_EX_TOOLWINDOW")
+                self.assertTrue(bool(ex_now & fw.WS_EX_LAYERED), f"alpha={alpha} 丢失 WS_EX_LAYERED")
+                self.assertEqual(int(user32.GetForegroundWindow() or 0), fg_before)
+        finally:
+            form.Dispose()
+
+    def test_exclusive_fullscreen_detection_and_game_safe_deferral(self):
+        from unittest.mock import MagicMock, patch
+        import floating_widget as fw
+        import mouse_battery_app as mba
+        from app_config import AppConfig, FloatingWidgetConfig
+
+        # 1. 仅 QUNS_RUNNING_D3D_FULL_SCREEN (3) 判为独占全屏，普通窗口与无边框/忙碌态不误判
+        with patch.object(fw, "query_user_notification_state", return_value=fw.QUNS_RUNNING_D3D_FULL_SCREEN):
+            self.assertTrue(fw.is_exclusive_fullscreen_active())
+        for non_excl in (fw.QUNS_BUSY, fw.QUNS_ACCEPTS_NOTIFICATIONS, fw.QUNS_NOT_PRESENT, 0):
+            with patch.object(fw, "query_user_notification_state", return_value=non_excl):
+                self.assertFalse(fw.is_exclusive_fullscreen_active())
+
+        # 2. 独占全屏期间悬浮窗仅静默隐藏，绝不改动 fcfg.enabled 也不销毁配置
+        widget = fw.DesktopFloatingWidget(
+            get_native_host=lambda: None,
+            get_work_area=lambda: (0, 0, 1920, 1080),
+            get_dpi_scale=lambda: 1.0,
+            on_position_saved=lambda _x, _y: None,
+            on_double_click=lambda: None,
+        )
+        fcfg = FloatingWidgetConfig(enabled=True, topmost=True, opacity=92)
+        with patch.object(fw, "is_exclusive_fullscreen_active", return_value=True), \
+             patch.object(widget, "_hide_for_fullscreen") as mock_hide, \
+             patch.object(widget, "close") as mock_close:
+            widget.sync(fcfg, None, "VGN", "dark")
+        mock_hide.assert_called_once()
+        mock_close.assert_not_called()
+        self.assertTrue(fcfg.enabled)
+
+        # 3. 独占全屏且仅启用迷你弹窗时暂缓低电量评估（不消耗档位），退出全屏后立刻补发提醒
+        app = object.__new__(mba.MouseBatteryApp)
+        app.cfg = AppConfig(popup_alert_enabled=True, windows_notify_enabled=False, sound_enabled=False)
+        app._alerted_tiers = {}
+        app._last_alert_ts = {}
+        low_dev = DeviceBattery(
+            device_id="vgn:low",
+            name="VGN Dragonfly F2 Pro Max",
+            brand="VGN",
+            kind=KIND_MOUSE,
+            percent=15,
+            charging=False,
+            connected=True,
+            online=True,
+            connection_mode="2.4GHz",
+        )
+        with patch.object(mba, "is_exclusive_fullscreen_active", return_value=True), \
+             patch.object(app, "_dispatch_alert") as mock_dispatch:
+            app._check_low_batteries([low_dev])
+        mock_dispatch.assert_not_called()
+        self.assertEqual(app._alerted_tiers, {})
+
+        with patch.object(mba, "is_exclusive_fullscreen_active", return_value=False), \
+             patch.object(app, "_dispatch_alert") as mock_dispatch:
+            app._check_low_batteries([low_dev])
+        mock_dispatch.assert_called_once()
+        self.assertIn("vgn:low", app._alerted_tiers)
+
+        # 4. 手动测试低电量弹窗即使在独占全屏标志下也照常允许触发（遵循用户主动操作）
+        app._tray = None
+        with patch.object(mba, "is_exclusive_fullscreen_active", return_value=True), \
+             patch("mouse_battery_app.threading.Thread") as mock_thread:
+            app._dispatch_alert("VGN", 15, KIND_MOUSE, is_test=True, device_id="vgn:low", full_device_name="VGN Dragonfly F2 Pro Max")
+        mock_thread.assert_called_once()
+
+    def test_hidden_windows_skip_background_js_eval_and_rgn_redraw(self):
+        import threading
+        from unittest.mock import MagicMock, patch
+        import mouse_battery_app as mba
+        from app_config import AppConfig
+
+        app = object.__new__(mba.MouseBatteryApp)
+        app.cfg = AppConfig()
+        app.devices = []
+        app._last_poll_ts = 0.0
+        app._main_maximized = False
+        app._settings_maximized = False
+        app._update_lock = threading.Lock()
+        app._update_state = {"status": "idle"}
+        app.window = MagicMock()
+        app.settings_window = MagicMock()
+        app.hwnd = 1001
+        app.settings_hwnd = 1002
+
+        # 隐藏态：后台轮询 _push_state_to_ui(force=False) 不应向隐藏的 WebView2 注入 JS
+        with patch.object(mba, "_is_window_alive", return_value=True), \
+             patch.object(app, "_is_ui_window_visible", return_value=False), \
+             patch.object(mba, "_safe_eval_js") as mock_eval:
+            app._push_state_to_ui(force=False)
+        mock_eval.assert_not_called()
+
+        # 显式 force=True（如唤出主窗口/打开设置页前预同步）仍正常推送状态
+        with patch.object(mba, "_is_window_alive", return_value=True), \
+             patch.object(app, "_is_ui_window_visible", return_value=False), \
+             patch.object(app, "_build_state_dict", return_value={"ok": True}), \
+             patch.object(mba, "_safe_eval_js") as mock_eval:
+            app._push_state_to_ui(force=True)
+        self.assertEqual(mock_eval.call_count, 2)
+
+    def test_alert_window_independent_topmost_without_promoting_other_windows_or_focus(self):
+        import ctypes
+        from ctypes import wintypes
+        import floating_widget as fw
+
+        if sys.platform != "win32":
+            self.skipTest("仅在 Windows 上验证提醒窗口独立置顶层级")
+
+        import clr
+        clr.AddReference("System.Windows.Forms")
+        clr.AddReference("System.Drawing")
+        import System.Windows.Forms as WinForms
+        from System.Drawing import Color, Point, Size
+
+        user32 = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        fg_before = int(user32.GetForegroundWindow() or 0)
+
+        main_f = WinForms.Form()
+        settings_f = WinForms.Form()
+        float_f = WinForms.Form()
+        alert_f = WinForms.Form()
+        try:
+            for f, sz, pt in (
+                (main_f, (360, 240), (60, 60)),
+                (settings_f, (360, 240), (90, 90)),
+                (float_f, (180, 50), (120, 120)),
+                (alert_f, (280, 56), (150, 150)),
+            ):
+                f.FormBorderStyle = getattr(WinForms.FormBorderStyle, "None")
+                f.ShowInTaskbar = False
+                f.StartPosition = WinForms.FormStartPosition.Manual
+                f.BackColor = Color.FromArgb(26, 30, 39)
+                f.Size = Size(*sz)
+                f.Location = Point(*pt)
+
+            alert_f.Owner = None
+            h_main = int(main_f.Handle.ToInt64())
+            h_set = int(settings_f.Handle.ToInt64())
+            h_flt = int(float_f.Handle.ToInt64())
+            h_alert = int(alert_f.Handle.ToInt64())
+
+            for h in (h_main, h_set, h_flt):
+                fw.apply_non_activating_tool_style(h, layered=True)
+                fw.set_layered_window_alpha(h, 0.9)
+                user32.ShowWindow(wintypes.HWND(h), fw.SW_SHOWNOACTIVATE)
+
+            # 仅对提醒窗口设置独立最高置顶
+            fw.apply_non_activating_tool_style(h_alert, layered=True)
+            fw.set_layered_window_alpha(h_alert, 1.0)
+            user32.ShowWindow(wintypes.HWND(h_alert), fw.SW_SHOWNOACTIVATE)
+            self.assertTrue(fw.set_window_topmost_noactivate(h_alert, True, x=150, y=150, w=280, h=56, show=True))
+            WinForms.Application.DoEvents()
+
+            ex_alert = int(user32.GetWindowLongW(wintypes.HWND(h_alert), GWL_EXSTYLE)) & 0xFFFFFFFF
+            ex_main = int(user32.GetWindowLongW(wintypes.HWND(h_main), GWL_EXSTYLE)) & 0xFFFFFFFF
+            ex_set = int(user32.GetWindowLongW(wintypes.HWND(h_set), GWL_EXSTYLE)) & 0xFFFFFFFF
+            ex_flt = int(user32.GetWindowLongW(wintypes.HWND(h_flt), GWL_EXSTYLE)) & 0xFFFFFFFF
+
+            # 提醒窗口独立 TopMost + 不抢焦点 + 不进 Alt+Tab
+            self.assertTrue(bool(ex_alert & fw.WS_EX_TOPMOST))
+            self.assertTrue(bool(ex_alert & fw.WS_EX_NOACTIVATE))
+            self.assertTrue(bool(ex_alert & fw.WS_EX_TOOLWINDOW))
+            self.assertIsNone(alert_f.Owner)
+            # 主窗口、设置窗口、非置顶悬浮窗绝不被连带置顶
+            self.assertFalse(bool(ex_main & fw.WS_EX_TOPMOST))
+            self.assertFalse(bool(ex_set & fw.WS_EX_TOPMOST))
+            self.assertFalse(bool(ex_flt & fw.WS_EX_TOPMOST))
+            # 前台窗口焦点纹丝不动
+            self.assertEqual(int(user32.GetForegroundWindow() or 0), fg_before)
+
+            # 提醒关闭前降级释放置顶状态
+            self.assertTrue(fw.set_window_topmost_noactivate(h_alert, False, show=False))
+            user32.ShowWindow(wintypes.HWND(h_alert), fw.SW_HIDE)
+            WinForms.Application.DoEvents()
+            ex_after = int(user32.GetWindowLongW(wintypes.HWND(h_alert), GWL_EXSTYLE)) & 0xFFFFFFFF
+            self.assertFalse(bool(ex_after & fw.WS_EX_TOPMOST))
+            self.assertEqual(int(user32.GetForegroundWindow() or 0), fg_before)
+        finally:
+            for f in (alert_f, float_f, settings_f, main_f):
+                try:
+                    f.Dispose()
+                except Exception:
+                    pass
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,155 @@ from providers.device_naming import format_device_subtitle
 EDGE_MARGIN = 16
 
 
+QUNS_NOT_PRESENT = 1
+QUNS_BUSY = 2
+QUNS_RUNNING_D3D_FULL_SCREEN = 3
+QUNS_PRESENTATION_MODE = 4
+QUNS_ACCEPTS_NOTIFICATIONS = 5
+QUNS_QUIET_TIME = 6
+QUNS_APP = 7
+
+WS_EX_TOPMOST = 0x00000008
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
+WS_EX_LAYERED = 0x00080000
+WS_EX_NOACTIVATE = 0x08000000
+LWA_ALPHA = 0x00000002
+SW_HIDE = 0
+SW_SHOWNOACTIVATE = 4
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
+SWP_NOOWNERZORDER = 0x0200
+
+
+def query_user_notification_state() -> int:
+    """查询 Windows 当前前台通知/全屏状态（SHQueryUserNotificationState），零权限、微秒级。"""
+    if sys.platform != "win32":
+        return 0
+    try:
+        shell32 = ctypes.windll.shell32
+        state = ctypes.c_int(0)
+        hr = int(shell32.SHQueryUserNotificationState(ctypes.byref(state)))
+        if hr == 0:
+            return int(state.value)
+    except Exception:
+        pass
+    return 0
+
+
+def is_exclusive_fullscreen_active() -> bool:
+    """仅当检测到 Direct3D 独占全屏游戏（QUNS_RUNNING_D3D_FULL_SCREEN=3）时返回 True。
+
+    说明：不把 QUNS_BUSY(2) 一刀切判为全屏游戏，避免误伤普通最大化窗口或无边框窗口游戏。
+    """
+    return query_user_notification_state() == QUNS_RUNNING_D3D_FULL_SCREEN
+
+
+def apply_non_activating_tool_style(hwnd: int, layered: bool = True) -> int:
+    """以原生 Win32 方式锁死不抢焦点工具窗扩展样式（WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW）。
+
+    规避 WinForms Form.Opacity / Form.TopMost 触发 UpdateStyles() 抹除手动写入扩展样式的缺陷，
+    保证悬浮窗与低电量弹窗永远不抢占前台焦点、永远不进入 Alt+Tab 窗口切换列表。
+    """
+    if sys.platform != "win32" or not hwnd:
+        return 0
+    try:
+        user32 = ctypes.windll.user32
+        hw = wintypes.HWND(hwnd)
+        if not user32.IsWindow(hw):
+            return 0
+        GWL_EXSTYLE = -20
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = wintypes.LONG
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]
+        user32.SetWindowLongW.restype = wintypes.LONG
+
+        cur = int(user32.GetWindowLongW(hw, GWL_EXSTYLE)) & 0xFFFFFFFF
+        desired = (cur | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & (~WS_EX_APPWINDOW & 0xFFFFFFFF)
+        if layered:
+            desired |= WS_EX_LAYERED
+        if desired != cur:
+            user32.SetWindowLongW(hw, GWL_EXSTYLE, ctypes.c_long(desired).value)
+        return int(user32.GetWindowLongW(hw, GWL_EXSTYLE)) & 0xFFFFFFFF
+    except Exception:
+        return 0
+
+
+def set_layered_window_alpha(hwnd: int, opacity: float) -> bool:
+    """通过原生 SetLayeredWindowAttributes 设置窗体透明度（0.0–1.0），不触发 WinForms 样式覆盖。"""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        hw = wintypes.HWND(hwnd)
+        if not user32.IsWindow(hw):
+            return False
+        apply_non_activating_tool_style(hwnd, layered=True)
+        alpha = max(0, min(255, int(round(max(0.0, min(1.0, float(opacity))) * 255.0))))
+        user32.SetLayeredWindowAttributes.argtypes = [
+            wintypes.HWND,
+            wintypes.COLORREF,
+            ctypes.c_ubyte,
+            wintypes.DWORD,
+        ]
+        user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
+        return bool(user32.SetLayeredWindowAttributes(hw, 0, alpha, LWA_ALPHA))
+    except Exception:
+        return False
+
+
+def set_window_topmost_noactivate(
+    hwnd: int,
+    topmost: bool,
+    x: Optional[int] = None,
+    y: Optional[int] = None,
+    w: Optional[int] = None,
+    h: Optional[int] = None,
+    show: bool = False,
+) -> bool:
+    """通过原生 SetWindowPos 独立置顶/降级且严格携带 SWP_NOACTIVATE | SWP_NOOWNERZORDER。
+
+    确保仅目标窗口自身改变 Z-order，绝不连带主窗口/设置窗口/悬浮窗提升层级，也绝不抢占前台焦点。
+    """
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND,
+            wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        hw = wintypes.HWND(hwnd)
+        if not user32.IsWindow(hw):
+            return False
+        flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER
+        if x is None or y is None:
+            flags |= SWP_NOMOVE
+            px, py = 0, 0
+        else:
+            px, py = int(x), int(y)
+        if w is None or h is None:
+            flags |= SWP_NOSIZE
+            pw, ph = 0, 0
+        else:
+            pw, ph = int(w), int(h)
+        if show:
+            flags |= SWP_SHOWWINDOW
+        z_after = wintypes.HWND(-1 if topmost else -2)
+        return bool(user32.SetWindowPos(hw, z_after, px, py, pw, ph, flags))
+    except Exception:
+        return False
+
+
 def is_windows_11() -> bool:
     """准确区分 Windows 11 (Build >= 22000) 与 Windows 10。"""
     if sys.platform != "win32":
@@ -302,6 +451,11 @@ class DesktopFloatingWidget:
         self._bar_current_w = 0
         self._last_icon_sig = None
         self._last_tooltip_text = ""
+        self._last_layout_sig = None
+        self._last_style_sig = None
+        self._last_content_sig = None
+        self._font_cache: dict[tuple[str, str], object] = {}
+        self._suppressed_by_fullscreen = False
         self._locked = True
         self._dragging = False
         self._drag_origin_cursor = (0, 0)
@@ -336,6 +490,12 @@ class DesktopFloatingWidget:
                 self._tooltip = None
                 self._last_icon_sig = None
                 self._last_tooltip_text = ""
+                self._last_layout_sig = None
+                self._last_style_sig = None
+                self._last_content_sig = None
+                self._suppressed_by_fullscreen = False
+                fonts = list(self._font_cache.values())
+                self._font_cache.clear()
             if t is not None:
                 try:
                     t.Stop()
@@ -349,6 +509,29 @@ class DesktopFloatingWidget:
                         f.Dispose()
                 except Exception:
                     pass
+            for fnt in fonts:
+                try:
+                    fnt.Dispose()
+                except Exception:
+                    pass
+
+        self._run_on_ui(_do)
+
+    def _hide_for_fullscreen(self) -> None:
+        """在 Direct3D 独占全屏游戏期间静默隐藏悬浮窗（不改用户配置、不销毁实例、不抢焦点）。"""
+        def _do():
+            f = self._form
+            if f is None:
+                return
+            try:
+                if f.IsDisposed:
+                    return
+                hwnd = int(f.Handle.ToInt64())
+                if hwnd and ctypes.windll.user32.IsWindowVisible(wintypes.HWND(hwnd)):
+                    ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), SW_HIDE)
+                self._suppressed_by_fullscreen = True
+            except Exception:
+                pass
 
         self._run_on_ui(_do)
 
@@ -367,6 +550,11 @@ class DesktopFloatingWidget:
         """根据配置与设备实时状态创建/更新/隐藏桌面悬浮窗。"""
         if not fcfg.enabled:
             self.close()
+            return
+
+        # Direct3D 独占全屏游戏期间自动静默避让，避免 Windows 10 DWM 切屏或露出白框；退出全屏后自动无感恢复
+        if is_exclusive_fullscreen_active():
+            self._hide_for_fullscreen()
             return
 
         scale = self._get_dpi_scale()
@@ -494,8 +682,11 @@ class DesktopFloatingWidget:
 
                     def _on_rgn_sync(_s, _e):
                         try:
-                            if not form.IsDisposed:
-                                apply_window_rounded_corners(int(form.Handle.ToInt64()), radius_dip=10, scale=0.0)
+                            if form.IsDisposed or not form.Visible:
+                                return
+                            h_cur = int(form.Handle.ToInt64())
+                            if h_cur and ctypes.windll.user32.IsWindowVisible(wintypes.HWND(h_cur)):
+                                apply_window_rounded_corners(h_cur, radius_dip=10, scale=0.0)
                                 form.Invalidate()
                         except Exception:
                             pass
@@ -514,137 +705,210 @@ class DesktopFloatingWidget:
                     self._bar_bg = bar_bg
                     self._bar_fill = bar_fill
                     self._tooltip = tt
+                    self._last_layout_sig = None
+                    self._last_style_sig = None
+                    self._last_content_sig = None
 
                 form = self._form
+                hwnd = int(form.Handle.ToInt64())
+                is_visible_now = bool(hwnd and ctypes.windll.user32.IsWindowVisible(wintypes.HWND(hwnd)))
+                was_suppressed = self._suppressed_by_fullscreen
+                self._suppressed_by_fullscreen = False
+
+                target_opacity = max(0.4, min(1.0, int(fcfg.opacity) / 100.0))
+                target_topmost = bool(fcfg.topmost)
+                layout_sig = (w, h, x, y, round(scale, 3), fcfg.size)
+                style_sig = (is_dark, target_topmost, round(target_opacity, 3), fcfg.size)
+                content_sig = (title, pct_text, pct, charging, kind, low_t1, low_t2, low_t3, is_dark, fcfg.size)
+
+                # 若已可见且全部状态均无变化，后台 25 秒轮询期间零 Win32/DWM/重绘扰动
+                if (
+                    is_visible_now
+                    and not was_suppressed
+                    and layout_sig == self._last_layout_sig
+                    and style_sig == self._last_style_sig
+                    and content_sig == self._last_content_sig
+                    and hover_detail == self._last_tooltip_text
+                ):
+                    return
+
                 setattr(form, "_battdock_dark", is_dark)
                 setattr(form, "_battdock_scale", scale)
-                form.TopMost = bool(fcfg.topmost)
-                form.Opacity = max(0.4, min(1.0, int(fcfg.opacity) / 100.0))
-                form.BackColor = Color.FromArgb(26, 30, 39) if is_dark else Color.FromArgb(250, 251, 254)
-                form.Invalidate()
+
+                style_changed = (style_sig != self._last_style_sig) or (not is_visible_now)
+                layout_changed = (layout_sig != self._last_layout_sig) or (not is_visible_now)
                 size_changed = (form.Size.Width != w or form.Size.Height != h)
-                form.Size = Size(w, h)
-                if not self._dragging:
-                    form.Location = Point(x, y)
+
+                if style_changed:
+                    form.BackColor = Color.FromArgb(26, 30, 39) if is_dark else Color.FromArgb(250, 251, 254)
+                if size_changed:
+                    form.Size = Size(w, h)
+                if layout_changed and not self._dragging:
+                    if form.Location.X != x or form.Location.Y != y:
+                        form.Location = Point(x, y)
 
                 pad = int(round(12 * scale))
                 icon_px = int(round((18 if fcfg.size == "small" else (20 if fcfg.size == "medium" else 22)) * scale))
                 top_row_y = int(round((8 if fcfg.size == "small" else 10) * scale))
                 row_h = int(round(22 * scale))
 
-                self._pic.Size = Size(icon_px, icon_px)
-                self._pic.Location = Point(pad, top_row_y + (row_h - icon_px) // 2)
+                if layout_changed:
+                    self._pic.Size = Size(icon_px, icon_px)
+                    self._pic.Location = Point(pad, top_row_y + (row_h - icon_px) // 2)
+
                 icon_sig = (kind, icon_px, is_dark)
                 if icon_sig != self._last_icon_sig:
                     self._last_icon_sig = icon_sig
                     pil_ic = render_device_icon_pil(kind, size=icon_px, is_dark=is_dark)
                     buf = io.BytesIO()
                     pil_ic.save(buf, format="PNG")
+                    old_img = self._pic.Image
                     self._pic.Image = GdiImage.FromStream(MemoryStream(buf.getvalue()))
+                    if old_img is not None:
+                        try:
+                            old_img.Dispose()
+                        except Exception:
+                            pass
 
                 pct_w = int(round(48 * scale))
                 text_x = pad + icon_px + int(round(8 * scale))
                 text_w = max(46, w - text_x - pct_w - pad)
 
-                self._name_lbl.Text = title
-                self._name_lbl.ForeColor = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(24, 27, 34)
-                self._name_lbl.Font = Font("Microsoft YaHei UI", 8.8 if fcfg.size == "small" else (9.5 if fcfg.size == "medium" else 10.2), FontStyle.Bold)
-                self._name_lbl.Size = Size(text_w, row_h)
-                self._name_lbl.Location = Point(text_x, top_row_y)
+                name_font_key = ("name", fcfg.size)
+                name_font = self._font_cache.get(name_font_key)
+                if name_font is None:
+                    name_font = Font(
+                        "Microsoft YaHei UI",
+                        8.8 if fcfg.size == "small" else (9.5 if fcfg.size == "medium" else 10.2),
+                        FontStyle.Bold,
+                    )
+                    self._font_cache[name_font_key] = name_font
 
-                self._pct_lbl.Text = pct_text
-                if pct is not None and not charging and pct <= low_t3:
-                    p_col = Color.FromArgb(248, 113, 113) if is_dark else Color.FromArgb(220, 38, 38)
-                elif pct is not None and not charging and pct <= low_t2:
-                    p_col = Color.FromArgb(251, 146, 60) if is_dark else Color.FromArgb(234, 88, 12)
-                elif pct is not None and not charging and pct <= low_t1:
-                    p_col = Color.FromArgb(250, 204, 21) if is_dark else Color.FromArgb(202, 138, 4)
-                elif charging:
-                    p_col = Color.FromArgb(74, 222, 128) if is_dark else Color.FromArgb(22, 163, 74)
-                else:
-                    p_col = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(24, 27, 34)
-                self._pct_lbl.ForeColor = p_col
-                self._pct_lbl.Font = Font("Microsoft YaHei UI", 9.0 if fcfg.size == "small" else (9.8 if fcfg.size == "medium" else 10.5), FontStyle.Bold)
-                self._pct_lbl.Size = Size(pct_w, row_h)
-                self._pct_lbl.Location = Point(w - pct_w - pad, top_row_y)
+                pct_font_key = ("pct", fcfg.size)
+                pct_font = self._font_cache.get(pct_font_key)
+                if pct_font is None:
+                    pct_font = Font(
+                        "Microsoft YaHei UI",
+                        9.0 if fcfg.size == "small" else (9.8 if fcfg.size == "medium" else 10.5),
+                        FontStyle.Bold,
+                    )
+                    self._font_cache[pct_font_key] = pct_font
 
-                # 底部电量进度条与左右内容对齐，支持平滑宽度过渡
-                bar_h = max(4, int(round(5 * scale)))
-                bar_y = h - int(round((10 if fcfg.size == "small" else 12) * scale))
-                bar_w = max(60, w - pad * 2)
-                self._bar_bg.Location = Point(pad, bar_y)
-                self._bar_bg.Size = Size(bar_w, bar_h)
-                self._bar_bg.BackColor = Color.FromArgb(49, 56, 71) if is_dark else Color.FromArgb(226, 232, 240)
+                if content_sig != self._last_content_sig or layout_changed:
+                    self._name_lbl.Text = title
+                    self._name_lbl.ForeColor = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(24, 27, 34)
+                    self._name_lbl.Font = name_font
+                    self._name_lbl.Size = Size(text_w, row_h)
+                    self._name_lbl.Location = Point(text_x, top_row_y)
 
-                target_fill_w = int(round(bar_w * (max(0, min(100, pct)) / 100.0))) if pct is not None else 0
-                if pct is None:
-                    f_col = Color.FromArgb(148, 163, 184)
-                elif charging or pct > low_t1:
-                    f_col = Color.FromArgb(34, 197, 94)
-                elif pct > low_t2:
-                    f_col = Color.FromArgb(234, 179, 8)
-                elif pct > low_t3:
-                    f_col = Color.FromArgb(245, 158, 11)
-                else:
-                    f_col = Color.FromArgb(239, 68, 68)
-                self._bar_fill.BackColor = f_col
-                self._bar_fill.Location = Point(0, 0)
+                    self._pct_lbl.Text = pct_text
+                    if pct is not None and not charging and pct <= low_t3:
+                        p_col = Color.FromArgb(248, 113, 113) if is_dark else Color.FromArgb(220, 38, 38)
+                    elif pct is not None and not charging and pct <= low_t2:
+                        p_col = Color.FromArgb(251, 146, 60) if is_dark else Color.FromArgb(234, 88, 12)
+                    elif pct is not None and not charging and pct <= low_t1:
+                        p_col = Color.FromArgb(250, 204, 21) if is_dark else Color.FromArgb(202, 138, 4)
+                    elif charging:
+                        p_col = Color.FromArgb(74, 222, 128) if is_dark else Color.FromArgb(22, 163, 74)
+                    else:
+                        p_col = Color.FromArgb(241, 245, 249) if is_dark else Color.FromArgb(24, 27, 34)
+                    self._pct_lbl.ForeColor = p_col
+                    self._pct_lbl.Font = pct_font
+                    self._pct_lbl.Size = Size(pct_w, row_h)
+                    self._pct_lbl.Location = Point(w - pct_w - pad, top_row_y)
 
-                if not animations_enabled or not form.Visible or self._bar_current_w == 0:
-                    self._bar_current_w = target_fill_w
-                    self._bar_target_w = target_fill_w
-                    self._bar_fill.Size = Size(target_fill_w, bar_h)
-                elif target_fill_w != self._bar_target_w:
-                    self._bar_target_w = target_fill_w
-                    if self._bar_timer is not None:
-                        try:
-                            self._bar_timer.Stop()
-                            self._bar_timer.Dispose()
-                        except Exception:
-                            pass
-                    start_w = self._bar_current_w
-                    steps = 10
-                    step_idx = [0]
-                    tmr = WinForms.Timer()
-                    tmr.Interval = 18
+                    # 底部电量进度条与左右内容对齐，支持平滑宽度过渡
+                    bar_h = max(4, int(round(5 * scale)))
+                    bar_y = h - int(round((10 if fcfg.size == "small" else 12) * scale))
+                    bar_w = max(60, w - pad * 2)
+                    self._bar_bg.Location = Point(pad, bar_y)
+                    self._bar_bg.Size = Size(bar_w, bar_h)
+                    self._bar_bg.BackColor = Color.FromArgb(49, 56, 71) if is_dark else Color.FromArgb(226, 232, 240)
 
-                    def _step_bar(_s, _e):
-                        step_idx[0] += 1
-                        if self._bar_fill is None or self._form is None or self._form.IsDisposed:
-                            tmr.Stop()
-                            tmr.Dispose()
-                            return
-                        t = min(1.0, step_idx[0] / float(steps))
-                        eased = 1.0 - (1.0 - t) ** 3
-                        cur = int(round(start_w + (self._bar_target_w - start_w) * eased))
-                        self._bar_current_w = cur
-                        self._bar_fill.Size = Size(cur, bar_h)
-                        if t >= 1.0:
-                            tmr.Stop()
-                            tmr.Dispose()
-                            self._bar_timer = None
+                    target_fill_w = int(round(bar_w * (max(0, min(100, pct)) / 100.0))) if pct is not None else 0
+                    if pct is None:
+                        f_col = Color.FromArgb(148, 163, 184)
+                    elif charging or pct > low_t1:
+                        f_col = Color.FromArgb(34, 197, 94)
+                    elif pct > low_t2:
+                        f_col = Color.FromArgb(234, 179, 8)
+                    elif pct > low_t3:
+                        f_col = Color.FromArgb(245, 158, 11)
+                    else:
+                        f_col = Color.FromArgb(239, 68, 68)
+                    self._bar_fill.BackColor = f_col
+                    self._bar_fill.Location = Point(0, 0)
 
-                    tmr.Tick += _step_bar
-                    self._bar_timer = tmr
-                    tmr.Start()
-                else:
-                    self._bar_fill.Size = Size(self._bar_current_w, bar_h)
+                    if not animations_enabled or not is_visible_now or self._bar_current_w == 0:
+                        self._bar_current_w = target_fill_w
+                        self._bar_target_w = target_fill_w
+                        self._bar_fill.Size = Size(target_fill_w, bar_h)
+                    elif target_fill_w != self._bar_target_w:
+                        self._bar_target_w = target_fill_w
+                        if self._bar_timer is not None:
+                            try:
+                                self._bar_timer.Stop()
+                                self._bar_timer.Dispose()
+                            except Exception:
+                                pass
+                        start_w = self._bar_current_w
+                        steps = 10
+                        step_idx = [0]
+                        tmr = WinForms.Timer()
+                        tmr.Interval = 18
+
+                        def _step_bar(_s, _e):
+                            step_idx[0] += 1
+                            if self._bar_fill is None or self._form is None or self._form.IsDisposed:
+                                tmr.Stop()
+                                tmr.Dispose()
+                                return
+                            t = min(1.0, step_idx[0] / float(steps))
+                            eased = 1.0 - (1.0 - t) ** 3
+                            cur = int(round(start_w + (self._bar_target_w - start_w) * eased))
+                            self._bar_current_w = cur
+                            self._bar_fill.Size = Size(cur, bar_h)
+                            if t >= 1.0:
+                                tmr.Stop()
+                                tmr.Dispose()
+                                self._bar_timer = None
+
+                        tmr.Tick += _step_bar
+                        self._bar_timer = tmr
+                        tmr.Start()
+                    else:
+                        self._bar_fill.Size = Size(self._bar_current_w, bar_h)
 
                 if self._tooltip is not None and hover_detail != self._last_tooltip_text:
                     self._last_tooltip_text = hover_detail
                     for ctrl in (form, self._pic, self._name_lbl, self._pct_lbl, self._bar_bg, self._bar_fill):
                         self._tooltip.SetToolTip(ctrl, hover_detail)
 
-                hwnd = int(form.Handle.ToInt64())
-                if size_changed or not form.Visible:
+                # 使用纯 Win32 扩展样式 + SetLayeredWindowAttributes + SetWindowPos(SWP_NOACTIVATE)，
+                # 全程锁死 WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED，杜绝抢焦点与 Alt+Tab 残留
+                if style_changed or not is_visible_now:
+                    apply_non_activating_tool_style(hwnd, layered=True)
+                    set_layered_window_alpha(hwnd, target_opacity)
+                    form.Invalidate()
+                if size_changed or not is_visible_now:
                     apply_window_rounded_corners(hwnd, radius_dip=10, scale=scale)
-                if not form.Visible:
-                    user32 = ctypes.windll.user32
-                    GWL_EXSTYLE = -20
-                    ex = user32.GetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE)
-                    ex |= 0x00000080  # WS_EX_TOOLWINDOW
-                    user32.SetWindowLongW(wintypes.HWND(hwnd), GWL_EXSTYLE, ex)
-                    user32.ShowWindow(wintypes.HWND(hwnd), 4)  # SW_SHOWNOACTIVATE
+                if not is_visible_now:
+                    ctypes.windll.user32.ShowWindow(wintypes.HWND(hwnd), SW_SHOWNOACTIVATE)
+                    set_window_topmost_noactivate(
+                        hwnd,
+                        target_topmost,
+                        x=x,
+                        y=y,
+                        w=w,
+                        h=h,
+                        show=True,
+                    )
+                elif style_changed:
+                    set_window_topmost_noactivate(hwnd, target_topmost, show=False)
+
+                self._last_layout_sig = layout_sig
+                self._last_style_sig = style_sig
+                self._last_content_sig = content_sig
             except Exception:
                 pass
 
