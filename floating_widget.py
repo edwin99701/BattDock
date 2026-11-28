@@ -443,7 +443,7 @@ def draw_battery_icon(
         cx = right / 2
         cy = grid / 2
         bolt_w = grid * 0.30
-        bolt_h = min(grid * 0.39, body_h - 2 * inset + ss)
+        bolt_h = min(grid * 0.46, body_h - 2 * inset + 2 * ss)
         bolt = [
             (round(cx + x * bolt_w), round(cy + y * bolt_h))
             for x, y in ((0.26, -0.50), (-0.50, 0.06), (-0.08, 0.06),

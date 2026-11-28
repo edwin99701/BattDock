@@ -2598,6 +2598,21 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
                     self.assertTrue(any(max(charging.getpixel(pt)[:3]) < 40 and charging.getpixel(pt)[3] > 220 for pt in window))
                     self.assertTrue(any(min(charging.getpixel(pt)[:3]) > 170 and charging.getpixel(pt)[3] > 155 for pt in window))
 
+    def test_charging_bolt_uses_more_interior_height_on_small_tray_grids(self):
+        from floating_widget import draw_battery_icon
+
+        for size, light, min_rows in ((16, False, 5), (20, True, 6), (24, False, 8), (32, True, 10)):
+            with self.subTest(size=size, light=light):
+                image = draw_battery_icon(size, 75, charging=True, light_bg=light)
+                ink_rows = 0
+                for y in range(size // 4 + 1, size * 3 // 4 - 1):
+                    for x in range(size // 4, size * 3 // 4):
+                        red, green, blue, alpha = image.getpixel((x, y))
+                        if alpha >= 200 and max(red, green, blue) < 75:
+                            ink_rows += 1
+                            break
+                self.assertGreaterEqual(ink_rows, min_rows)
+
     def test_tray_fill_tracks_percent_on_each_grid_with_or_without_charging(self):
         from floating_widget import draw_battery_icon
 
