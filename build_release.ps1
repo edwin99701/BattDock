@@ -1,13 +1,12 @@
-﻿# BattDock 一键可重复构建与 Release 打包脚本（含旧版 VGNMouseBattery 平滑升级桥接包与 SHA256SUMS.txt）
+﻿# BattDock 一键可重复构建与 Release 打包脚本（使用全新构建与产物目录，不含递归删除，保留已有正式资产）
 param(
-    [string]$PythonExe = ""
+    [string]$PythonExe = "",
+    [string]$OutputRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$DistTmp = Join-Path $Root "build_dist"
-$WorkTmp = Join-Path $Root "build_tmp"
-$ReleaseDir = Join-Path $Root "release\BattDock"
+$Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
 if ([string]::IsNullOrWhiteSpace($PythonExe) -or !(Test-Path $PythonExe)) {
     $DefaultPy = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"
@@ -19,13 +18,23 @@ if ([string]::IsNullOrWhiteSpace($PythonExe) -or !(Test-Path $PythonExe)) {
 }
 
 $AppVersion = (& $PythonExe -c "import sys; sys.path.insert(0, r'$Root'); import brand; print(brand.APP_VERSION)").Trim()
-Write-Host "=== 构建 BattDock v$AppVersion ==="
+$BaseOut = if ([string]::IsNullOrWhiteSpace($OutputRoot)) { Join-Path $Root "release" } else { $OutputRoot }
+$BuildRunDir = Join-Path $BaseOut "build_run_v${AppVersion}_$Stamp"
+$DistTmp = Join-Path $BuildRunDir "dist"
+$WorkTmp = Join-Path $BuildRunDir "work"
+$ReleaseDir = Join-Path $BaseOut "BattDock_v${AppVersion}_$Stamp"
+$ReleaseAssetsDir = Join-Path $BaseOut "assets_v$AppVersion"
+if (Test-Path $ReleaseAssetsDir) {
+    $ReleaseAssetsDir = Join-Path $BaseOut "assets_v${AppVersion}_$Stamp"
+}
+
+Write-Host "=== 构建 BattDock v$AppVersion（全新隔离目录，保留已有正式资产） ==="
 
 Write-Host "[1/6] 运行全部自动化单元测试..."
 & $PythonExe -m unittest discover -s (Join-Path $Root "tests") -v
 if ($LASTEXITCODE -ne 0) { throw "单元测试未通过，已中止打包。" }
 
-New-Item -ItemType Directory -Force -Path $WorkTmp | Out-Null
+New-Item -ItemType Directory -Force -Path $WorkTmp, $DistTmp, $ReleaseAssetsDir | Out-Null
 
 Write-Host "[2/6] 使用 PyInstaller 构建 BattDock.exe（含品牌图标与 Windows 版本属性）..."
 & $PythonExe -m PyInstaller --noconfirm --clean --onedir --windowed `
@@ -109,18 +118,8 @@ pause
 "@
 Set-Content -Path (Join-Path $BuiltAppDir "创建桌面与开始菜单快捷方式.bat") -Value $ShortcutBat -Encoding UTF8
 
-Write-Host "[5/6] 部署到 release\BattDock 并打包正式发布产物..."
-Get-Process -Name "BattDock","VGNMouseBattery" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 600
-if (Test-Path $ReleaseDir) {
-    Remove-Item -Recurse -Force $ReleaseDir
-}
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReleaseDir) | Out-Null
+Write-Host "[5/6] 部署到全新运行目录 $ReleaseDir 并打包正式发布产物..."
 Move-Item -Force $BuiltAppDir $ReleaseDir
-
-$ReleaseAssetsDir = Join-Path $Root "release\assets_v$AppVersion"
-if (Test-Path $ReleaseAssetsDir) { Remove-Item -Recurse -Force $ReleaseAssetsDir }
-New-Item -ItemType Directory -Force -Path $ReleaseAssetsDir | Out-Null
 
 $PortableZip = Join-Path $ReleaseAssetsDir "BattDock-v$AppVersion-Windows-x64-Portable.zip"
 $BridgeZip = Join-Path $ReleaseAssetsDir "VGNMouseBattery-v$AppVersion-win64-UpgradeBridge.zip"
@@ -137,7 +136,7 @@ $IsccExe = $IsccCandidates | Where-Object { Test-Path $_ } | Select-Object -Firs
 $IssPath = Join-Path $Root "installer\BattDock.iss"
 if ($IsccExe -and (Test-Path $IssPath)) {
     Write-Host "[5.5/6] 使用 Inno Setup 编译标准安装程序（BattDock-v$AppVersion-Setup.exe）..."
-    & $IsccExe "/DMyAppVersion=$AppVersion" $IssPath
+    & $IsccExe "/DMyAppVersion=$AppVersion" "/DMySourceDir=$ReleaseDir" "/DMyOutputDir=$ReleaseAssetsDir" $IssPath
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译安装程序失败。" }
 } else {
     Write-Host "[5.5/6] 未检测到 Inno Setup 6，跳过 Setup.exe 编译（仅生成便携 ZIP）。"
@@ -176,8 +175,7 @@ print('ASSETS_OK:', ' | '.join(f'{fp.name} ({round(fp.stat().st_size/1048576, 2)
 "
 if ($LASTEXITCODE -ne 0) { throw "打包发布产物 ZIP 失败。" }
 
-Write-Host "[6/6] 清理构建临时目录..."
-Remove-Item -Recurse -Force $DistTmp, $WorkTmp
-
-Write-Host "构建完成：$ReleaseDir\BattDock.exe"
+Write-Host "[6/6] 构建完成（零递归删除，保留中间构建目录与历史正式资产）..."
+Write-Host "运行目录：$ReleaseDir\BattDock.exe"
 Write-Host "发布产物目录：$ReleaseAssetsDir"
+Write-Host "构建中间目录：$BuildRunDir"

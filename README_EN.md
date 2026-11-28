@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/BattDock/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.7.6-111827?style=for-the-badge" alt="Download Latest BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20Download%20Latest-BattDock%20v2.7.7-111827?style=for-the-badge" alt="Download Latest BattDock" />
 </a>
 
 </div>
@@ -35,10 +35,10 @@
 ## Key Features
 
 - **Multi-Brand Support**: Hardware-verified on `VGN Dragonfly F2 Pro Max`, with built-in read-only adapters (unit-tested, awaiting physical hardware verification) for wireless mice, headsets, and keyboards across Logitech / ASTRO (HID++ 2.0, G headsets & Centurion), Razer (mice, 11 keyboards, BlackShark/Kraken/Barracuda headsets), SteelSeries (Arctis/Nova/Elite/GameBuds), Corsair (SLIPSTREAM, Void/HS70/HS80/Virtuoso), HyperX (Cloud Alpha/II/III/III S/Flight/Stinger, Pulsefire), ASUS ROG / TUF, JBL Quantum, EPOS, Audeze, AKG, Skullcandy, Jabra, Poly, Fractal Design Scape, MOONDROP GM01 Pro, Alienware AW920H, Sony INZONE / PULSE 3D, AULA / MCHOSE / AJAZZ / Attack Shark / CHERRY / Rongyuan / URX / VGN / VXE / ATK keyboards & headsets, Apple Magic Keyboard, MAC-aggregated Windows Bluetooth HFP/BLE devices (iKF, Edifier, Bose, Sennheiser, Keychron, NuPhy, Royal Kludge, Akko, etc.), and a read-only Standard USB HID Battery Strength (`0x06:0x20`) catch-all provider.
-- **Native Win32 Dynamic System Tray Battery Icon & Compact Hover Popup**: Minimalist line-art dynamic battery icon adapting to light/dark taskbars and DPI sizes (16–32px) with automatic recovery, plus a non-activating compact battery hover popup (300ms show / 200ms hide, Win10/11 compatible) and a tray toggle for the floating widget.
+- **Native Win32 Dynamic System Tray Battery Icon & On-Demand Hover Popup**: Pixel-aligned native-style dynamic battery icon with linear fill, white-outlined charging bolt, light/dark taskbar adaptation and auto-recovery, paired with a non-activating compact battery hover popup (300ms show / 200ms hide, Win10/11 compatible) and a tray toggle for the floating widget.
 - **3-Tier & Custom Low-Battery Alerts**: Default `30% / 20% / 10%` thresholds with hysteresis, per-device overrides, system sounds, and a compact 5-second top-most mini popup that never steals fullscreen/game focus.
-- **Native Desktop Floating Widget**: Lightweight WinForms overlay (zero extra WebView2 overhead) with customizable opacity, size, position presets, custom label, and lock toggle.
-- **Light / Dark / System Themes & Taskbar Toggle**: Clean Win10/11-compatible dual-window UI with native taskbar click-to-toggle minimization, smooth transitions, and reduced-motion support.
+- **Native Desktop Floating Widget**: Double-buffered WinForms overlay (zero extra WebView2 overhead) with single/multi-device rounded progress bars, DPI scaling, customizable opacity, size, position presets, custom label, and lock toggle.
+- **Light / Dark / System Themes & Gentle Status Motion**: Clean Win10/11-compatible dual-window UI with native taskbar click-to-toggle minimization, aligned charging indicators, gentle breathing status indicators, and full reduced-motion support.
 - **Built-In Online Updates**: Token-free GitHub Releases update checker with automatic CN mirror acceleration and silent GitHub fallback, SHA-256 verification, same-volume rollback, and zero-loss config preservation.
 
 ---
@@ -74,7 +74,7 @@
 
 ## Download & Installation
 
-1. Go to [GitHub Releases](https://github.com/edwin99701/BattDock/releases/latest) and download **`BattDock-v2.7.6-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.7.6-Windows-x64-Portable.zip`** (portable archive).
+1. Go to [GitHub Releases](https://github.com/edwin99701/BattDock/releases/latest) and download **`BattDock-v2.7.7-Setup.exe`** (recommended Windows installer, supports custom drives/paths, standard Windows uninstall, and in-app auto-updates) or **`BattDock-v2.7.7-Windows-x64-Portable.zip`** (portable archive).
 2. Run the installer or extract the ZIP and launch **`BattDock.exe`** (requires Windows 10 22H2 x64+ or Windows 11 x64).
 3. Settings are stored in `%LOCALAPPDATA%\BattDock\config.json` and preserved across updates. Legacy `VGNMouseBattery` configurations and autostart entries migrate automatically on first launch.
 

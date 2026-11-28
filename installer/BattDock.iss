@@ -2,7 +2,13 @@
 ; 特点：管理员安装 + 安装目录 users-modify 权限 + runasoriginaluser，支持任意盘符安装、软件内免 UAC 一键自动更新、防重复安装、自动停进程覆盖与标准卸载
 
 #ifndef MyAppVersion
-  #define MyAppVersion "2.7.6"
+  #define MyAppVersion "2.7.7"
+#endif
+#ifndef MySourceDir
+  #define MySourceDir "..\release\BattDock"
+#endif
+#ifndef MyOutputDir
+  #define MyOutputDir "..\release\assets_v" + MyAppVersion
 #endif
 
 #define MyAppName "BattDock"
@@ -29,7 +35,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=..\release\assets_v{#MyAppVersion}
+OutputDir={#MyOutputDir}
 OutputBaseFilename=BattDock-v{#MyAppVersion}-Setup
 SetupIconFile=..\assets\app_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -63,7 +69,7 @@ Name: "{app}"; Permissions: users-modify
 
 [Files]
 ; 打包已编译的 release\BattDock 全部运行文件（排除仅给便携 ZIP 用的两个 bat 脚本）
-Source: "..\release\BattDock\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "卸载BattDock.bat,创建桌面与开始菜单快捷方式.bat"
+Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "卸载BattDock.bat,创建桌面与开始菜单快捷方式.bat"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; Comment: "{#MyAppDesc}"

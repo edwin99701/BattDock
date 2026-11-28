@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 APP_NAME = "BattDock"
-APP_VERSION = "2.7.6"
-APP_VERSION_TUPLE = (2, 7, 6, 0)
+APP_VERSION = "2.7.7"
+APP_VERSION_TUPLE = (2, 7, 7, 0)
 APP_DESCRIPTION_ZH = "轻量化 Windows 无线外设电量管理工具"
 
 APP_EXE_NAME = "BattDock.exe"
