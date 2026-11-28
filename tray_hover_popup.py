@@ -46,17 +46,18 @@ from providers.base import KIND_OTHER
 
 # 统一 Windows 原生状态面板视觉规范常量（逻辑 DIP）
 POPUP_MIN_WIDTH_DIP = 232
-POPUP_SINGLE_MAX_WIDTH_DIP = 270
-POPUP_MAX_WIDTH_DIP = 310
-POPUP_SINGLE_ROW_HEIGHT_DIP = 44
-POPUP_ROW_HEIGHT_DIP = 42
+POPUP_SINGLE_MAX_WIDTH_DIP = 322
+POPUP_MAX_WIDTH_DIP = 336
+POPUP_SINGLE_ROW_HEIGHT_DIP = 48
+POPUP_ROW_HEIGHT_DIP = 46
 POPUP_PAD_X_DIP = 14
 POPUP_PAD_Y_DIP = 6
 POPUP_RADIUS_DIP = 10
-POPUP_ICON_DIP = 18
+POPUP_ICON_DIP = 20
 POPUP_ICON_GAP_DIP = 10
 POPUP_VALUE_GAP_DIP = 12
-POPUP_BOLT_SLOT_DIP = 13
+POPUP_VALUE_MIN_DIP = 44
+POPUP_FONT_PX = {"name": 13, "status": 11, "pct": 16}
 POPUP_MAX_VISIBLE_ROWS = 6
 POPUP_ANCHOR_GAP_DIP = 8
 POPUP_WORKAREA_MARGIN_DIP = 8
@@ -92,6 +93,16 @@ class TrayHoverRow:
     value_text: str   # 如 "75%"、"100%"、"休眠"、"离线"、"—"
     show_bolt: bool
 
+    @property
+    def status_text(self) -> str:
+        return {
+            "charging": "正在充电",
+            "full": "已充满",
+            "offline": "离线",
+            "sleep": "休眠",
+            "unknown": "电量未知",
+        }.get(self.alert_level, "未充电")
+
 
 def build_tray_hover_rows(
     devices: list[Any],
@@ -107,7 +118,7 @@ def build_tray_hover_rows(
     if not visible_devs:
         return []
 
-    names = resolve_tray_hover_device_names(visible_devs, aliases=aliases)
+    names = resolve_tray_hover_device_names(visible_devs, aliases=aliases, include_brand=True)
     rows: list[TrayHoverRow] = []
     for dev, disp_name in zip(visible_devs, names):
         did = str(getattr(dev, "device_id", "") or "")
@@ -243,7 +254,6 @@ def compute_popup_logical_size(
         )
     ]
 
-    any_bolt = any(r.show_bolt for r in eff_rows)
     scrollable = len(eff_rows) > POPUP_MAX_VISIBLE_ROWS
     vis_count = min(len(eff_rows), POPUP_MAX_VISIBLE_ROWS)
 
@@ -264,10 +274,8 @@ def compute_popup_logical_size(
 
     mfn = measure_text_dip or _default_measure
     max_name_w = max((mfn(r.name, False) for r in eff_rows), default=90.0)
-    max_val_w = max((mfn(r.value_text, True) for r in eff_rows), default=32.0)
-    max_val_w = max(max_val_w, 34.0)
+    max_val_w = max(mfn("100%", True), POPUP_VALUE_MIN_DIP)
 
-    bolt_w = POPUP_BOLT_SLOT_DIP if any_bolt else 0
     scroll_w = 8 if scrollable else 0
     needed_w = (
         POPUP_PAD_X_DIP * 2
@@ -276,7 +284,6 @@ def compute_popup_logical_size(
         + math.ceil(max_name_w)
         + POPUP_VALUE_GAP_DIP
         + math.ceil(max_val_w)
-        + bolt_w
         + scroll_w
     )
     max_w = POPUP_SINGLE_MAX_WIDTH_DIP if vis_count == 1 else POPUP_MAX_WIDTH_DIP
@@ -526,36 +533,36 @@ class TrayHoverStateMachine:
 def _palette(is_dark: bool) -> dict[str, tuple[int, int, int]]:
     if is_dark:
         return {
-            "bg": (30, 34, 44),
-            "border": (52, 59, 77),
-            "divider": (46, 52, 66),
-            "text": (241, 245, 249),
-            "muted": (126, 135, 153),
-            "icon": (241, 245, 249),
-            "icon_muted": (110, 121, 140),
-            "normal": (241, 245, 249),
-            "charging": (74, 222, 128),
-            "full": (74, 222, 128),
-            "tier1": (250, 204, 21),
-            "tier2": (251, 146, 60),
-            "tier3": (248, 113, 113),
-            "scroll_thumb": (92, 102, 124),
+            "bg": (37, 37, 37),
+            "border": (73, 73, 73),
+            "divider": (57, 57, 57),
+            "text": (248, 248, 248),
+            "muted": (181, 181, 181),
+            "icon": (248, 248, 248),
+            "icon_muted": (156, 156, 156),
+            "normal": (248, 248, 248),
+            "charging": (111, 222, 151),
+            "full": (111, 222, 151),
+            "tier1": (255, 210, 101),
+            "tier2": (255, 158, 96),
+            "tier3": (255, 137, 137),
+            "scroll_thumb": (135, 135, 135),
         }
     return {
-        "bg": (255, 255, 255),
-        "border": (220, 226, 236),
-        "divider": (236, 240, 246),
-        "text": (24, 27, 34),
-        "muted": (138, 146, 162),
-        "icon": (17, 24, 39),
-        "icon_muted": (148, 163, 184),
-        "normal": (24, 27, 34),
-        "charging": (22, 163, 74),
-        "full": (22, 163, 74),
-        "tier1": (202, 138, 4),
-        "tier2": (234, 88, 12),
-        "tier3": (220, 38, 38),
-        "scroll_thumb": (196, 204, 218),
+        "bg": (249, 249, 249),
+        "border": (212, 212, 212),
+        "divider": (226, 226, 226),
+        "text": (30, 30, 30),
+        "muted": (91, 91, 91),
+        "icon": (30, 30, 30),
+        "icon_muted": (108, 108, 108),
+        "normal": (30, 30, 30),
+        "charging": (10, 110, 57),
+        "full": (10, 110, 57),
+        "tier1": (129, 84, 0),
+        "tier2": (162, 62, 13),
+        "tier3": (179, 36, 43),
+        "scroll_thumb": (145, 145, 145),
     }
 
 
@@ -580,15 +587,12 @@ def _query_monitor_metrics_for_point(pt: tuple[int, int]) -> tuple[tuple[int, in
                 ("dwFlags", wintypes.DWORD),
             ]
 
-        class _PT(ctypes.Structure):
-            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
-        user32.MonitorFromPoint.argtypes = [_PT, wintypes.DWORD]
-        user32.MonitorFromPoint.restype = wintypes.HANDLE
-        hmon = user32.MonitorFromPoint(_PT(int(pt[0]), int(pt[1])), 2)  # MONITOR_DEFAULTTONEAREST
+        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        user32.MonitorFromPoint.restype = wintypes.HMONITOR
+        hmon = user32.MonitorFromPoint(wintypes.POINT(*pt), 2)  # MONITOR_DEFAULTTONEAREST
         mi = _MONITORINFO()
         mi.cbSize = ctypes.sizeof(_MONITORINFO)
-        if hmon and user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+        if hmon and user32.GetMonitorInfoW(wintypes.HMONITOR(hmon), ctypes.byref(mi)):
             mrect = (int(mi.rcMonitor.left), int(mi.rcMonitor.top), int(mi.rcMonitor.right), int(mi.rcMonitor.bottom))
             wrect = (int(mi.rcWork.left), int(mi.rcWork.top), int(mi.rcWork.right), int(mi.rcWork.bottom))
         else:
@@ -603,7 +607,7 @@ def _query_monitor_metrics_for_point(pt: tuple[int, int]) -> tuple[tuple[int, in
                 shcore = ctypes.windll.shcore
                 dx = ctypes.c_uint(96)
                 dy = ctypes.c_uint(96)
-                if shcore.GetDpiForMonitor(hmon, 0, ctypes.byref(dx), ctypes.byref(dy)) == 0 and dx.value:
+                if shcore.GetDpiForMonitor(wintypes.HMONITOR(hmon), 0, ctypes.byref(dx), ctypes.byref(dy)) == 0 and dx.value:
                     scale = float(dx.value) / 96.0
             except Exception:
                 pass
@@ -619,23 +623,22 @@ def _detect_overflow_window_rect(pt: tuple[int, int]) -> Optional[tuple[int, int
     try:
         user32 = ctypes.windll.user32
 
-        class _PT(ctypes.Structure):
-            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
-        user32.WindowFromPoint.argtypes = [_PT]
+        user32.WindowFromPoint.argtypes = [wintypes.POINT]
         user32.WindowFromPoint.restype = wintypes.HWND
-        hwnd = user32.WindowFromPoint(_PT(int(pt[0]), int(pt[1])))
+        hwnd = user32.WindowFromPoint(wintypes.POINT(*pt))
         if not hwnd:
             return None
         # 向上回溯到顶层窗口检查窗口类名
         GA_ROOT = 2
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
         root = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
         buf = ctypes.create_unicode_buffer(128)
-        user32.GetClassNameW(root, buf, 128)
+        user32.GetClassNameW(wintypes.HWND(root), buf, 128)
         cls_name = buf.value or ""
         if cls_name in _OVERFLOW_CLASS_NAMES or "Overflow" in cls_name:
             rc = wintypes.RECT()
-            if user32.GetWindowRect(root, ctypes.byref(rc)):
+            if user32.GetWindowRect(wintypes.HWND(root), ctypes.byref(rc)):
                 if rc.right > rc.left and rc.bottom > rc.top:
                     return (int(rc.left), int(rc.top), int(rc.right), int(rc.bottom))
     except Exception:
@@ -861,13 +864,13 @@ class TrayHoverPopup:
     def _get_font_ui(self, role: str, scale: float):
         from System.Drawing import Font, FontStyle, GraphicsUnit
 
-        pt_px = max(10, int(round((12.5 if role == "name" else 12.5) * scale)))
+        pt_px = max(10, int(round(POPUP_FONT_PX[role] * scale)))
         key = (role, pt_px)
         cached = self._font_cache.get(key)
         if cached is not None:
             return cached
         family = resolve_winforms_font_family(numeric=(role == "pct"))
-        style = FontStyle.Bold if role == "pct" else FontStyle.Regular
+        style = FontStyle.Regular if role == "status" else FontStyle.Bold
         fnt = Font(family, float(pt_px), style, GraphicsUnit.Pixel)
         self._font_cache[key] = fnt
         return fnt
@@ -906,21 +909,7 @@ class TrayHoverPopup:
         def _do_ui() -> None:
             try:
                 import System.Windows.Forms as WinForms
-                from System.Drawing import (
-                    Color,
-                    Graphics,
-                    Point,
-                    PointF,
-                    RectangleF,
-                    Size,
-                    SolidBrush,
-                    StringAlignment,
-                    StringFormat,
-                    StringFormatFlags,
-                    StringTrimming,
-                )
-                from System.Drawing.Drawing2D import GraphicsPath, SmoothingMode
-                from System.Drawing.Text import TextRenderingHint
+                from System.Drawing import Color, Point, Size
 
                 self._rows = list(rows)
                 self._is_dark = is_dark
@@ -1112,7 +1101,7 @@ class TrayHoverPopup:
         """双缓冲单表面绘制整张紧凑电量浮层（零子控件、抗锯齿图标与清晰的电量右对齐排版）。"""
         from System.Drawing import (
             Color,
-            PointF,
+            Pen,
             RectangleF,
             SolidBrush,
             StringAlignment,
@@ -1156,44 +1145,23 @@ class TrayHoverPopup:
         total_rows = len(rows)
         scrollable = total_rows > POPUP_MAX_VISIBLE_ROWS
         visible_rows = rows[self._scroll_offset : self._scroll_offset + POPUP_MAX_VISIBLE_ROWS]
-        any_bolt = any(r.show_bolt for r in rows)
-
-        pad_x = int(round(POPUP_PAD_X_DIP * sc))
-        pad_y = int(round(POPUP_PAD_Y_DIP * sc))
-        row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if len(visible_rows) == 1 else POPUP_ROW_HEIGHT_DIP
-        row_h = int(round(row_h_dip * sc))
-        icon_px = max(14, int(round(POPUP_ICON_DIP * sc)))
-        icon_gap = int(round(POPUP_ICON_GAP_DIP * sc))
-        val_gap = int(round(POPUP_VALUE_GAP_DIP * sc))
-        bolt_slot = int(round(POPUP_BOLT_SLOT_DIP * sc)) if any_bolt else 0
-        scroll_slot = int(round(7 * sc)) if scrollable else 0
+        pad_x = round(POPUP_PAD_X_DIP * sc)
+        pad_y = round(POPUP_PAD_Y_DIP * sc)
+        row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if total_rows == 1 else POPUP_ROW_HEIGHT_DIP
+        row_h = round(row_h_dip * sc)
+        icon_px = round(POPUP_ICON_DIP * sc)
+        right_edge = width - pad_x - (round(8 * sc) if scrollable else 0)
+        val_col_w = round(POPUP_VALUE_MIN_DIP * sc)
+        val_x = right_edge - val_col_w
+        name_x = pad_x + icon_px + round(POPUP_ICON_GAP_DIP * sc)
+        name_w = max(1, val_x - round(POPUP_VALUE_GAP_DIP * sc) - name_x)
+        label_h = round(18 * sc)
+        status_h = round(15 * sc)
+        label_y = (row_h - label_h - status_h) // 2
 
         name_font = self._get_font_ui("name", sc)
+        status_font = self._get_font_ui("status", sc)
         pct_font = self._get_font_ui("pct", sc)
-
-        # 右侧数值列宽度按当前列表最大值紧凑计算（中文状态如「休眠」「离线」使用中文字体避免缺字）
-        val_col_w = int(round(38 * sc))
-        try:
-            import System.Windows.Forms as WinForms
-
-            max_vw = max(
-                int(
-                    WinForms.TextRenderer.MeasureText(
-                        r.value_text,
-                        pct_font if r.value_text.isascii() else name_font,
-                    ).Width
-                )
-                for r in rows
-            )
-            val_col_w = max(int(round(34 * sc)), max_vw + int(round(3 * sc)))
-        except Exception:
-            pass
-
-        right_edge = width - pad_x - scroll_slot
-        bolt_x = right_edge - bolt_slot
-        val_x = bolt_x - val_col_w
-        name_x = pad_x + icon_px + icon_gap
-        name_w = max(40, val_x - val_gap - name_x)
 
         sf_left = StringFormat()
         sf_left.Alignment = StringAlignment.Near
@@ -1206,58 +1174,36 @@ class TrayHoverPopup:
         sf_right.LineAlignment = StringAlignment.Center
         sf_right.FormatFlags = StringFormatFlags.NoWrap
 
-        from System.Drawing import Pen
-
         try:
             for idx, row in enumerate(visible_rows):
-                ry = pad_y + idx * row_h
-                is_inactive = row.alert_level in ("offline", "sleep", "unknown")
-
+                ry = pad_y + round(idx * row_h_dip * sc)
+                is_inactive = row.percent is None
                 if idx > 0:
-                    pen_div = Pen(Color.FromArgb(*pal["divider"]), 1.0)
+                    pen = Pen(Color.FromArgb(*pal["divider"]), 1.0)
                     try:
-                        g.DrawLine(pen_div, float(pad_x), float(ry), float(right_edge), float(ry))
+                        g.DrawLine(pen, float(name_x), float(ry), float(right_edge), float(ry))
                     finally:
-                        pen_div.Dispose()
+                        pen.Dispose()
 
-                # 1. 统一黑白实心设备类型图标
                 gdi_icon = self._get_icon_ui(row.kind, icon_px, self._is_dark, is_inactive)
-                iy = ry + (row_h - icon_px) // 2
-                g.DrawImage(gdi_icon, pad_x, iy, icon_px, icon_px)
+                g.DrawImage(gdi_icon, pad_x, ry + (row_h - icon_px) // 2, icon_px, icon_px)
 
-                # 2. 简洁设备名称（自定义名称优先，过长优雅省略）
-                name_rgb = pal["muted"] if is_inactive else pal["text"]
-                nb = SolidBrush(Color.FromArgb(*name_rgb))
+                name_brush = SolidBrush(Color.FromArgb(*pal["text"]))
+                status_rgb = pal[row.alert_level] if row.alert_level in ("charging", "full") else pal["muted"]
+                status_brush = SolidBrush(Color.FromArgb(*status_rgb))
+                value_brush = SolidBrush(Color.FromArgb(*_row_value_rgb(row, pal)))
                 try:
-                    g.DrawString(row.name, name_font, nb, RectangleF(float(name_x), float(ry), float(name_w), float(row_h)), sf_left)
+                    y = ry + (label_y if row.device_id else (row_h - label_h) // 2)
+                    g.DrawString(row.name, name_font, name_brush, RectangleF(name_x, y, name_w, label_h), sf_left)
+                    if row.device_id:
+                        g.DrawString(row.status_text, status_font, status_brush,
+                                     RectangleF(name_x, y + label_h, name_w, status_h), sf_left)
+                        value = "—" if is_inactive else row.value_text
+                        g.DrawString(value, pct_font, value_brush, RectangleF(val_x, ry, val_col_w, row_h), sf_right)
                 finally:
-                    nb.Dispose()
-
-                # 3. 电量百分比或中文状态（右端统一齐平，与桌面悬浮窗完全一致）
-                val_rgb = _row_value_rgb(row, pal)
-                val_font = pct_font if row.value_text.isascii() else name_font
-                row_bolt_w = int(round(POPUP_BOLT_SLOT_DIP * sc)) if row.show_bolt else 0
-                row_val_right = right_edge - row_bolt_w
-                row_val_x = row_val_right - val_col_w
-                vb = SolidBrush(Color.FromArgb(*val_rgb))
-                try:
-                    g.DrawString(row.value_text, val_font, vb, RectangleF(float(row_val_x), float(ry), float(val_col_w), float(row_h)), sf_right)
-                    # 4. 充电小闪电（纯矢量抗锯齿绘制，不依赖系统 Emoji 字体）
-                    if row.show_bolt:
-                        bcx = float(row_val_right) + float(row_bolt_w) * 0.56
-                        bcy = float(ry) + float(row_h) * 0.5
-                        u = 1.05 * sc
-                        pts = [
-                            PointF(bcx + 1.1 * u, bcy - 4.8 * u),
-                            PointF(bcx - 2.6 * u, bcy + 0.6 * u),
-                            PointF(bcx - 0.1 * u, bcy + 0.6 * u),
-                            PointF(bcx - 1.1 * u, bcy + 4.8 * u),
-                            PointF(bcx + 2.6 * u, bcy - 0.6 * u),
-                            PointF(bcx + 0.1 * u, bcy - 0.6 * u),
-                        ]
-                        g.FillPolygon(vb, pts)
-                finally:
-                    vb.Dispose()
+                    name_brush.Dispose()
+                    status_brush.Dispose()
+                    value_brush.Dispose()
 
             # 5. 设备较多时的极简细滚动指示条
             if scrollable:
@@ -1289,7 +1235,7 @@ def render_hover_popup_pil(
     is_dark: bool = False,
     scale: float = 1.0,
 ) -> Image.Image:
-    """高保真离屏预览渲染器（用于跨主题/多设备/多 DPI 自动化视觉验收与截图，与线上布局完全同源）。"""
+    """按浮层布局生成离屏测试图像。"""
     sc = max(1.0, float(scale or 1.0))
     pal = _palette(is_dark)
 
@@ -1308,10 +1254,9 @@ def render_hover_popup_pil(
                 continue
         return ImageFont.load_default()
 
-    name_px = max(11, int(round(12.5 * sc)))
-    pct_px = max(11, int(round(12.5 * sc)))
-    name_font = _load_font(False, name_px)
-    pct_font = _load_font(True, pct_px)
+    name_font = _load_font(False, round(POPUP_FONT_PX["name"] * sc))
+    status_font = _load_font(False, round(POPUP_FONT_PX["status"] * sc))
+    pct_font = _load_font(True, round(POPUP_FONT_PX["pct"] * sc))
 
     tmp_draw = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
 
@@ -1356,69 +1301,36 @@ def render_hover_popup_pil(
     out = img.resize((pw, ph), Image.Resampling.LANCZOS)
     draw = ImageDraw.Draw(out)
 
-    any_bolt = any(r.show_bolt for r in eff_rows)
-    pad_x = int(round(POPUP_PAD_X_DIP * sc))
-    pad_y = int(round(POPUP_PAD_Y_DIP * sc))
+    pad_x = round(POPUP_PAD_X_DIP * sc)
+    pad_y = round(POPUP_PAD_Y_DIP * sc)
     row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if vis_cnt == 1 else POPUP_ROW_HEIGHT_DIP
-    row_h = int(round(row_h_dip * sc))
-    icon_px = max(14, int(round(POPUP_ICON_DIP * sc)))
-    icon_gap = int(round(POPUP_ICON_GAP_DIP * sc))
-    val_gap = int(round(POPUP_VALUE_GAP_DIP * sc))
-    bolt_slot = int(round(POPUP_BOLT_SLOT_DIP * sc)) if any_bolt else 0
-    scroll_slot = int(round(7 * sc)) if scrollable else 0
-
-    max_vw = max(
-        int(tmp_draw.textbbox((0, 0), r.value_text, font=(pct_font if r.value_text.isascii() else name_font))[2])
-        for r in eff_rows
-    )
-    val_col_w = max(int(round(34 * sc)), max_vw + int(round(2 * sc)))
-    right_edge = pw - pad_x - scroll_slot
-    bolt_x = right_edge - bolt_slot
-    val_right = bolt_x
-    name_x = pad_x + icon_px + icon_gap
-    max_name_px = max(40, val_right - val_col_w - val_gap - name_x)
+    row_h = round(row_h_dip * sc)
+    icon_px = round(POPUP_ICON_DIP * sc)
+    right_edge = pw - pad_x - (round(8 * sc) if scrollable else 0)
+    name_x = pad_x + icon_px + round(POPUP_ICON_GAP_DIP * sc)
+    name_w = right_edge - round((POPUP_VALUE_MIN_DIP + POPUP_VALUE_GAP_DIP) * sc) - name_x
 
     for idx, row in enumerate(eff_rows[:vis_cnt]):
-        ry = pad_y + idx * row_h
+        ry = pad_y + round(idx * row_h_dip * sc)
+        is_inactive = row.percent is None
         if idx > 0:
-            draw.line([(pad_x, ry), (right_edge, ry)], fill=(*pal["divider"], 255), width=1)
-        is_inactive = row.alert_level in ("offline", "sleep", "unknown")
+            draw.line([(name_x, ry), (right_edge, ry)], fill=(*pal["divider"], 255), width=1)
         ic_rgb = pal["icon_muted"] if is_inactive else pal["icon"]
         ic = render_device_icon_pil(row.kind, size=icon_px, is_dark=is_dark, color=(*ic_rgb, 255))
-        out.paste(ic, (pad_x, ry + (row_h - icon_px) // 2), ic)
+        out.alpha_composite(ic, (pad_x, ry + (row_h - icon_px) // 2))
 
-        # 超长名称省略
-        nm = row.name
-        while len(nm) > 2 and (tmp_draw.textbbox((0, 0), nm, font=name_font)[2] > max_name_px):
-            nm = nm[:-2].rstrip() + "…"
-        nb = tmp_draw.textbbox((0, 0), nm, font=name_font)
-        nh = nb[3] - nb[1]
-        ny = ry + (row_h - nh) // 2 - nb[1]
-        draw.text((name_x, ny), nm, font=name_font, fill=(*(pal["muted"] if is_inactive else pal["text"]), 255))
-
-        v_font = pct_font if row.value_text.isascii() else name_font
-        vb = tmp_draw.textbbox((0, 0), row.value_text, font=v_font)
-        vw = vb[2] - vb[0]
-        vh = vb[3] - vb[1]
-        vy = ry + (row_h - vh) // 2 - vb[1]
-        vrgb = _row_value_rgb(row, pal)
-        row_bolt_w = int(round(POPUP_BOLT_SLOT_DIP * sc)) if row.show_bolt else 0
-        row_val_right = right_edge - row_bolt_w
-        draw.text((row_val_right - vw, vy), row.value_text, font=v_font, fill=(*vrgb, 255))
-
-        if row.show_bolt:
-            bcx = row_val_right + row_bolt_w * 0.56
-            bcy = ry + row_h * 0.5
-            u = 1.05 * sc
-            pts = [
-                (bcx + 1.1 * u, bcy - 4.8 * u),
-                (bcx - 2.6 * u, bcy + 0.6 * u),
-                (bcx - 0.1 * u, bcy + 0.6 * u),
-                (bcx - 1.1 * u, bcy + 4.8 * u),
-                (bcx + 2.6 * u, bcy - 0.6 * u),
-                (bcx + 0.1 * u, bcy - 0.6 * u),
-            ]
-            draw.polygon(pts, fill=(*vrgb, 255))
+        name = row.name
+        while len(name) > 2 and draw.textlength(name, font=name_font) > name_w:
+            name = name[:-2].rstrip() + "…"
+        middle = ry + row_h / 2
+        draw.text((name_x, middle - (8 * sc if row.device_id else 0)), name,
+                  font=name_font, fill=(*pal["text"], 255), anchor="lm")
+        if row.device_id:
+            status_rgb = pal[row.alert_level] if row.alert_level in ("charging", "full") else pal["muted"]
+            draw.text((name_x, middle + 9 * sc), row.status_text,
+                      font=status_font, fill=(*status_rgb, 255), anchor="lm")
+            draw.text((right_edge, middle), "—" if is_inactive else row.value_text,
+                      font=pct_font, fill=(*_row_value_rgb(row, pal), 255), anchor="rm")
 
     if scrollable:
         track_top = pad_y + int(round(3 * sc))

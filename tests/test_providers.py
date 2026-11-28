@@ -2576,6 +2576,98 @@ class TestV275BatteryAccuracyChargingAndFonts(unittest.TestCase):
 class TestV276TrayIconAndHoverPopup(unittest.TestCase):
     """v2.7.6 系统托盘极简动态图标、悬停紧凑电量浮层、定位兼容与防干扰回归门禁。"""
 
+    def test_charging_keeps_battery_outline_and_fill_on_each_native_grid(self):
+        from floating_widget import draw_battery_icon
+
+        for size in (16, 20, 24, 28, 32):
+            for light_bg in (False, True):
+                with self.subTest(size=size, light=light_bg):
+                    normal = draw_battery_icon(size, 75, light_bg=light_bg)
+                    charging = draw_battery_icon(size, 75, charging=True, light_bg=light_bg)
+                    self.assertEqual(normal.getbbox(), charging.getbbox())
+                    outline = normal.getpixel((0, size // 2))
+                    fill = normal.getpixel((size // 3, size // 2))
+                    normal_pixels = [normal.getpixel((x, y)) for y in range(size) for x in range(size)]
+                    charging_pixels = [charging.getpixel((x, y)) for y in range(size) for x in range(size)]
+                    self.assertTrue(all(after == outline for before, after in zip(normal_pixels, charging_pixels) if before == outline))
+                    self.assertGreaterEqual(charging_pixels.count(fill), normal_pixels.count(fill) * 0.65)
+                    self.assertGreater(charging_pixels.count(outline), normal_pixels.count(outline))
+
+    @unittest.skipUnless(sys.platform == "win32", "需要 Windows GDI")
+    def test_hicon_edges_composite_correctly_with_native_drawiconex(self):
+        import ctypes
+        from ctypes import wintypes
+
+        from PIL import Image
+        from tray_icon import _BITMAPV5HEADER, _gdi32, destroy_hicon_safe, pil_image_to_hicon
+
+        gdi = ctypes.WinDLL("gdi32")
+        user = ctypes.WinDLL("user32")
+        gdi.CreateCompatibleDC.argtypes = [wintypes.HDC]
+        gdi.CreateCompatibleDC.restype = wintypes.HDC
+        gdi.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+        gdi.SelectObject.restype = wintypes.HGDIOBJ
+        gdi.DeleteDC.argtypes = [wintypes.HDC]
+        user.DrawIconEx.argtypes = [
+            wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.HICON,
+            ctypes.c_int, ctypes.c_int, wintypes.UINT, wintypes.HBRUSH, wintypes.UINT,
+        ]
+        info = _BITMAPV5HEADER()
+        info.bV5Size, info.bV5Width, info.bV5Height = ctypes.sizeof(info), 16, -16
+        info.bV5Planes, info.bV5BitCount = 1, 32
+        bits = ctypes.c_void_p()
+        dc = gdi.CreateCompatibleDC(None)
+        bitmap = _gdi32.CreateDIBSection(dc, ctypes.byref(info), 0, ctypes.byref(bits), None, 0)
+        self.assertTrue(bitmap and bits.value)
+        previous = gdi.SelectObject(dc, bitmap)
+        icon = pil_image_to_hicon(Image.new("RGBA", (16, 16), (200, 100, 50, 128)))
+        try:
+            self.assertTrue(icon)
+            for background in (0, 120):
+                ctypes.memmove(bits.value, bytes((background, background, background, 255)) * 256, 1024)
+                self.assertTrue(user.DrawIconEx(dc, 0, 0, icon, 16, 16, 0, None, 3))
+                bgr = ctypes.string_at(bits.value, 3)
+                for actual, source in zip(bgr, (50, 100, 200)):
+                    self.assertAlmostEqual(actual, (source + background) / 2, delta=1)
+        finally:
+            destroy_hicon_safe(icon)
+            gdi.SelectObject(dc, previous)
+            _gdi32.DeleteObject(bitmap)
+            gdi.DeleteDC(dc)
+
+    def test_hover_shows_brand_model_and_explicit_charging_state(self):
+        from providers.base import DeviceBattery, KIND_HEADSET
+        from tray_hover_popup import build_tray_hover_rows
+
+        dev = DeviceBattery(
+            device_id="headset", name="SteelSeries Arctis Nova 7", brand="SteelSeries",
+            kind=KIND_HEADSET, percent=83, connected=True, online=True, charging=True,
+        )
+        row, = build_tray_hover_rows([dev])
+        self.assertEqual((row.name, row.status_text, row.value_text), ("SteelSeries Arctis Nova 7", "正在充电", "83%"))
+        dev.charging = False
+        row, = build_tray_hover_rows([dev])
+        self.assertEqual((row.status_text, row.value_text), ("未充电", "83%"))
+        dev.full, dev.percent = True, 100
+        row, = build_tray_hover_rows([dev])
+        self.assertEqual((row.status_text, row.value_text), ("已充满", "100%"))
+        dev.name, dev.brand = "AirPods Pro 2", "Apple"
+        row, = build_tray_hover_rows([dev])
+        self.assertEqual(row.name, "Apple AirPods Pro 2")
+
+    @unittest.skipUnless(sys.platform == "win32", "需要 Windows 显示器 API")
+    def test_hover_monitor_query_preserves_shared_point_signature(self):
+        import ctypes
+        from ctypes import wintypes
+
+        from tray_hover_popup import _query_monitor_metrics_for_point
+
+        monitor, work_area, scale = _query_monitor_metrics_for_point((0, 0))
+        self.assertGreater(monitor[2] - monitor[0], 0)
+        self.assertGreater(work_area[3] - work_area[1], 0)
+        self.assertGreaterEqual(scale, 1.0)
+        self.assertTrue(ctypes.windll.user32.MonitorFromPoint(wintypes.POINT(0, 0), 2))
+
     def test_minimal_tray_battery_icon_sizes_states_and_taskbar_themes(self):
         from floating_widget import draw_battery_icon
         from tray_icon import destroy_hicon_safe, pil_image_to_hicon
@@ -2712,7 +2804,7 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
         rows = build_tray_hover_rows(devs, hidden_ids={"d_hid"})
         self.assertEqual(len(rows), 5)
         self.assertEqual((rows[0].name, rows[0].value_text, rows[0].show_bolt, rows[0].alert_level), ("VGN F2 Pro Max", "75%", True, "charging"))
-        self.assertEqual((rows[1].name, rows[1].value_text, rows[1].show_bolt, rows[1].alert_level), ("Arctis Nova 7", "82%", False, "normal"))
+        self.assertEqual((rows[1].name, rows[1].value_text, rows[1].show_bolt, rows[1].alert_level), ("SteelSeries Arctis Nova 7", "82%", False, "normal"))
         self.assertEqual((rows[2].name, rows[2].value_text, rows[2].show_bolt, rows[2].alert_level), ("ATK68", "20%", False, "tier2"))
         self.assertEqual((rows[3].value_text, rows[3].alert_level, rows[3].percent), ("—", "unknown", None))
         self.assertEqual((rows[4].value_text, rows[4].alert_level, rows[4].percent), ("休眠", "sleep", None))

@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md — BattDock 权威技术架构文档
 
-> 本文档以当前源码（**BattDock v2.7.6**，`master` 分支）为唯一事实来源，系统记录项目技术栈、模块职责、核心流程、兼容性方案及命名映射关系。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
+> 正式版本基线为 **BattDock v2.7.6**。当前分支包含 **v2.7.7-test.3** 的托盘与悬浮窗改动。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
 
 ---
 
@@ -143,7 +143,7 @@ BattDock/
 自 `v2.7.3` 起彻底移除 `pystray 0.19.5`（根治其无锁 `HICON`/`HMENU` 竞态、忽略 `NIM_ADD` 返回值、权限异常崩溃及临时 `.ico` 磁盘写入四大缺陷），改用自研原生 Win32 **`tray_icon.py`（`TrayIconController`）**：
 
 - **完全生命周期解耦**：在独立后台线程创建隐藏顶层消息窗口运行 Win32 消息循环，与主窗口/设置窗口的关闭、隐藏、最小化、重建及监控暂停完全解耦。
-- **纯内存极简图标原子替换**：`draw_battery_icon()`（`floating_widget.py`）绘制透明底极简横向圆角电池图标，自适应 Windows 10/11 浅/深色任务栏（`SystemUsesLightTheme`）与当前任务栏 DPI 小图标尺寸（16/20/24/28/32px 像素网格对齐），支持正常绿、三级低电色阶、充电清晰闪电与休眠/离线/过期灰态；`pil_image_to_hicon()` 纯内存生成 32 位 ARGB `HICON`（零磁盘临时文件），`set_icon()` 在 `RLock` 保护下先注册新图标再安全销毁旧 `HICON`。
+- **纯内存极简图标原子替换**：`draw_battery_icon()`（`floating_widget.py`）按任务栏物理像素尺寸（16/20/24/28/32px）分别栅格化横向电池轮廓、正极、实心填充和内置充电闪电。轮廓依 `SystemUsesLightTheme` 切换深色或白色，保留三级低电色阶及休眠、离线、过期灰态。`pil_image_to_hicon()` 纯内存生成 32 位 ARGB `HICON`，`set_icon()` 在 `RLock` 内应用新图标后释放旧句柄。
 - **高可靠自愈与悬停联动**：`NIM_ADD` 失败退避重试、`NIM_MODIFY` 失败自动补注册，监听 `WM_TASKBARCREATED` / `WM_DISPLAYCHANGE` / `WM_DPICHANGED` / `WM_SETTINGCHANGE` 自动恢复图标与同步主题；通过 `WM_MOUSEMOVE` + `Shell_NotifyIconGetRect` 联动 `tray_hover_popup.py` 紧凑悬停电量浮层（悬停 300ms 显示、移开 200ms 收起、独立非激活工具窗、Direct3D 独占全屏避让、开启时置空 `szTip` 防与原生 Tooltip 重复，外观设置关闭后立即恢复原生托盘提示）。
 - **Win11 置顶兼容与实时菜单**：显式保持 `TRAY_UID = 0`，100% 兼容老用户在 Windows 11 `NotifyIconSettings` 中已设置的 `IsPromoted = 1` 置顶偏好；左键唤出主窗口，右键现场构建原生 `HMENU`（实时反映「显示桌面悬浮窗」勾选状态）并在使用后销毁；脱敏诊断报告附带 `tray` 健康状态快照。
 
@@ -193,7 +193,7 @@ BattDock/
 ## 10. 桌面悬浮窗实现方式
 
 - 实现于 `floating_widget.py`（`DesktopFloatingWidget`），基于原生 WinForms 窗体（零额外 WebView2 进程），经主窗体 UI 线程 `BeginInvoke` 刷新；全程使用原生 Win32 扩展样式（`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED`）、`SetLayeredWindowAttributes` 与状态签名差异更新（无变化轮询零 Win32/DWM/重绘扰动），并缓存复用 GDI 字体；Direct3D 独占全屏游戏期间静默隐藏、退出后自动恢复。
-- **内容与交互**：黑白实心设备图标 + 默认精简品牌名（`resolve_compact_device_label()`，同品牌多设备自动补全型号、支持自定义显示名与悬停查看完整详情）+ 百分比 + 平滑电量条 + 1px 抗锯齿圆角细边（`paint_winforms_rounded_border()`）。
+- **内容与交互**：黑白实心设备图标、紧凑设备名、百分比、充电闪电及与设备名称对齐的平滑电量条。自动模式显示多设备，支持指定设备和仅最低电量模式。别名和悬停详情沿用已有配置，Win10 使用 `paint_winforms_rounded_border()` 绘制细边。窗口尺寸按托盘工作区所在显示器的 DPI 缩放。
 - 支持透明度（`40%–100%`）、小/中/大尺寸、四角预设与自由拖拽坐标持久化、位置锁定、指定设备或自动跟随、双击唤出主窗口，以及系统托盘右键与设置页双向实时开关。
 
 ---

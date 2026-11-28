@@ -937,6 +937,12 @@ class TrayIconController:
                         return 0
                 elif WM_TASKBARCREATED and msg == WM_TASKBARCREATED:
                     self._handle_shell_recreate()
+                    if self._on_environment_change is not None:
+                        threading.Thread(
+                            target=self._run_action_safe,
+                            args=(self._on_environment_change,),
+                            daemon=True,
+                        ).start()
                     return 0
                 elif msg == WM_SETTINGCHANGE:
                     if self._on_environment_change is not None:

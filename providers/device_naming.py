@@ -674,6 +674,8 @@ def simplify_tray_hover_device_name(device, alias: str = "") -> str:
 def resolve_tray_hover_device_names(
     devices: list,
     aliases: Optional[dict[str, str]] = None,
+    *,
+    include_brand: bool = False,
 ) -> list[str]:
     """批量生成托盘悬停浮层设备简名，并确保同品牌同型号多设备可清晰区分。"""
     alias_map = aliases or {}
@@ -689,6 +691,14 @@ def resolve_tray_hover_device_names(
             pid=getattr(dev, "pid", None),
             brand=(getattr(dev, "brand", "") or "").strip(),
         )
+        if include_brand and not al:
+            brand = canonical_brand_name(getattr(dev, "brand", "") or "", full)
+            if brand:
+                prefix = brand.casefold()
+                if not base.casefold().startswith(prefix):
+                    base = f"{brand} {base}"
+                if not full.casefold().startswith(prefix):
+                    full = f"{brand} {full}"
         base_names.append(base)
         full_names.append(full)
 

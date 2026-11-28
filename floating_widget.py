@@ -374,234 +374,76 @@ def draw_battery_icon(
     light_bg: bool = False,
     full: bool = False,
 ) -> Image.Image:
-    """Windows 10 / 11 原生风格动态电池托盘图标（满画布占比、粗轮廓、实心填充与顶部嵌合充电闪电）。
-
-    视觉与像素对齐规范（对标 Windows 11 彩色原生任务栏电池图标）：
-    - 横向圆角矩形主体充分占满有效画布，右侧紧贴突出清晰正极凸起，无多余留白；
-    - 内部采用与外框保有均匀间隙的圆角实心电量填充，宽度随设备真实电量百分比变化；
-    - 正常绿 / 一级黄 / 二级橙 / 三级红 / 离线休眠过期灰态，自动适配浅色与深色任务栏；
-    - 充电中（charging=True 且未 full）在顶部中央自然嵌合小型闪电并断开顶边框与微缺口，
-      既还原 Windows 原生充电电池造型，又最大程度保留内部实心绿色电量填充面积；
-    - 16×16 采用纯整数像素直绘零羽化，20×20–32×32 采用 4× 整数网格 + BOX 零振铃下采样。
-    """
+    """按目标物理像素绘制横向电池，圆角和闪电单独做面积抗锯齿。"""
     size = max(16, int(size or 64))
-    is_offline = (not connected) or (percent is None)
-
-    if is_offline:
-        outline_col = (100, 116, 139, 242) if light_bg else (164, 174, 188, 238)
-        fill_col = (148, 163, 184, 0)
-        pct = 0
-        show_bolt = False
+    online = connected and percent is not None
+    pct = max(0, min(100, int(percent))) if online else 0
+    outline = (29, 29, 29, 255) if light_bg else (255, 255, 255, 255)
+    if not online:
+        outline = (100, 100, 100, 255) if light_bg else (169, 169, 169, 255)
+    if charging or full or pct > low_t1:
+        fill = (22, 163, 74, 255) if light_bg else (52, 211, 105, 255)
+    elif pct <= low_t3:
+        fill = (220, 38, 38, 255) if light_bg else (255, 89, 89, 255)
+    elif pct <= low_t2:
+        fill = (217, 80, 15, 255) if light_bg else (255, 143, 62, 255)
     else:
-        outline_col = (24, 32, 46, 255) if light_bg else (255, 255, 255, 255)
-        pct = max(0, min(100, int(percent)))
-        is_full_state = bool(full)
-        show_bolt = bool(charging) and (not is_full_state)
-        if charging or is_full_state:
-            fill_col = (22, 163, 74, 255) if light_bg else (34, 197, 94, 255)
-        elif pct <= low_t3:
-            fill_col = (220, 38, 38, 255) if light_bg else (239, 68, 68, 255)
-        elif pct <= low_t2:
-            fill_col = (234, 88, 12, 255) if light_bg else (249, 115, 22, 255)
-        elif pct <= low_t1:
-            fill_col = (202, 138, 4, 255) if light_bg else (250, 204, 21, 255)
-        else:
-            fill_col = (22, 163, 74, 255) if light_bg else (34, 197, 94, 255)
+        fill = (190, 127, 0, 255) if light_bg else (255, 205, 51, 255)
 
-    # 针对 100% / 125% / 150% / 175% / 200% DPI 严格整数网格布局（预留顶部 3–6px 给嵌合闪电）
-    if size <= 18:
-        # 16×16 (100% DPI)：14×11 满占比主体 + 2×5 正极，2px 粗轮廓，1px 内距，8×5 实心填充，顶部留 3px
-        cap_w = 2
-        bx0, bx1 = 0, size - cap_w
-        by0, by1 = 3, 14
-        cap_h = 5
-        stroke = 2
-        inner_gap = 1
-        outer_r = 2
-        fill_r = 1
-    elif size <= 22:
-        # 20×20 (125% DPI)：17×13 主体 + 3×5 正极，2px 粗轮廓，1px 内距，11×7 实心填充，顶部留 4px
-        cap_w = 3
-        bx0, bx1 = 0, size - cap_w
-        by0, by1 = 4, 17
-        cap_h = 5
-        stroke = 2
-        inner_gap = 1
-        outer_r = 3
-        fill_r = 1
-    elif size <= 26:
-        # 24×24 (150% DPI)：21×15 主体 + 3×7 正极，2px 粗轮廓，1px 内距，15×9 实心填充，顶部留 5px
-        cap_w = 3
-        bx0, bx1 = 0, size - cap_w
-        by0, by1 = 5, 20
-        cap_h = 7
-        stroke = 2
-        inner_gap = 1
-        outer_r = 3
-        fill_r = 2
-    elif size <= 30:
-        # 28×28 (175% DPI)：24×18 主体 + 4×8 正极，3px 粗轮廓，1px 内距，16×10 实心填充，顶部留 5px
-        cap_w = 4
-        bx0, bx1 = 0, size - cap_w
-        by0, by1 = 5, 23
-        cap_h = 8
-        stroke = 3
-        inner_gap = 1
-        outer_r = 4
-        fill_r = 2
-    elif size <= 36:
-        # 32×32 (200% DPI)：28×20 主体 + 4×10 正极，3px 粗轮廓，1px 内距，20×12 实心填充，顶部留 6px
-        cap_w = 4
-        bx0, bx1 = 0, size - cap_w
-        by0, by1 = 6, 26
-        cap_h = 10
-        stroke = 3
-        inner_gap = 1
-        outer_r = 4
-        fill_r = 2
-    else:
-        cap_w = max(5, int(round(size * 0.115)))
-        bx0, bx1 = 0, size - cap_w
-        body_h = int(round(size * 0.64))
-        by0 = int(round(size * 0.19))
-        by1 = by0 + body_h
-        cap_h = max(8, int(round(body_h * 0.44)))
-        stroke = max(4, int(round(size * 0.088)))
-        inner_gap = max(2, int(round(size * 0.036)))
-        outer_r = max(5, int(round(size * 0.125)))
-        fill_r = max(2, int(round(size * 0.048)))
-
-    cap_y0 = by0 + ((by1 - by0) - cap_h) // 2
-    cap_y1 = cap_y0 + cap_h
-
-    inset = stroke + inner_gap
-    fx0 = bx0 + inset
-    fy0 = by0 + inset
-    fx1_max = bx1 - inset
-    fy1 = by1 - inset
-    avail_w = fx1_max - fx0
-
-    # 16×16（100% DPI）纯整数像素直绘：零模糊、零振铃，充电闪电自然跨骑顶边框
-    if size == 16:
-        img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
-        px = img.load()
-        # 1. 2px 粗实心圆角外框
-        for y in range(by0, by1):
-            for x in range(bx0, bx1):
-                on_border = (x < bx0 + stroke) or (x >= bx1 - stroke) or (y < by0 + stroke) or (y >= by1 - stroke)
-                if not on_border:
-                    continue
-                if (x in (bx0, bx1 - 1)) and (y in (by0, by1 - 1)):
-                    continue
-                px[x, y] = outline_col
-        # 2. 右侧紧贴 2×5 正极凸起
-        for y in range(cap_y0, cap_y1):
-            for x in range(bx1, 16):
-                if x == 15 and y in (cap_y0, cap_y1 - 1):
-                    continue
-                px[x, y] = outline_col
-        # 3. 内部实心填充（8×5 整像素）
-        if pct > 0 and avail_w > 0:
-            fw_px = min(avail_w, max(1, int(round(avail_w * (pct / 100.0)))))
-            for y in range(fy0, fy1):
-                for x in range(fx0, fx0 + fw_px):
-                    px[x, y] = fill_col
-        # 4. 顶部中央跨边框小闪电（清空顶框与上沿极窄透明缺口，完整保留中下部绿色电量）
-        if show_bolt:
-            bolt_pixels = {
-                (7, 0),
-                (6, 1), (7, 1),
-                (5, 2), (6, 2), (7, 2),
-                (5, 3), (6, 3), (7, 3), (8, 3),
-                (6, 4), (7, 4), (8, 4),
-                (6, 5), (7, 5),
-                (6, 6),
-            }
-            # 在闪电周围 1px 开出干净透明缺口（断开顶边框并微切填充顶沿），还原 Windows 11 实拍风格
-            for bx, by in bolt_pixels:
-                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    nx, ny = bx + dx, by + dy
-                    if 0 <= nx < 16 and 0 <= ny < 16 and (nx, ny) not in bolt_pixels:
-                        px[nx, ny] = (0, 0, 0, 0)
-            bolt_col = (24, 32, 46, 255) if light_bg else (255, 255, 255, 255)
-            for bx, by in bolt_pixels:
-                px[bx, by] = bolt_col
-        return img
-
-    # 20×20 及以上：4× 整数网格超采样 + BOX 区域均值下采样（零 LANCZOS 振铃）
+    # 各 DPI 直接从几何轮廓栅格化，主体与正极横跨整个物理画布。
     ss = 4
-    S = size * ss
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+    grid = size * ss
+    cap_w = max(2, round(size / 8))
+    body_w = size - cap_w
+    body_h = round(size * 0.64)
+    top = (size - body_h) // 2
+    bottom = top + body_h
+    cap_h = round(body_h * 0.46)
+    cap_top = top + (body_h - cap_h) // 2
+    stroke = max(5, round(grid * 0.086))
+    radius = round(grid * 0.12)
+    transparent = (0, 0, 0, 0)
+    image = Image.new("RGBA", (grid, grid), transparent)
+    draw = ImageDraw.Draw(image)
 
-    # 1. 圆角电池外框
+    right = body_w * ss
     draw.rounded_rectangle(
-        [bx0 * ss, by0 * ss, bx1 * ss - 1, by1 * ss - 1],
-        radius=outer_r * ss,
-        fill=(0, 0, 0, 0),
-        outline=outline_col,
-        width=stroke * ss,
+        (0, top * ss, right - 1, bottom * ss - 1),
+        radius=radius, fill=outline,
     )
-
-    # 2. 右侧紧贴电池主体的正极凸起
-    cap_left = max(bx0 * ss, (bx1 - 1) * ss)
-    cap_right = size * ss - 1
-    cap_r = max(ss, int(round(cap_w * ss * 0.45)))
     draw.rounded_rectangle(
-        [cap_left, cap_y0 * ss, cap_right, cap_y1 * ss - 1],
-        radius=cap_r,
-        fill=outline_col,
+        (stroke, top * ss + stroke, right - stroke - 1, bottom * ss - stroke - 1),
+        radius=max(0, radius - stroke), fill=transparent,
     )
-    draw.rectangle(
-        [cap_left, cap_y0 * ss, bx1 * ss + max(1, ss // 2), cap_y1 * ss - 1],
-        fill=outline_col,
+    draw.rounded_rectangle(
+        (right - ss, cap_top * ss, grid - 1, (cap_top + cap_h) * ss - 1),
+        radius=round(cap_w * ss * 0.40), fill=outline,
     )
 
-    # 3. 内部圆角实心电量填充（严格按实际百分比缩放宽度）
-    if pct > 0 and avail_w > 0 and fy1 > fy0:
-        min_px = 1 if size <= 24 else 2
-        fw_px = max(min_px, int(round(avail_w * (pct / 100.0))))
-        fw_px = min(avail_w, fw_px)
-        r_fill = min(fill_r * ss, (fw_px * ss) // 2, ((fy1 - fy0) * ss) // 2)
-        draw.rounded_rectangle(
-            [fx0 * ss, fy0 * ss, (fx0 + fw_px) * ss - 1, fy1 * ss - 1],
-            radius=max(0, r_fill),
-            fill=fill_col,
+    if pct:
+        inset = math.ceil((stroke + grid * 0.038) / ss)
+        fill_width = max(1, round((body_w - inset * 2) * pct / 100))
+        draw.rectangle(
+            (inset * ss, (top + inset) * ss, (inset + fill_width) * ss - 1, (bottom - inset) * ss - 1),
+            fill=fill,
         )
 
-    # 4. 充电标识：复刻 Windows 11 原生顶部中央跨边框小闪电（切出干净透明缺口，绝少遮挡绿色电量）
-    if show_bolt and avail_w > 0 and fy1 > fy0:
-        cx = ((bx0 + bx1) * 0.5) * ss
-        bolt_top = max(0.0, (by0 * ss) - max(ss * 2.8, (by1 - by0) * ss * 0.27))
-        bolt_bot = (fy0 + (fy1 - fy0) * 0.54) * ss
-        cy = (bolt_top + bolt_bot) * 0.5
-        half_h = (bolt_bot - bolt_top) * 0.5
-        half_w = half_h * 0.50
+    if online and charging and not full:
+        # 闪电放在电池内侧靠右，保留完整外框和左侧读数。
+        cx = round(right - (stroke + grid * 0.17))
+        cy = (top + bottom) * ss / 2
+        bolt_w = grid * 0.25
+        bolt_h = grid * 0.35
         bolt = [
-            (cx + half_w * 0.34, cy - half_h),
-            (cx - half_w * 0.90, cy + half_h * 0.08),
-            (cx - half_w * 0.04, cy + half_h * 0.08),
-            (cx - half_w * 0.34, cy + half_h),
-            (cx + half_w * 0.90, cy - half_h * 0.08),
-            (cx + half_w * 0.04, cy - half_h * 0.08),
+            (round(cx + x * bolt_w), round(cy + y * bolt_h))
+            for x, y in ((0.18, -0.5), (-0.50, 0.10), (-0.08, 0.10),
+                         (-0.21, 0.50), (0.50, -0.10), (0.08, -0.10))
         ]
-        # 以透明遮罩切出紧贴闪电轮廓的清爽缺口（断开顶边框并保留主体下方大片绿色填充）
-        cut_px = max(ss, int(round(ss * (0.95 if size <= 24 else 1.1))))
-        cut_mask = Image.new("L", (S, S), 0)
-        cd = ImageDraw.Draw(cut_mask)
-        cd.polygon(bolt, fill=255)
-        for dx, dy in (
-            (-cut_px, 0), (cut_px, 0), (0, -cut_px), (0, cut_px),
-            (-cut_px, -cut_px), (cut_px, -cut_px), (-cut_px, cut_px), (cut_px, cut_px),
-        ):
-            cd.polygon([(px_ + dx, py_ + dy) for px_, py_ in bolt], fill=255)
-        empty = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        img.paste(empty, (0, 0), cut_mask)
+        draw.polygon(bolt, fill=transparent)
+        draw.line(bolt + [bolt[0]], fill=transparent, width=max(3, round(grid * 0.048)), joint="curve")
+        draw.polygon(bolt, fill=outline)
 
-        bdraw = ImageDraw.Draw(img)
-        bdraw.polygon(bolt, fill=outline_col)
-
-    return img.resize((size, size), Image.Resampling.BOX)
+    return image.resize((size, size), Image.Resampling.BOX)
 
 
 def _try_win11_round_corners(hwnd: int, radius_dip: int = 10, scale: float = 1.0) -> str:
@@ -665,47 +507,45 @@ class FloatingDeviceItem:
 
 
 def _floating_palette(is_dark: bool) -> dict[str, tuple[int, int, int]]:
-    """与托盘悬停浮层完全统一的 Windows 原生电池状态浅/深色令牌。"""
+    """低对比中性色表面与高对比电量状态色。"""
     if is_dark:
         return {
-            "bg": (30, 34, 44),
-            "border": (52, 59, 77),
-            "text": (241, 245, 249),
-            "muted": (126, 135, 153),
-            "icon": (241, 245, 249),
-            "icon_muted": (110, 121, 140),
-            "track": (48, 55, 70),
-            "normal_pct": (241, 245, 249),
-            "normal_bar": (34, 197, 94),
-            "charging": (74, 222, 128),
-            "charging_bar": (34, 197, 94),
-            "tier1": (250, 204, 21),
-            "tier2": (251, 146, 60),
-            "tier3": (248, 113, 113),
-            "bar_t1": (234, 179, 8),
-            "bar_t2": (249, 115, 22),
-            "bar_t3": (239, 68, 68),
-            "divider": (46, 52, 66),
+            "bg": (37, 37, 37),
+            "border": (73, 73, 73),
+            "text": (248, 248, 248),
+            "muted": (181, 181, 181),
+            "icon": (248, 248, 248),
+            "icon_muted": (156, 156, 156),
+            "track": (74, 74, 74),
+            "normal_pct": (248, 248, 248),
+            "normal_bar": (87, 196, 128),
+            "charging": (111, 222, 151),
+            "charging_bar": (61, 210, 119),
+            "tier1": (255, 210, 101),
+            "tier2": (255, 158, 96),
+            "tier3": (255, 137, 137),
+            "bar_t1": (244, 191, 68),
+            "bar_t2": (249, 137, 71),
+            "bar_t3": (255, 114, 124),
         }
     return {
-        "bg": (255, 255, 255),
-        "border": (220, 226, 236),
-        "text": (24, 27, 34),
-        "muted": (138, 146, 162),
-        "icon": (17, 24, 39),
-        "icon_muted": (148, 163, 184),
-        "track": (228, 233, 242),
-        "normal_pct": (24, 27, 34),
-        "normal_bar": (34, 197, 94),
-        "charging": (22, 163, 74),
-        "charging_bar": (22, 163, 74),
-        "tier1": (202, 138, 4),
-        "tier2": (234, 88, 12),
-        "tier3": (220, 38, 38),
-        "bar_t1": (234, 179, 8),
-        "bar_t2": (245, 158, 11),
-        "bar_t3": (239, 68, 68),
-        "divider": (236, 240, 246),
+        "bg": (249, 249, 249),
+        "border": (212, 212, 212),
+        "text": (30, 30, 30),
+        "muted": (91, 91, 91),
+        "icon": (30, 30, 30),
+        "icon_muted": (108, 108, 108),
+        "track": (222, 222, 222),
+        "normal_pct": (30, 30, 30),
+        "normal_bar": (23, 136, 75),
+        "charging": (10, 110, 57),
+        "charging_bar": (19, 154, 79),
+        "tier1": (129, 84, 0),
+        "tier2": (162, 62, 13),
+        "tier3": (179, 36, 43),
+        "bar_t1": (176, 116, 0),
+        "bar_t2": (209, 90, 27),
+        "bar_t3": (203, 44, 59),
     }
 
 
@@ -739,36 +579,36 @@ def compute_floating_logical_size(
             "max_w": 276,
             "pad_x": 12,
             "pad_y": 10,
-            "item_h": 36,
-            "item_gap": 10,
+            "item_h": 30,
+            "item_gap": 9,
             "icon": 16,
-            "bar_h": 5,
+            "bar_h": 4,
             "name_px": 12,
-            "pct_px": 12,
+            "pct_px": 13,
         },
         "medium": {
             "min_w": 232,
             "max_w": 304,
             "pad_x": 14,
             "pad_y": 12,
-            "item_h": 40,
-            "item_gap": 12,
+            "item_h": 34,
+            "item_gap": 10,
             "icon": 18,
-            "bar_h": 6,
+            "bar_h": 5,
             "name_px": 13,
-            "pct_px": 13,
+            "pct_px": 14,
         },
         "large": {
             "min_w": 262,
             "max_w": 332,
             "pad_x": 15,
             "pad_y": 13,
-            "item_h": 44,
-            "item_gap": 13,
+            "item_h": 38,
+            "item_gap": 11,
             "icon": 20,
-            "bar_h": 7,
+            "bar_h": 6,
             "name_px": 14,
-            "pct_px": 14,
+            "pct_px": 15,
         },
     }
     m = metrics_map.get(size_key, metrics_map["medium"])
@@ -777,8 +617,6 @@ def compute_floating_logical_size(
 
     longest = max((len(it.label or "") for it in vis), default=8)
     extra = max(0, longest - 14) * 6
-    if any(it.show_bolt for it in vis):
-        extra += 10
     w_dip = max(m["min_w"], min(m["max_w"], m["min_w"] + extra))
     h_dip = m["pad_y"] * 2 + count * m["item_h"] + max(0, count - 1) * m["item_gap"]
     return int(w_dip), int(h_dip), m
@@ -998,7 +836,6 @@ class DesktopFloatingWidget:
         """双缓冲单表面绘制统一风格的桌面悬浮窗（保留设备图标、名称、百分比、精致圆角进度条与充电闪电）。"""
         from System.Drawing import (
             Color,
-            Pen,
             PointF,
             RectangleF,
             SolidBrush,
@@ -1012,7 +849,7 @@ class DesktopFloatingWidget:
 
         sc = self._scale
         pal = _floating_palette(self._is_dark)
-        m = self._metrics or {"pad_x": 14, "pad_y": 12, "item_h": 40, "item_gap": 12, "icon": 18, "bar_h": 6, "name_px": 13, "pct_px": 13}
+        m = self._metrics
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
         g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit
@@ -1041,11 +878,10 @@ class DesktopFloatingWidget:
         pad_x = int(round(m["pad_x"] * sc))
         pad_y = int(round(m["pad_y"] * sc))
         item_h = int(round(m["item_h"] * sc))
-        item_gap = int(round(m["item_gap"] * sc))
         icon_px = max(14, int(round(m["icon"] * sc)))
         bar_h = max(4, int(round(m["bar_h"] * sc)))
         icon_gap = int(round(9 * sc))
-        bolt_slot = int(round(13 * sc)) if any(it.show_bolt for it in items) else 0
+        bolt_slot = round(12 * sc)
 
         name_font = self._get_font_ui("name", int(round(m["name_px"] * sc)))
         pct_font = self._get_font_ui("pct", int(round(m["pct_px"] * sc)))
@@ -1064,26 +900,16 @@ class DesktopFloatingWidget:
 
         val_col_w = int(round(44 * sc))
         right_edge = width - pad_x
-        bolt_x = right_edge - bolt_slot
-        val_x = bolt_x - val_col_w
+        val_x = right_edge - val_col_w
         name_x = pad_x + icon_px + icon_gap
-        name_w = max(48, val_x - int(round(8 * sc)) - name_x)
-        bar_w = max(48, width - pad_x * 2)
+        name_w = max(1, val_x - bolt_slot - round(6 * sc) - name_x)
+        bar_w = right_edge - name_x
 
         try:
             for idx, item in enumerate(items[:FLOATING_MAX_DEVICES]):
-                iy0 = pad_y + idx * (item_h + item_gap)
-                top_row_h = max(icon_px + 2, item_h - bar_h - int(round(8 * sc)))
+                iy0 = pad_y + round(idx * (m["item_h"] + m["item_gap"]) * sc)
+                top_row_h = item_h - bar_h - round(5 * sc)
                 bar_y = iy0 + item_h - bar_h
-
-                # 多设备间轻量微细分隔线（不喧宾夺主，保持紧凑清晰）
-                if idx > 0:
-                    div_y = iy0 - item_gap // 2
-                    pen_div = Pen(Color.FromArgb(*pal["divider"]), 1.0)
-                    try:
-                        g.DrawLine(pen_div, float(pad_x), float(div_y), float(width - pad_x), float(div_y))
-                    finally:
-                        pen_div.Dispose()
 
                 # 1. 统一黑白实心设备图标
                 gdi_ic = self._get_icon_ui(item.kind, icon_px, self._is_dark, item.is_inactive)
@@ -1097,19 +923,17 @@ class DesktopFloatingWidget:
                 finally:
                     nb.Dispose()
 
-                # 3. 电量百分比与充电小闪电（与进度条右端严格齐平：充电行显示「95% ⚡」，非充电行数字直接右对齐）
+                # 电量列保持右对齐，充电闪电显示在百分比左侧。
                 pct_rgb, bar_rgb = _floating_item_colors(item, pal)
                 v_font = pct_font if item.value_text.isascii() else name_font
-                row_bolt_w = int(round(13 * sc)) if item.show_bolt else 0
-                row_val_right = right_edge - row_bolt_w
-                row_val_x = row_val_right - val_col_w
                 vb = SolidBrush(Color.FromArgb(*pct_rgb))
                 try:
-                    g.DrawString(item.value_text, v_font, vb, RectangleF(float(row_val_x), float(iy0), float(val_col_w), float(top_row_h)), sf_right)
+                    g.DrawString(item.value_text, v_font, vb, RectangleF(val_x, iy0, val_col_w, top_row_h), sf_right)
                     if item.show_bolt:
-                        bcx = float(row_val_right) + float(row_bolt_w) * 0.56
+                        text_width = g.MeasureString(item.value_text, v_font).Width
+                        bcx = right_edge - text_width - bolt_slot * 0.45
                         bcy = float(iy0) + float(top_row_h) * 0.5
-                        u = 1.05 * sc
+                        u = sc
                         pts = [
                             PointF(bcx + 1.1 * u, bcy - 4.8 * u),
                             PointF(bcx - 2.6 * u, bcy + 0.6 * u),
@@ -1127,7 +951,7 @@ class DesktopFloatingWidget:
                 track_path = GraphicsPath()
                 track_b = SolidBrush(Color.FromArgb(*pal["track"]))
                 try:
-                    self._add_rounded_rect_path(track_path, float(pad_x), float(bar_y), float(bar_w), float(bar_h), radius_bar)
+                    self._add_rounded_rect_path(track_path, float(name_x), float(bar_y), float(bar_w), float(bar_h), radius_bar)
                     g.FillPath(track_b, track_path)
                 finally:
                     track_b.Dispose()
@@ -1135,12 +959,11 @@ class DesktopFloatingWidget:
 
                 ratio = self._bar_ratios.get(item.device_id, 0.0 if item.is_inactive else max(0.0, min(1.0, float(item.percent or 0) / 100.0)))
                 if ratio > 0.005 and not item.is_inactive:
-                    fill_w = max(float(bar_h), float(bar_w) * ratio)
-                    fill_w = min(float(bar_w), fill_w)
+                    fill_w = max(1.0, bar_w * ratio)
                     fill_path = GraphicsPath()
                     fill_b = SolidBrush(Color.FromArgb(*bar_rgb))
                     try:
-                        self._add_rounded_rect_path(fill_path, float(pad_x), float(bar_y), fill_w, float(bar_h), radius_bar)
+                        self._add_rounded_rect_path(fill_path, float(name_x), float(bar_y), fill_w, float(bar_h), min(radius_bar, fill_w / 2))
                         g.FillPath(fill_b, fill_path)
                     finally:
                         fill_b.Dispose()
@@ -1588,42 +1411,34 @@ def render_floating_widget_pil(
     pad_x = int(round(m["pad_x"] * sc))
     pad_y = int(round(m["pad_y"] * sc))
     item_h = int(round(m["item_h"] * sc))
-    item_gap = int(round(m["item_gap"] * sc))
     icon_px = max(14, int(round(m["icon"] * sc)))
     bar_h = max(4, int(round(m["bar_h"] * sc)))
     icon_gap = int(round(9 * sc))
-    bolt_slot = int(round(13 * sc)) if any(it.show_bolt for it in eff_items) else 0
+    bolt_slot = round(12 * sc)
     right_edge = pw - pad_x
-    bolt_x = right_edge - bolt_slot
-    val_right = bolt_x
     name_x = pad_x + icon_px + icon_gap
-    bar_w = max(48, pw - pad_x * 2)
+    bar_w = right_edge - name_x
+    max_name_w = right_edge - round(44 * sc) - bolt_slot - round(6 * sc) - name_x
 
     for idx, item in enumerate(eff_items):
-        iy0 = pad_y + idx * (item_h + item_gap)
-        top_row_h = max(icon_px + 2, item_h - bar_h - int(round(8 * sc)))
+        iy0 = pad_y + round(idx * (m["item_h"] + m["item_gap"]) * sc)
+        top_row_h = item_h - bar_h - round(5 * sc)
         bar_y = iy0 + item_h - bar_h
-
-        if idx > 0:
-            div_y = iy0 - item_gap // 2
-            draw.line([(pad_x, div_y), (pw - pad_x, div_y)], fill=(*pal["divider"], 255), width=1)
 
         ic_rgb = pal["icon_muted"] if item.is_inactive else pal["icon"]
         ic = render_device_icon_pil(item.kind, size=icon_px, is_dark=is_dark, color=(*ic_rgb, 255))
-        out.paste(ic, (pad_x, iy0 + (top_row_h - icon_px) // 2), ic)
+        out.alpha_composite(ic, (pad_x, iy0 + (top_row_h - icon_px) // 2))
 
         v_font = pct_font if item.value_text.isascii() else name_font
         vb = draw.textbbox((0, 0), item.value_text, font=v_font)
         vw, vh = vb[2] - vb[0], vb[3] - vb[1]
         pct_rgb, bar_rgb = _floating_item_colors(item, pal)
-        row_bolt_w = int(round(13 * sc)) if item.show_bolt else 0
-        row_val_right = right_edge - row_bolt_w
-        draw.text((row_val_right - vw, iy0 + (top_row_h - vh) // 2 - vb[1]), item.value_text, font=v_font, fill=(*pct_rgb, 255))
+        draw.text((right_edge - vw, iy0 + (top_row_h - vh) // 2 - vb[1]), item.value_text, font=v_font, fill=(*pct_rgb, 255))
 
         if item.show_bolt:
-            bcx = row_val_right + row_bolt_w * 0.56
+            bcx = right_edge - vw - bolt_slot * 0.5
             bcy = iy0 + top_row_h * 0.5
-            u = 1.05 * sc
+            u = sc
             pts = [
                 (bcx + 1.1 * u, bcy - 4.8 * u),
                 (bcx - 2.6 * u, bcy + 0.6 * u),
@@ -1634,7 +1449,6 @@ def render_floating_widget_pil(
             ]
             draw.polygon(pts, fill=(*pct_rgb, 255))
 
-        max_name_w = max(40, row_val_right - vw - int(round(10 * sc)) - name_x)
         nm = item.label
         while len(nm) > 2 and draw.textbbox((0, 0), nm, font=name_font)[2] > max_name_w:
             nm = nm[:-2].rstrip() + "…"
@@ -1649,10 +1463,9 @@ def render_floating_widget_pil(
         bdr.rounded_rectangle([0, 0, bar_w * 2 - 1, bar_h * 2 - 1], radius=r2, fill=(*pal["track"], 255))
         if not item.is_inactive and (item.percent or 0) > 0:
             ratio = max(0.0, min(1.0, float(item.percent or 0) / 100.0))
-            fw2 = max(bar_h * 2, int(round(bar_w * 2 * ratio)))
-            fw2 = min(bar_w * 2, fw2)
+            fw2 = max(2, round(bar_w * 2 * ratio))
             bdr.rounded_rectangle([0, 0, fw2 - 1, bar_h * 2 - 1], radius=r2, fill=(*bar_rgb, 255))
         bar_rs = bar_img.resize((bar_w, bar_h), Image.Resampling.LANCZOS)
-        out.paste(bar_rs, (pad_x, bar_y), bar_rs)
+        out.alpha_composite(bar_rs, (name_x, bar_y))
 
     return out

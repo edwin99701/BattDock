@@ -242,20 +242,22 @@ def _compute_centered_rect(
     return int(x), int(y), int(eff_w), int(eff_h)
 
 
-def _get_tray_work_area() -> tuple[int, int, int, int]:
-    """获取系统托盘所在显示器的工作区 (left, top, right, bottom)，供悬浮窗与低电量迷你弹窗使用。"""
+def _get_tray_monitor_metrics() -> tuple[tuple[int, int, int, int], float]:
+    """获取系统托盘所在显示器的物理工作区与缩放比。"""
     user32 = ctypes.windll.user32
     try:
         tray_hwnd = user32.FindWindowW("Shell_TrayWnd", None)
         if tray_hwnd:
             hmon = user32.MonitorFromWindow(wintypes.HWND(tray_hwnd), 2)
             if hmon:
-                work, _ = _get_monitor_work_area_and_scale(hmon)
-                return work
+                return _get_monitor_work_area_and_scale(hmon)
     except Exception:
         pass
-    work, _ = _get_monitor_work_area_and_scale(0)
-    return work
+    return _get_monitor_work_area_and_scale(0)
+
+
+def _get_tray_work_area() -> tuple[int, int, int, int]:
+    return _get_tray_monitor_metrics()[0]
 
 
 def _get_work_area_for_window(hwnd: int) -> tuple[int, int, int, int]:
@@ -1053,7 +1055,7 @@ class MouseBatteryApp:
         self.floating_widget = DesktopFloatingWidget(
             get_native_host=self._get_alive_native_host,
             get_work_area=_get_tray_work_area,
-            get_dpi_scale=lambda: _get_dpi_scale(self.hwnd) if self.hwnd else 1.0,
+            get_dpi_scale=lambda: _get_tray_monitor_metrics()[1],
             on_position_saved=self._on_floating_position_saved,
             on_double_click=self.show_main_window,
         )
@@ -3196,7 +3198,7 @@ class MouseBatteryApp:
         self._update_tray_visual()
         if self.cfg.theme == "system":
             self._push_state_to_ui()
-            self._sync_floating_widget()
+        self._sync_floating_widget()
 
     def _update_tray_visual(self) -> None:
         """托盘栏始终使用极简动态矢量电池图标，串行更新、失败保留重试状态并在需要时自愈补注册。"""
