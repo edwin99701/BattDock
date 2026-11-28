@@ -46,10 +46,10 @@ from providers.base import KIND_OTHER
 
 # 统一 Windows 原生状态面板视觉规范常量（逻辑 DIP）
 POPUP_MIN_WIDTH_DIP = 232
-POPUP_SINGLE_MAX_WIDTH_DIP = 322
+POPUP_SINGLE_MAX_WIDTH_DIP = 336
 POPUP_MAX_WIDTH_DIP = 336
-POPUP_SINGLE_ROW_HEIGHT_DIP = 48
-POPUP_ROW_HEIGHT_DIP = 46
+POPUP_ROW_HEIGHT_DIP = 32
+POPUP_STATUS_HEIGHT_DIP = 13
 POPUP_PAD_X_DIP = 14
 POPUP_PAD_Y_DIP = 6
 POPUP_RADIUS_DIP = 10
@@ -92,16 +92,35 @@ class TrayHoverRow:
     alert_level: str  # normal | tier1 | tier2 | tier3 | charging | full | offline | sleep | unknown
     value_text: str   # 如 "75%"、"100%"、"休眠"、"离线"、"—"
     show_bolt: bool
+    low_tier: str = ""
 
     @property
     def status_text(self) -> str:
         return {
-            "charging": "正在充电",
+            "charging": "充电中",
             "full": "已充满",
             "offline": "离线",
-            "sleep": "休眠",
+            "sleep": "休眠中",
+            "stale": "数据过期",
             "unknown": "电量未知",
-        }.get(self.alert_level, "未充电")
+        }.get(self.alert_level, "")
+
+
+def get_tray_live_percent(device: Any) -> Optional[int]:
+    """托盘图标与浮层使用同一有效电量规则。"""
+    if not device or not device.connected or not device.online or device.asleep or getattr(device, "stale", False):
+        return None
+    if device.percent is None:
+        return None
+    return max(0, min(100, int(device.percent)))
+
+
+_EMPTY_ROW = TrayHoverRow("", KIND_OTHER, "暂无已连接设备", None, False, False, False, False,
+                          False, False, "unknown", "—", False)
+
+
+def _row_height_dip(row: TrayHoverRow) -> int:
+    return POPUP_ROW_HEIGHT_DIP + (POPUP_STATUS_HEIGHT_DIP if row.device_id and row.status_text else 0)
 
 
 def build_tray_hover_rows(
@@ -118,144 +137,57 @@ def build_tray_hover_rows(
     if not visible_devs:
         return []
 
-    names = resolve_tray_hover_device_names(visible_devs, aliases=aliases, include_brand=True)
+    names = resolve_tray_hover_device_names(visible_devs, aliases=aliases, include_brand=True, use_full_name=True)
     rows: list[TrayHoverRow] = []
     for dev, disp_name in zip(visible_devs, names):
         did = str(getattr(dev, "device_id", "") or "")
-        connected = bool(getattr(dev, "connected", False))
-        online = bool(getattr(dev, "online", False))
-        asleep = bool(getattr(dev, "asleep", False))
+        connected = bool(dev.connected)
+        online = bool(dev.online)
+        asleep = bool(dev.asleep)
         stale = bool(getattr(dev, "stale", False))
-        raw_pct = getattr(dev, "percent", None)
-        charging = bool(getattr(dev, "charging", False))
-        full = bool(getattr(dev, "full", False))
+        pct = get_tray_live_percent(dev)
+        charging = pct is not None and bool(dev.charging)
+        full = pct is not None and bool(dev.full)
+        low_tier = ""
 
-        is_inactive = (not connected) or (not online) or asleep or stale or (raw_pct is None)
-        if not connected:
-            rows.append(
-                TrayHoverRow(
-                    device_id=did,
-                    kind=canonical_device_icon_kind(getattr(dev, "kind", KIND_OTHER)),
-                    name=disp_name,
-                    percent=None,
-                    charging=False,
-                    full=False,
-                    connected=False,
-                    online=False,
-                    asleep=False,
-                    stale=stale,
-                    alert_level="offline",
-                    value_text="离线",
-                    show_bolt=False,
-                )
-            )
-            continue
-
-        if asleep:
-            rows.append(
-                TrayHoverRow(
-                    device_id=did,
-                    kind=canonical_device_icon_kind(getattr(dev, "kind", KIND_OTHER)),
-                    name=disp_name,
-                    percent=None,
-                    charging=False,
-                    full=False,
-                    connected=True,
-                    online=False,
-                    asleep=True,
-                    stale=stale,
-                    alert_level="sleep",
-                    value_text="休眠",
-                    show_bolt=False,
-                )
-            )
-            continue
-
-        if is_inactive:
-            rows.append(
-                TrayHoverRow(
-                    device_id=did,
-                    kind=canonical_device_icon_kind(getattr(dev, "kind", KIND_OTHER)),
-                    name=disp_name,
-                    percent=None,
-                    charging=False,
-                    full=False,
-                    connected=connected,
-                    online=False,
-                    asleep=False,
-                    stale=True,
-                    alert_level="unknown",
-                    value_text="—",
-                    show_bolt=False,
-                )
-            )
-            continue
-
-        pct = max(0, min(100, int(raw_pct)))
-        t1, t2, t3 = tier_lookup(did) if tier_lookup is not None else (30, 20, 10)
-        is_full = bool(full)
-        show_bolt = bool(charging) and (not is_full)
-        if is_full:
-            level = "full"
-        elif charging:
-            level = "charging"
-        elif pct <= t3:
-            level = "tier3"
-        elif pct <= t2:
-            level = "tier2"
-        elif pct <= t1:
-            level = "tier1"
+        if pct is None:
+            if not connected:
+                level = "offline"
+            elif asleep:
+                level = "sleep"
+            elif stale:
+                level = "stale"
+            else:
+                level = "unknown"
         else:
-            level = "normal"
+            t1, t2, t3 = tier_lookup(did) if tier_lookup is not None else (30, 20, 10)
+            if pct <= t3:
+                low_tier = "tier3"
+            elif pct <= t2:
+                low_tier = "tier2"
+            elif pct <= t1:
+                low_tier = "tier1"
+            level = "full" if full else "charging" if charging else low_tier or "normal"
 
-        rows.append(
-            TrayHoverRow(
-                device_id=did,
-                kind=canonical_device_icon_kind(getattr(dev, "kind", KIND_OTHER)),
-                name=disp_name,
-                percent=pct,
-                charging=charging,
-                full=is_full,
-                connected=True,
-                online=True,
-                asleep=False,
-                stale=False,
-                alert_level=level,
-                value_text=f"{pct}%",
-                show_bolt=show_bolt,
-            )
-        )
+        rows.append(TrayHoverRow(
+            device_id=did, kind=canonical_device_icon_kind(getattr(dev, "kind", KIND_OTHER)),
+            name=disp_name, percent=pct, charging=charging, full=full, connected=connected,
+            online=online, asleep=asleep, stale=stale, alert_level=level,
+            value_text="—" if pct is None else f"{pct}%", show_bolt=charging and not full, low_tier=low_tier,
+        ))
     return rows
 
 
 def compute_popup_logical_size(
     rows: list[TrayHoverRow],
     measure_text_dip: Optional[Callable[[str, bool], float]] = None,
+    *,
+    scroll_offset: int = 0,
 ) -> tuple[int, int, int, bool]:
-    """计算浮层紧凑逻辑尺寸 (width_dip, height_dip, visible_rows, scrollable)。
-
-    宽度在 220–320 DIP 之间按内容自适应；高度按真实设备数收紧，超出 POPUP_MAX_VISIBLE_ROWS 时限高滚动。
-    """
-    eff_rows = rows if rows else [
-        TrayHoverRow(
-            device_id="",
-            kind=KIND_OTHER,
-            name="暂无已连接设备",
-            percent=None,
-            charging=False,
-            full=False,
-            connected=False,
-            online=False,
-            asleep=False,
-            stale=False,
-            alert_level="unknown",
-            value_text="—",
-            show_bolt=False,
-        )
-    ]
-
-    scrollable = len(eff_rows) > POPUP_MAX_VISIBLE_ROWS
+    """计算内容宽度和当前可见设备的实际高度。"""
+    eff_rows = rows or [_EMPTY_ROW]
     vis_count = min(len(eff_rows), POPUP_MAX_VISIBLE_ROWS)
+    scrollable = len(eff_rows) > vis_count
 
     def _default_measure(txt: str, is_num: bool) -> float:
         total = 0.0
@@ -287,9 +219,9 @@ def compute_popup_logical_size(
         + scroll_w
     )
     max_w = POPUP_SINGLE_MAX_WIDTH_DIP if vis_count == 1 else POPUP_MAX_WIDTH_DIP
-    row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if vis_count == 1 else POPUP_ROW_HEIGHT_DIP
     width_dip = max(POPUP_MIN_WIDTH_DIP, min(max_w, int(needed_w)))
-    height_dip = POPUP_PAD_Y_DIP * 2 + vis_count * row_h_dip
+    offset = max(0, min(scroll_offset, len(eff_rows) - vis_count))
+    height_dip = POPUP_PAD_Y_DIP * 2 + sum(_row_height_dip(r) for r in eff_rows[offset:offset + vis_count])
     return width_dip, height_dip, vis_count, scrollable
 
 
@@ -567,9 +499,9 @@ def _palette(is_dark: bool) -> dict[str, tuple[int, int, int]]:
 
 
 def _row_value_rgb(row: TrayHoverRow, pal: dict[str, tuple[int, int, int]]) -> tuple[int, int, int]:
-    if row.alert_level in ("offline", "sleep", "unknown"):
+    if row.percent is None:
         return pal["muted"]
-    return pal.get(row.alert_level, pal["normal"])
+    return pal.get(row.low_tier or row.alert_level, pal["normal"])
 
 
 def _query_monitor_metrics_for_point(pt: tuple[int, int]) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int], float]:
@@ -781,7 +713,7 @@ class TrayHoverPopup:
         if keep_watching:
             self._schedule_watch_tick()
 
-    def sync_if_visible(self) -> None:
+    def sync_if_visible(self, get_rows: Optional[Callable[[], list[TrayHoverRow]]] = None) -> None:
         """设备电量/充电状态/主题变更时，若浮层当前可见则即时刷新（绝不主动弹出）。"""
         with self._lock:
             if self._closed or not self._visible_logical or self._sm.state not in ("visible", "pending_hide"):
@@ -792,7 +724,7 @@ class TrayHoverPopup:
                 return
             cur_pos = self._sm.last_cursor
             anchor_rect = self._sm.anchor_icon_rect
-        self._show_or_refresh(cur_pos, anchor_rect, is_refresh=True)
+        self._show_or_refresh(cur_pos, anchor_rect, is_refresh=True, get_rows=get_rows)
 
     def hide(self, instant: bool = True) -> None:
         """立即隐藏或取消待显示的浮层（点击托盘、打开右键菜单、唤出主窗口或关闭设置开关时调用）。"""
@@ -897,10 +829,11 @@ class TrayHoverPopup:
         cursor_pos: tuple[int, int],
         anchor_rect: Optional[tuple[int, int, int, int]],
         is_refresh: bool = False,
+        get_rows: Optional[Callable[[], list[TrayHoverRow]]] = None,
     ) -> None:
         if self._closed or not self._is_enabled() or is_exclusive_fullscreen_active():
             return
-        rows = self._get_rows_snapshot()
+        rows = (get_rows or self._get_rows_snapshot)()
         is_dark = self._get_theme() == "dark"
         anim_on = bool(self._get_animations_enabled())
         mrect, wrect, scale = _query_monitor_metrics_for_point(cursor_pos)
@@ -942,11 +875,13 @@ class TrayHoverPopup:
                             if max_sc <= 0:
                                 return
                             delta = int(getattr(e, "Delta", 0) or 0)
+                            before = self._scroll_offset
                             if delta < 0:
                                 self._scroll_offset = min(max_sc, self._scroll_offset + 1)
                             elif delta > 0:
                                 self._scroll_offset = max(0, self._scroll_offset - 1)
-                            form.Invalidate()
+                            if self._scroll_offset != before:
+                                self.sync_if_visible()
                         except Exception:
                             pass
 
@@ -965,7 +900,7 @@ class TrayHoverPopup:
                 hwnd = int(form.Handle.ToInt64())
                 self._hwnd = hwnd
 
-                # 使用真实 WinForms 字体精确测量逻辑宽度，按内容在 220–320 DIP 自适应
+                # 使用真实 WinForms 字体测量浮层宽度。
                 name_font = self._get_font_ui("name", scale)
                 pct_font = self._get_font_ui("pct", scale)
 
@@ -976,7 +911,9 @@ class TrayHoverPopup:
                     except Exception:
                         return float(len(txt)) * 8.0
 
-                w_dip, h_dip, _vis, _sc = compute_popup_logical_size(self._rows, measure_text_dip=_measure_dip)
+                w_dip, h_dip, _vis, _sc = compute_popup_logical_size(
+                    self._rows, measure_text_dip=_measure_dip, scroll_offset=self._scroll_offset
+                )
                 pw = max(160, int(round(w_dip * scale)))
                 ph = max(40, int(round(h_dip * scale)))
 
@@ -1124,31 +1061,13 @@ class TrayHoverPopup:
         finally:
             bg_brush.Dispose()
 
-        rows = self._rows if self._rows else [
-            TrayHoverRow(
-                device_id="",
-                kind=KIND_OTHER,
-                name="暂无已连接设备",
-                percent=None,
-                charging=False,
-                full=False,
-                connected=False,
-                online=False,
-                asleep=False,
-                stale=False,
-                alert_level="unknown",
-                value_text="—",
-                show_bolt=False,
-            )
-        ]
+        rows = self._rows or [_EMPTY_ROW]
 
         total_rows = len(rows)
         scrollable = total_rows > POPUP_MAX_VISIBLE_ROWS
         visible_rows = rows[self._scroll_offset : self._scroll_offset + POPUP_MAX_VISIBLE_ROWS]
         pad_x = round(POPUP_PAD_X_DIP * sc)
         pad_y = round(POPUP_PAD_Y_DIP * sc)
-        row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if total_rows == 1 else POPUP_ROW_HEIGHT_DIP
-        row_h = round(row_h_dip * sc)
         icon_px = round(POPUP_ICON_DIP * sc)
         right_edge = width - pad_x - (round(8 * sc) if scrollable else 0)
         val_col_w = round(POPUP_VALUE_MIN_DIP * sc)
@@ -1157,7 +1076,6 @@ class TrayHoverPopup:
         name_w = max(1, val_x - round(POPUP_VALUE_GAP_DIP * sc) - name_x)
         label_h = round(18 * sc)
         status_h = round(15 * sc)
-        label_y = (row_h - label_h - status_h) // 2
 
         name_font = self._get_font_ui("name", sc)
         status_font = self._get_font_ui("status", sc)
@@ -1175,8 +1093,12 @@ class TrayHoverPopup:
         sf_right.FormatFlags = StringFormatFlags.NoWrap
 
         try:
+            row_y_dip = POPUP_PAD_Y_DIP
             for idx, row in enumerate(visible_rows):
-                ry = pad_y + round(idx * row_h_dip * sc)
+                ry = round(row_y_dip * sc)
+                row_y_dip += _row_height_dip(row)
+                row_h = round(row_y_dip * sc) - ry
+                status = row.status_text if row.device_id else ""
                 is_inactive = row.percent is None
                 if idx > 0:
                     pen = Pen(Color.FromArgb(*pal["divider"]), 1.0)
@@ -1193,13 +1115,13 @@ class TrayHoverPopup:
                 status_brush = SolidBrush(Color.FromArgb(*status_rgb))
                 value_brush = SolidBrush(Color.FromArgb(*_row_value_rgb(row, pal)))
                 try:
-                    y = ry + (label_y if row.device_id else (row_h - label_h) // 2)
+                    y = ry + (row_h - label_h - (status_h if status else 0)) // 2
                     g.DrawString(row.name, name_font, name_brush, RectangleF(name_x, y, name_w, label_h), sf_left)
-                    if row.device_id:
-                        g.DrawString(row.status_text, status_font, status_brush,
+                    if status:
+                        g.DrawString(status, status_font, status_brush,
                                      RectangleF(name_x, y + label_h, name_w, status_h), sf_left)
-                        value = "—" if is_inactive else row.value_text
-                        g.DrawString(value, pct_font, value_brush, RectangleF(val_x, ry, val_col_w, row_h), sf_right)
+                    if row.device_id:
+                        g.DrawString(row.value_text, pct_font, value_brush, RectangleF(val_x, ry, val_col_w, row_h), sf_right)
                 finally:
                     name_brush.Dispose()
                     status_brush.Dispose()
@@ -1265,23 +1187,7 @@ def render_hover_popup_pil(
         bb = tmp_draw.textbbox((0, 0), txt, font=fnt)
         return float(bb[2] - bb[0]) / sc
 
-    eff_rows = rows if rows else [
-        TrayHoverRow(
-            device_id="",
-            kind=KIND_OTHER,
-            name="暂无已连接设备",
-            percent=None,
-            charging=False,
-            full=False,
-            connected=False,
-            online=False,
-            asleep=False,
-            stale=False,
-            alert_level="unknown",
-            value_text="—",
-            show_bolt=False,
-        )
-    ]
+    eff_rows = rows or [_EMPTY_ROW]
     w_dip, h_dip, vis_cnt, scrollable = compute_popup_logical_size(eff_rows, measure_text_dip=_measure_dip)
     pw = int(round(w_dip * sc))
     ph = int(round(h_dip * sc))
@@ -1303,15 +1209,17 @@ def render_hover_popup_pil(
 
     pad_x = round(POPUP_PAD_X_DIP * sc)
     pad_y = round(POPUP_PAD_Y_DIP * sc)
-    row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if vis_cnt == 1 else POPUP_ROW_HEIGHT_DIP
-    row_h = round(row_h_dip * sc)
     icon_px = round(POPUP_ICON_DIP * sc)
     right_edge = pw - pad_x - (round(8 * sc) if scrollable else 0)
     name_x = pad_x + icon_px + round(POPUP_ICON_GAP_DIP * sc)
     name_w = right_edge - round((POPUP_VALUE_MIN_DIP + POPUP_VALUE_GAP_DIP) * sc) - name_x
 
+    row_y_dip = POPUP_PAD_Y_DIP
     for idx, row in enumerate(eff_rows[:vis_cnt]):
-        ry = pad_y + round(idx * row_h_dip * sc)
+        ry = round(row_y_dip * sc)
+        row_y_dip += _row_height_dip(row)
+        row_h = round(row_y_dip * sc) - ry
+        status = row.status_text if row.device_id else ""
         is_inactive = row.percent is None
         if idx > 0:
             draw.line([(name_x, ry), (right_edge, ry)], fill=(*pal["divider"], 255), width=1)
@@ -1323,13 +1231,14 @@ def render_hover_popup_pil(
         while len(name) > 2 and draw.textlength(name, font=name_font) > name_w:
             name = name[:-2].rstrip() + "…"
         middle = ry + row_h / 2
-        draw.text((name_x, middle - (8 * sc if row.device_id else 0)), name,
+        draw.text((name_x, middle - (8 * sc if status else 0)), name,
                   font=name_font, fill=(*pal["text"], 255), anchor="lm")
-        if row.device_id:
+        if status:
             status_rgb = pal[row.alert_level] if row.alert_level in ("charging", "full") else pal["muted"]
-            draw.text((name_x, middle + 9 * sc), row.status_text,
+            draw.text((name_x, middle + 9 * sc), status,
                       font=status_font, fill=(*status_rgb, 255), anchor="lm")
-            draw.text((right_edge, middle), "—" if is_inactive else row.value_text,
+        if row.device_id:
+            draw.text((right_edge, middle), row.value_text,
                       font=pct_font, fill=(*_row_value_rgb(row, pal), 255), anchor="rm")
 
     if scrollable:

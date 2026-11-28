@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md — BattDock 权威技术架构文档
 
-> 正式版本基线为 **BattDock v2.7.6**。当前分支包含 **v2.7.7-test.3** 的托盘与悬浮窗改动。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
+> 正式版本基线为 **BattDock v2.7.6**。当前测试分支为 **v2.7.7-test.4**。新开会话或上下文压缩后，请与 [`AGENTS.md`](./AGENTS.md)、[`PROGRESS.md`](./PROGRESS.md) 一并阅读。
 
 ---
 
@@ -143,7 +143,8 @@ BattDock/
 自 `v2.7.3` 起彻底移除 `pystray 0.19.5`（根治其无锁 `HICON`/`HMENU` 竞态、忽略 `NIM_ADD` 返回值、权限异常崩溃及临时 `.ico` 磁盘写入四大缺陷），改用自研原生 Win32 **`tray_icon.py`（`TrayIconController`）**：
 
 - **完全生命周期解耦**：在独立后台线程创建隐藏顶层消息窗口运行 Win32 消息循环，与主窗口/设置窗口的关闭、隐藏、最小化、重建及监控暂停完全解耦。
-- **纯内存极简图标原子替换**：`draw_battery_icon()`（`floating_widget.py`）按任务栏物理像素尺寸（16/20/24/28/32px）分别栅格化横向电池轮廓、正极、实心填充和内置充电闪电。轮廓依 `SystemUsesLightTheme` 切换深色或白色，保留三级低电色阶及休眠、离线、过期灰态。`pil_image_to_hicon()` 纯内存生成 32 位 ARGB `HICON`，`set_icon()` 在 `RLock` 内应用新图标后释放旧句柄。
+- **纯内存图标原子替换**：`draw_battery_icon()`（`floating_widget.py`）按任务栏物理像素栅格化细浅描边、圆润正极和按真实电量剪裁的实心填充。浅色任务栏增加细灰外缘，充电叠加白边黑色中央闪电，未知电量使用灰色。`pil_image_to_hicon()` 纯内存生成 32 位 ARGB `HICON`，`set_icon()` 在 `RLock` 内应用新图标后释放旧句柄。
+- **悬停布局与快照**：可见浮层与图标的刷新复用同一设备快照和有效电量判断。正常行显示完整设备名（别名优先）及百分比，特殊状态才添加一行文字。可见设备行分别计高，滚动时按当前可见行重新计算。
 - **高可靠自愈与悬停联动**：`NIM_ADD` 失败退避重试、`NIM_MODIFY` 失败自动补注册，监听 `WM_TASKBARCREATED` / `WM_DISPLAYCHANGE` / `WM_DPICHANGED` / `WM_SETTINGCHANGE` 自动恢复图标与同步主题；通过 `WM_MOUSEMOVE` + `Shell_NotifyIconGetRect` 联动 `tray_hover_popup.py` 紧凑悬停电量浮层（悬停 300ms 显示、移开 200ms 收起、独立非激活工具窗、Direct3D 独占全屏避让、开启时置空 `szTip` 防与原生 Tooltip 重复，外观设置关闭后立即恢复原生托盘提示）。
 - **Win11 置顶兼容与实时菜单**：显式保持 `TRAY_UID = 0`，100% 兼容老用户在 Windows 11 `NotifyIconSettings` 中已设置的 `IsPromoted = 1` 置顶偏好；左键唤出主窗口，右键现场构建原生 `HMENU`（实时反映「显示桌面悬浮窗」勾选状态）并在使用后销毁；脱敏诊断报告附带 `tray` 健康状态快照。
 

@@ -2586,12 +2586,63 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
                     charging = draw_battery_icon(size, 75, charging=True, light_bg=light_bg)
                     self.assertEqual(normal.getbbox(), charging.getbbox())
                     outline = normal.getpixel((0, size // 2))
-                    fill = normal.getpixel((size // 3, size // 2))
                     normal_pixels = [normal.getpixel((x, y)) for y in range(size) for x in range(size)]
                     charging_pixels = [charging.getpixel((x, y)) for y in range(size) for x in range(size)]
                     self.assertTrue(all(after == outline for before, after in zip(normal_pixels, charging_pixels) if before == outline))
-                    self.assertGreaterEqual(charging_pixels.count(fill), normal_pixels.count(fill) * 0.65)
-                    self.assertGreater(charging_pixels.count(outline), normal_pixels.count(outline))
+                    def green_count(pixels):
+                        return sum(g > max(r, b) + 40 and a >= 128 for r, g, b, a in pixels)
+
+                    self.assertGreaterEqual(green_count(charging_pixels), green_count(normal_pixels) * 0.45)
+                    mid = size // 2
+                    window = [(x, y) for y in range(mid - 2, mid + 2) for x in range(mid - 3, mid + 2)]
+                    self.assertTrue(any(max(charging.getpixel(pt)[:3]) < 40 and charging.getpixel(pt)[3] > 220 for pt in window))
+                    self.assertTrue(any(min(charging.getpixel(pt)[:3]) > 170 and charging.getpixel(pt)[3] > 155 for pt in window))
+
+    def test_tray_fill_tracks_percent_on_each_grid_with_or_without_charging(self):
+        from floating_widget import draw_battery_icon
+
+        def filled_span(icon):
+            size = icon.width
+            return sum(
+                a / 255
+                for x in range(size)
+                if (r := icon.getpixel((x, size // 2)))[1] > max(r[0], r[2]) + 55
+                and (a := r[3]) > 0
+            )
+
+        for size in (16, 20, 24, 28, 32):
+            baseline = filled_span(draw_battery_icon(size, 100, low_t1=0, low_t2=0, low_t3=0))
+            for pct in (10, 25, 50, 75, 90, 100):
+                with self.subTest(size=size, pct=pct):
+                    plain = draw_battery_icon(size, pct, low_t1=0, low_t2=0, low_t3=0)
+                    self.assertAlmostEqual(filled_span(plain), baseline * pct / 100, delta=0.85)
+            charging = [filled_span(draw_battery_icon(size, pct, charging=True)) for pct in (10, 25, 50, 75, 90, 100)]
+            self.assertGreater(charging[-1], charging[3])
+            self.assertGreater(charging[3], charging[2])
+            self.assertGreater(charging[2], charging[0])
+
+    def test_hover_status_height_only_when_needed_in_single_and_mixed_rows(self):
+        from dataclasses import replace
+        from providers.base import DeviceBattery, KIND_MOUSE
+        from tray_hover_popup import build_tray_hover_rows, compute_popup_logical_size
+
+        normal = DeviceBattery(device_id="vgn", name="VGN Dragonfly F2 Pro Max", brand="VGN",
+                               kind=KIND_MOUSE, percent=65, connected=True, online=True)
+        charging = replace(normal, device_id="charge", name="Logitech G Pro X Superlight 2", brand="Logitech", charging=True, percent=25)
+        expired = replace(normal, device_id="expired", name="Razer Viper V3 Pro", brand="Razer", stale=True)
+        rows = build_tray_hover_rows([normal, charging, expired])
+        self.assertEqual(rows[0].name, normal.name)
+        self.assertEqual([r.status_text for r in rows], ["", "充电中", "数据过期"])
+        self.assertEqual([r.value_text for r in rows], ["65%", "25%", "—"])
+        default_height = compute_popup_logical_size(rows[:1])[1]
+        charging_height = compute_popup_logical_size(rows[1:2])[1]
+        self.assertGreater(charging_height, default_height)
+        normal_pair = compute_popup_logical_size(rows[:1] * 2)[1]
+        self.assertEqual(compute_popup_logical_size(rows[:2])[1] - normal_pair, charging_height - default_height)
+        # 滚动到两个特殊状态之后，普通行占满可见区域，浮层高度随窗口内容收紧。
+        long_rows = rows + rows[:1] * 7
+        self.assertGreater(compute_popup_logical_size(long_rows)[1],
+                           compute_popup_logical_size(long_rows, scroll_offset=3)[1])
 
     @unittest.skipUnless(sys.platform == "win32", "需要 Windows GDI")
     def test_hicon_edges_composite_correctly_with_native_drawiconex(self):
@@ -2644,10 +2695,10 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
             kind=KIND_HEADSET, percent=83, connected=True, online=True, charging=True,
         )
         row, = build_tray_hover_rows([dev])
-        self.assertEqual((row.name, row.status_text, row.value_text), ("SteelSeries Arctis Nova 7", "正在充电", "83%"))
+        self.assertEqual((row.name, row.status_text, row.value_text), ("SteelSeries Arctis Nova 7", "充电中", "83%"))
         dev.charging = False
         row, = build_tray_hover_rows([dev])
-        self.assertEqual((row.status_text, row.value_text), ("未充电", "83%"))
+        self.assertEqual((row.status_text, row.value_text), ("", "83%"))
         dev.full, dev.percent = True, 100
         row, = build_tray_hover_rows([dev])
         self.assertEqual((row.status_text, row.value_text), ("已充满", "100%"))
@@ -2705,9 +2756,9 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
                     self.assertIsNotNone(bbox)
                     bw = bbox[2] - bbox[0]
                     bh = bbox[3] - bbox[1]
-                    # 充分利用画布：宽度 >= 90%，高度 >= 60%（兼顾顶部嵌合充电闪电空间）
+                    # 横向细框电池充分利用画布宽度，高度与参考图约为画布的一半。
                     self.assertGreaterEqual(bw, int(sz * 0.90), f"width too small at {sz}px: {bw}")
-                    self.assertGreaterEqual(bh, int(sz * 0.60), f"height too small at {sz}px: {bh}")
+                    self.assertEqual(bh, round(sz * 0.50), f"height at {sz}px: {bh}")
                     if sys.platform == "win32" and sz in (16, 20, 24, 28, 32):
                         hicon = pil_image_to_hicon(img)
                         self.assertGreater(hicon, 0)
@@ -2803,11 +2854,11 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
         ]
         rows = build_tray_hover_rows(devs, hidden_ids={"d_hid"})
         self.assertEqual(len(rows), 5)
-        self.assertEqual((rows[0].name, rows[0].value_text, rows[0].show_bolt, rows[0].alert_level), ("VGN F2 Pro Max", "75%", True, "charging"))
+        self.assertEqual((rows[0].name, rows[0].value_text, rows[0].show_bolt, rows[0].alert_level), ("VGN Dragonfly F2 Pro Max", "75%", True, "charging"))
         self.assertEqual((rows[1].name, rows[1].value_text, rows[1].show_bolt, rows[1].alert_level), ("SteelSeries Arctis Nova 7", "82%", False, "normal"))
         self.assertEqual((rows[2].name, rows[2].value_text, rows[2].show_bolt, rows[2].alert_level), ("ATK68", "20%", False, "tier2"))
-        self.assertEqual((rows[3].value_text, rows[3].alert_level, rows[3].percent), ("—", "unknown", None))
-        self.assertEqual((rows[4].value_text, rows[4].alert_level, rows[4].percent), ("休眠", "sleep", None))
+        self.assertEqual((rows[3].value_text, rows[3].alert_level, rows[3].percent), ("—", "stale", None))
+        self.assertEqual((rows[4].value_text, rows[4].alert_level, rows[4].percent), ("—", "sleep", None))
 
         w_dip, h_dip, vis, scrollable = compute_popup_logical_size(rows)
         self.assertGreaterEqual(w_dip, POPUP_MIN_WIDTH_DIP)
@@ -3006,7 +3057,7 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
         app.manager.poll = MagicMock()
         rows = app._build_tray_hover_rows()
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].name, "VGN F2 Pro Max")
+        self.assertEqual(rows[0].name, "VGN Dragonfly F2 Pro Max")
         app.manager.poll.assert_not_called()
 
         # 设置页外观设置含「悬停显示设备电量」开关及规范说明文字
@@ -3033,7 +3084,7 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
             POPUP_RADIUS_DIP,
             POPUP_ROW_HEIGHT_DIP,
             POPUP_SINGLE_MAX_WIDTH_DIP,
-            POPUP_SINGLE_ROW_HEIGHT_DIP,
+            POPUP_STATUS_HEIGHT_DIP,
             build_tray_hover_rows,
             compute_popup_logical_size,
         )
@@ -3041,9 +3092,8 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
         # 1. 悬停浮层与悬浮窗圆角及动画参数统一规范校验
         self.assertEqual(POPUP_RADIUS_DIP, FLOATING_RADIUS_DIP)
         self.assertGreaterEqual(POPUP_RADIUS_DIP, 10)
-        self.assertGreaterEqual(POPUP_SINGLE_ROW_HEIGHT_DIP, 42)
-        self.assertLessEqual(POPUP_SINGLE_ROW_HEIGHT_DIP, 48)
-        self.assertGreaterEqual(POPUP_ROW_HEIGHT_DIP, 42)
+        self.assertEqual(POPUP_ROW_HEIGHT_DIP, 32)
+        self.assertLessEqual(POPUP_ROW_HEIGHT_DIP + POPUP_STATUS_HEIGHT_DIP, 48)
         self.assertGreaterEqual(FADE_IN_MS, 120)
         self.assertLessEqual(FADE_IN_MS, 160)
         self.assertGreaterEqual(FADE_OUT_MS, 100)

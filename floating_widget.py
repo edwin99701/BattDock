@@ -374,74 +374,89 @@ def draw_battery_icon(
     light_bg: bool = False,
     full: bool = False,
 ) -> Image.Image:
-    """按目标物理像素绘制横向电池，圆角和闪电单独做面积抗锯齿。"""
+    """按目标物理像素绘制细描边电池，填充长度与充电标记分别绘制。"""
     size = max(16, int(size or 64))
     online = connected and percent is not None
     pct = max(0, min(100, int(percent))) if online else 0
-    outline = (29, 29, 29, 255) if light_bg else (255, 255, 255, 255)
     if not online:
-        outline = (100, 100, 100, 255) if light_bg else (169, 169, 169, 255)
-    if charging or full or pct > low_t1:
-        fill = (22, 163, 74, 255) if light_bg else (52, 211, 105, 255)
+        color = (112, 112, 112)
+    elif charging or full or pct > low_t1:
+        color = (43, 199, 45) if light_bg else (51, 211, 48)
     elif pct <= low_t3:
-        fill = (220, 38, 38, 255) if light_bg else (255, 89, 89, 255)
+        color = (240, 32, 35)
     elif pct <= low_t2:
-        fill = (217, 80, 15, 255) if light_bg else (255, 143, 62, 255)
+        color = (255, 137, 6)
     else:
-        fill = (190, 127, 0, 255) if light_bg else (255, 205, 51, 255)
+        color = (255, 213, 0)
 
-    # 各 DPI 直接从几何轮廓栅格化，主体与正极横跨整个物理画布。
-    ss = 4
+    ss = 8
     grid = size * ss
-    cap_w = max(2, round(size / 8))
-    body_w = size - cap_w
-    body_h = round(size * 0.64)
-    top = (size - body_h) // 2
+    cap_w = max(2, round(size * 0.10)) * ss
+    right = grid - cap_w
+    body_h = round(size * 0.50) * ss
+    top = (grid - body_h) // 2
     bottom = top + body_h
-    cap_h = round(body_h * 0.46)
-    cap_top = top + (body_h - cap_h) // 2
-    stroke = max(5, round(grid * 0.086))
-    radius = round(grid * 0.12)
+    cap_h = round(body_h * 0.43)
+    cap_top = (grid - cap_h) // 2
+    stroke = max(ss, round(grid * 0.040))
+    radius = round(body_h * 0.31)
+    contrast_edge = round(ss * 0.62) if light_bg else 0
+    outline = (246, 246, 246, 255)
+    edge = (83, 83, 83, 255)
     transparent = (0, 0, 0, 0)
+
     image = Image.new("RGBA", (grid, grid), transparent)
     draw = ImageDraw.Draw(image)
+    # 浅色任务栏加细灰色外缘，保留参考图的浅色主线。
+    draw.rounded_rectangle((0, top, right - 1, bottom - 1),
+                           radius=radius, fill=edge if light_bg else outline)
+    if light_bg:
+        e = contrast_edge
+        draw.rounded_rectangle((e, top + e, right - 1 - e, bottom - 1 - e),
+                               radius=radius - e, fill=outline)
+    inset = contrast_edge + stroke
+    draw.rounded_rectangle((inset, top + inset, right - 1 - inset, bottom - 1 - inset),
+                           radius=radius - inset, fill=transparent)
 
-    right = body_w * ss
-    draw.rounded_rectangle(
-        (0, top * ss, right - 1, bottom * ss - 1),
-        radius=radius, fill=outline,
-    )
-    draw.rounded_rectangle(
-        (stroke, top * ss + stroke, right - stroke - 1, bottom * ss - stroke - 1),
-        radius=max(0, radius - stroke), fill=transparent,
-    )
-    draw.rounded_rectangle(
-        (right - ss, cap_top * ss, grid - 1, (cap_top + cap_h) * ss - 1),
-        radius=round(cap_w * ss * 0.40), fill=outline,
-    )
+    cap = (right + ss // 4, cap_top, grid - 1, cap_top + cap_h - 1)
+    draw.rounded_rectangle(cap, radius=cap_w // 2, fill=edge if light_bg else outline)
+    if light_bg:
+        e = contrast_edge
+        draw.rounded_rectangle((cap[0] + e, cap[1] + e, cap[2] - e, cap[3] - e),
+                               radius=max(0, cap_w // 2 - e), fill=outline)
 
-    if pct:
-        inset = math.ceil((stroke + grid * 0.038) / ss)
-        fill_width = max(1, round((body_w - inset * 2) * pct / 100))
-        draw.rectangle(
-            (inset * ss, (top + inset) * ss, (inset + fill_width) * ss - 1, (bottom - inset) * ss - 1),
-            fill=fill,
-        )
+    # 四舍五入仅作用于超采样网格。灰色内腔用于表达读数未知。
+    inset += round(grid * 0.018)
+    fill_right = right - inset
+    if pct or not online:
+        fill = Image.new("RGBA", image.size, transparent)
+        fill_draw = ImageDraw.Draw(fill)
+        fill_draw.rounded_rectangle((inset, top + inset, fill_right - 1, bottom - inset - 1),
+                                    radius=max(0, radius - inset), fill=(*color, 255))
+        if online and pct < 100:
+            clip_x = inset + round((fill_right - inset) * pct / 100)
+            fill_draw.rectangle((clip_x, top, fill_right - 1, bottom - 1), fill=transparent)
+        image.alpha_composite(fill)
 
     if online and charging and not full:
-        # 闪电放在电池内侧靠右，保留完整外框和左侧读数。
-        cx = round(right - (stroke + grid * 0.17))
-        cy = (top + bottom) * ss / 2
-        bolt_w = grid * 0.25
-        bolt_h = grid * 0.35
+        # 白色细边围住黑色闪电，闪电固定在电池内腔中央。
+        cx = right / 2
+        cy = grid / 2
+        bolt_w = grid * 0.30
+        bolt_h = min(grid * 0.39, body_h - 2 * inset + ss)
         bolt = [
             (round(cx + x * bolt_w), round(cy + y * bolt_h))
-            for x, y in ((0.18, -0.5), (-0.50, 0.10), (-0.08, 0.10),
-                         (-0.21, 0.50), (0.50, -0.10), (0.08, -0.10))
+            for x, y in ((0.26, -0.50), (-0.50, 0.06), (-0.08, 0.06),
+                         (-0.26, 0.50), (0.50, -0.08), (0.08, -0.08))
         ]
-        draw.polygon(bolt, fill=transparent)
-        draw.line(bolt + [bolt[0]], fill=transparent, width=max(3, round(grid * 0.048)), joint="curve")
-        draw.polygon(bolt, fill=outline)
+        overlay = Image.new("RGBA", image.size, transparent)
+        bolt_draw = ImageDraw.Draw(overlay)
+        bolt_draw.line(bolt + [bolt[0]], fill=(255, 255, 255, 255),
+                       width=max(ss + 2, round(grid * 0.063)), joint="curve")
+        bolt_draw.polygon(bolt, fill=(0, 0, 0, 255))
+        # 充电笔画只能落在内腔区域，外框和正极不随状态改变。
+        upper, lower = top + contrast_edge + stroke, bottom - contrast_edge - stroke
+        image.alpha_composite(overlay.crop((0, upper, right, lower)), (0, upper))
 
     return image.resize((size, size), Image.Resampling.BOX)
 

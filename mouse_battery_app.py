@@ -20,7 +20,7 @@ from typing import Any, Optional
 import webview
 
 from tray_icon import TrayIconController, TrayMenuEntry, get_tray_icon_pixel_size
-from tray_hover_popup import TrayHoverPopup, TrayHoverRow, build_tray_hover_rows
+from tray_hover_popup import TrayHoverPopup, TrayHoverRow, build_tray_hover_rows, get_tray_live_percent
 
 from app_config import (
     APP_AUTHOR,
@@ -1149,15 +1149,16 @@ class MouseBatteryApp:
             return "tier1"
         return "normal"
 
-    def _pick_floating_device(self) -> tuple[Optional[DeviceBattery], str]:
+    def _pick_floating_device(self, devices: Optional[list[DeviceBattery]] = None) -> tuple[Optional[DeviceBattery], str]:
         fcfg = get_floating_config(self.cfg)
+        current_devices = self.devices if devices is None else devices
         if fcfg.device_id and fcfg.device_id != "auto":
-            for d in self.devices:
+            for d in current_devices:
                 if d.device_id == fcfg.device_id:
                     pref = get_device_pref(self.cfg, d.device_id)
                     return d, (pref.alias or d.name)
         ordered_objs = sorted(
-            enumerate(self.devices),
+            enumerate(current_devices),
             key=lambda pair: (get_device_pref(self.cfg, pair[1].device_id).order, pair[0], pair[1].device_id),
         )
         ordered_devices = [d for _, d in ordered_objs]
@@ -3169,10 +3170,10 @@ class MouseBatteryApp:
             except Exception:
                 pass
 
-    def _build_tray_hover_rows(self) -> list[TrayHoverRow]:
+    def _build_tray_hover_rows(self, devices: Optional[list[DeviceBattery]] = None) -> list[TrayHoverRow]:
         """直接复用统一设备管理层最新快照生成悬停浮层紧凑行（零新增轮询与 HID 通信）。"""
         ordered_pairs = sorted(
-            enumerate(self.devices),
+            enumerate(self.devices if devices is None else devices),
             key=lambda pair: (get_device_pref(self.cfg, pair[1].device_id).order, pair[0], pair[1].device_id),
         )
         ordered_devs = [d for _, d in ordered_pairs]
@@ -3207,16 +3208,17 @@ class MouseBatteryApp:
             if tray is None or self._quitting:
                 return
             try:
-                td, _name = self._pick_floating_device()
+                devices = self.devices
+                td, _name = self._pick_floating_device(devices)
                 t1, t2, t3 = self._get_active_tier_thresholds(td.device_id if td is not None else None)
                 light_taskbar = detect_windows_light_taskbar()
                 icon_px = get_tray_icon_pixel_size()
                 if td is not None:
                     td_stale = bool(getattr(td, "stale", False) or not td.online)
-                    live_pct = None if td_stale else td.percent
-                    live_chg = False if td_stale else bool(td.charging)
-                    live_full = False if td_stale else bool(td.full)
-                    live_conn = bool(td.connected) and not td_stale
+                    live_pct = get_tray_live_percent(td)
+                    live_conn = live_pct is not None
+                    live_chg = live_conn and bool(td.charging)
+                    live_full = live_conn and bool(td.full)
                     icon_key = (live_pct, live_chg, live_conn, live_full, t1, t2, t3, light_taskbar, icon_px)
                 else:
                     td_stale = False
@@ -3249,22 +3251,22 @@ class MouseBatteryApp:
                 if self.cfg.tray_hover_popup_enabled:
                     # 开启自定义悬停浮层时清空原生 szTip，防止与 Windows 原生 Tooltip 重复弹出
                     next_title = ""
-                elif not self.devices:
+                elif not devices:
                     next_title = f"{APP_NAME}（未检测到外设）"
                 else:
                     lines = []
-                    for d in self.devices[:3]:
+                    for d in devices[:3]:
                         pref = get_device_pref(self.cfg, d.device_id)
                         nm = pref.alias or d.name
                         d_stale = bool(getattr(d, "stale", False) or not d.online)
-                        d_live_pct = None if d_stale else d.percent
+                        d_live_pct = get_tray_live_percent(d)
                         sub = format_device_subtitle(
                             d.connection_mode,
                             d.connected,
                             d.online,
                             d.asleep,
-                            False if d_stale else d.charging,
-                            False if d_stale else d.full,
+                            d_live_pct is not None and d.charging,
+                            d_live_pct is not None and d.full,
                             d_live_pct,
                         )
                         if d_live_pct is not None:
@@ -3273,8 +3275,8 @@ class MouseBatteryApp:
                             lines.append(f"{nm}: — ({sub}·上次{d.percent}%)" if sub else f"{nm}: — (上次{d.percent}%)")
                         else:
                             lines.append(f"{nm}: — ({sub})" if sub else f"{nm}: —")
-                    if len(self.devices) > 3:
-                        lines.append(f"…共 {len(self.devices)} 台外设")
+                    if len(devices) > 3:
+                        lines.append(f"…共 {len(devices)} 台外设")
                     next_title = "\n".join(lines)[:124]
 
                 if next_title != self._last_tray_title:
@@ -3284,7 +3286,7 @@ class MouseBatteryApp:
                 # 若悬停浮层当前处于显示状态，实时同步最新电量与充电状态
                 popup = getattr(self, "tray_hover_popup", None)
                 if popup is not None:
-                    popup.sync_if_visible()
+                    popup.sync_if_visible(lambda: self._build_tray_hover_rows(devices))
             except Exception:
                 pass
 
