@@ -121,27 +121,71 @@
 
 ---
 
-## 八、GitHub 正式发布自主授权与标准命令规范（仅适用于 BattDock）
+## 八、测试版优先与正式发布审批规则（强制，优先于一切自主发布）
 
-用户已明确授权 Antigravity 在满足全部发布条件时，自主完成 **BattDock**（当前公开仓库 `edwin99701/BattDock`）的完整正式版本发布流程，无需逐项请求确认（**本授权仅适用于当前 BattDock 项目，不自动适用于其他项目**）：
+今后所有 **BattDock** 功能更新、UI 优化、Bug 修复及版本迭代，**必须严格执行「先交付测试版 → 用户实测并明确批准 → 执行正式发布」三阶段流程**（本规则永久取代此前「直接自主发布正式版」权限，优先级最高）：
 
-1. **常规发布自主权限**：在正常发布流程范围内，允许自主执行检查 Git 状态/分支/远端、判定版本号、更新版本信息/`CHANGELOG.md`/`update-summary.json`、执行自动化测试与构建、受控提交与创建附注 Tag、快进推送 `master` 与新 Tag、创建并发布 GitHub Release、逐文件上传正式安装包/便携版/校验文件、核实线上资产与在线更新接口，并在完成后使用中文汇报发布结果。
-2. **正式发布前置条件（全部满足方可自主发布）**：自动化测试通过、构建成功、程序可正常启动、核心功能回归通过、用户配置与旧版本升级兼容性通过、Release 版本号及附件完整正确、无已知阻断性问题。
-3. **标准自主发布流程与纯净命令规范（严禁多行拼接、`Write-Host` 包装、`$(...)` 替换与 `git -c`）**：
-   - **版本号判定**：核实当前分支为 `master`、工作区状态及线上最新正式 Release Tag，按语义化版本递增并同步更新 `brand.py`、`version_info.txt`、`installer/BattDock.iss`、`CHANGELOG.md`、`PROGRESS.md`、`PROJECT_CONTEXT.md`、`README.md`、`README_EN.md`。
-   - **自动测试与构建**：运行 `powershell -NoProfile -ExecutionPolicy Bypass -File ./build_release.ps1`（自动跑通全量单元测试、PyInstaller 打包、Inno Setup 编译、ZIP 打包与 `SHA256SUMS.txt` 生成），生成 `release/assets_vX.Y.Z/update-summary.json` 与纯文本 `RELEASE_NOTES_vX.Y.Z.md`，完成编译版启动与 ZIP/SHA-256 验收。
-   - **受控提交与打标（使用本仓库 `.git/config` 本地作者，严禁 `git add -A`/`.` 或纳入未跟踪参考 PNG）**：
-     - `git add -u`（仅暂存已跟踪修改文件；若确需新增全新源码文件需单独显式审批）
-     - `git commit -m "<类型>: <中文说明> (vX.Y.Z)"`
-     - `git tag -a vX.Y.Z -m "BattDock vX.Y.Z"`
-   - **单条纯净快进推送**：
-     - `git push origin refs/heads/master:refs/heads/master`
-     - `git push origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z`
-   - **GitHub CLI（`gh`）四步标准发布（严格锁定 `--repo edwin99701/BattDock`，严禁 `--clobber`）**：
-     1. 创建草稿：`gh release create vX.Y.Z --repo edwin99701/BattDock --draft --title "BattDock vX.Y.Z" --notes-file release/assets_vX.Y.Z/RELEASE_NOTES_vX.Y.Z.md`
-     2. 逐文件上传 5 个发布资产（不带 `--clobber`）：`gh release upload vX.Y.Z --repo edwin99701/BattDock release/assets_vX.Y.Z/<资产文件名>`（依次上传 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip`、`SHA256SUMS.txt`、`update-summary.json`）
-     3. 核验草稿资产：`gh release view vX.Y.Z --repo edwin99701/BattDock --json tagName,isDraft,assets`
-     4. 正式发布为 Latest：`gh release edit vX.Y.Z --repo edwin99701/BattDock --draft=false --latest`
-4. **禁止执行的高风险操作（未经明确授权严禁执行）**：强制覆盖远程分支（`--force`/`-f`/`--force-with-lease`）、使用 `--clobber` 覆盖历史 Release 附件、删除历史 Git Tag、删除或覆盖历史 GitHub Release、删除远程仓库、修改 GitHub 仓库所有权或地址、破坏性 Git 历史重写（`reset --hard`/`rebase`）、删除用户配置与历史备份、上传密钥/Token 或个人隐私信息。
-5. **异常熔断机制**：遇测试失败、构建失败、Git 冲突、远端与本地存在无法安全解决的分歧、更新兼容性风险、核心功能回归或 GitHub 认证/权限失效时，必须立即暂停发布并向用户说明，严禁跳过测试或掩盖错误。
-6. **发布后核验与汇报责任**：发布成功后自主核验 GitHub Release（`Latest` 与非草稿状态）、5 个附件及 SHA-256、新旧仓库 `releases/latest` API 与国内加速节点 HTTP 200、软件内 `updater.check_for_update()` 检测结果，并同步确认 `PROGRESS.md` 一致，最终以中文汇报版本号、Commit、Tag、Release 地址、附件、SHA-256 及分级测试结果。
+### 1. 第一阶段：生成独立测试版（默认止步于此）
+1. 完成代码修改、全量单元测试及必要的核心功能回归测试。
+2. 构建**独立测试版**安装包或便携版（建议输出至 `release/test_builds/v<目标版本>-test.<序号>/`，例如 `BattDock-v2.7.7-test.1-Portable.zip` / `BattDock-v2.7.7-test.1-Setup.exe`），明确标注测试版本号与测试版身份。
+3. 提供测试版文件路径及本次修改说明、分级验证结果，交由用户安装与实机测试。
+4. **隔离要求**：测试版绝不覆盖当前稳定正式版资产目录（`release/assets_v<正式版>`），绝不修改正式版本号对外渠道，绝不进入正式版本的自动更新渠道（严禁推送为 GitHub `Latest` Release 或覆盖正式版 `update-summary.json`）。
+
+### 2. 第二阶段：等待用户实测与明确批准
+1. 等待用户在真实环境（含交互桌面、真实外设、Win10/Win11 或游戏场景）反馈功能、界面、兼容性与稳定性问题。
+2. 根据反馈持续修复并重新生成测试版。
+3. **用户未明确表示同意正式发布之前，严禁进入第三阶段正式发布流程。**
+
+### 3. 第三阶段：经用户明确批准后的正式发布流程与标准命令规范
+**仅在用户明确同意正式发布，且全部发布前置条件满足（自动化测试通过、构建成功、程序可正常启动、核心功能回归通过、配置与旧版升级兼容、资产完整无阻断问题）时**，才可执行：
+- **版本号判定与同步**：核实当前分支为 `master`、工作区状态及线上最新正式 Release Tag，按语义化版本更新 `brand.py`、`version_info.txt`、`installer/BattDock.iss`、`CHANGELOG.md`、`PROGRESS.md`、`PROJECT_CONTEXT.md`、`README.md`、`README_EN.md`。
+- **正式测试与构建**：运行 `powershell -NoProfile -ExecutionPolicy Bypass -File ./build_release.ps1`（自动跑通全量单元测试、PyInstaller 打包、Inno Setup 编译、ZIP 打包与 `SHA256SUMS.txt` 生成），生成 `release/assets_vX.Y.Z/update-summary.json` 与纯文本 `RELEASE_NOTES_vX.Y.Z.md`，完成编译版启动与 ZIP/SHA-256 验收。
+- **受控提交与打标（严禁多行拼接、`Write-Host` 包装、`$(...)` 替换、`git -c` 及 `git add -A`/`.`，严禁纳入未跟踪参考 PNG）**：
+  - 显式暂存已跟踪改动及经确认的新源码文件
+  - `git commit -m "<类型>: <中文说明> (vX.Y.Z)"`
+  - `git tag -a vX.Y.Z -m "BattDock vX.Y.Z"`
+- **单条纯净快进推送**：
+  - `git push origin refs/heads/master:refs/heads/master`
+  - `git push origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z`
+- **GitHub CLI（`gh`）四步标准发布（严格锁定 `--repo edwin99701/BattDock`，严禁 `--clobber`）**：
+  1. 创建草稿：`gh release create vX.Y.Z --repo edwin99701/BattDock --draft --title "BattDock vX.Y.Z" --notes-file release/assets_vX.Y.Z/RELEASE_NOTES_vX.Y.Z.md`
+  2. 逐文件上传 5 个发布资产（不带 `--clobber`）：`gh release upload vX.Y.Z --repo edwin99701/BattDock release/assets_vX.Y.Z/<资产文件名>`（依次上传 `BattDock-vX.Y.Z-Setup.exe`、`BattDock-vX.Y.Z-Windows-x64-Portable.zip`、`VGNMouseBattery-vX.Y.Z-win64-UpgradeBridge.zip`、`SHA256SUMS.txt`、`update-summary.json`）
+  3. 核验草稿资产：`gh release view vX.Y.Z --repo edwin99701/BattDock --json tagName,isDraft,assets`
+  4. 正式发布为 Latest：`gh release edit vX.Y.Z --repo edwin99701/BattDock --draft=false --latest`
+- **严格禁止**：
+  - 严禁将测试通过或构建成功等同于允许正式发布；
+  - 严禁未经用户明确批准擅自创建正式 Tag、推送正式发布、创建正式 GitHub Release 或上传正式更新资产；
+  - 严禁让未经用户实测的版本进入正式自动更新渠道；
+  - 严禁强制覆盖远程分支（`--force`/`-f`/`--force-with-lease`）、使用 `--clobber` 覆盖历史 Release 附件、删除历史 Git Tag/Release/仓库、重写 Git 历史（`reset --hard`/`rebase`）、删除用户配置或泄露密钥/隐私。
+- **异常熔断机制**：遇测试失败、构建失败、Git 冲突、远端与本地存在无法安全解决的分歧、更新兼容性风险、核心功能回归或 GitHub 认证/权限失效时，立即暂停并向用户说明，严禁跳过测试或掩盖错误。
+- **发布后核验**：正式发布后核验 GitHub Release（`Latest` 与非草稿状态）、5 个附件及 SHA-256、新旧仓库 `releases/latest` API 与国内加速节点 HTTP 200、软件内 `updater.check_for_update()` 检测结果，核验通过后立即执行第九节本地测试产物清理，并统一使用中文汇报。
+
+---
+
+## 九、正式版发布后的本地测试文件清理规则（强制）
+
+每次正式版本成功发布并通过线上核验后，必须执行一次**本地测试产物安全清理**，防止旧测试安装包、临时构建缓存与重复测试产物长期占用磁盘空间。
+
+### 1. 允许自动清理的范围
+仅限明确核实属于已失效测试流程且可重新生成的本地文件：
+1. 以前生成的本地测试版安装包（Test Build Setup）与测试版便携包（Portable Test Build ZIP）；
+2. 已废弃的本地测试版 EXE、ZIP 等重复测试构建产物；
+3. `release/test_builds/` 等独立测试输出目录中已完成发布、不再需要的旧测试目录与临时测试文件；
+4. 可重新生成的临时构建缓存与中间目录（如残留的 `build_tmp/`、`build_dist/`）；
+5. 已确认不再需要的临时测试日志、调试输出与临时测试报告。
+
+### 2. 严禁纳入自动清理的受保护内容
+- 当前及历史正式版本的安装包、便携版与 Release 资产（`release/assets_v*`）；
+- 正式版本源码、Git 提交记录、分支与 Tag；
+- 历史备份与必要回滚目录（如 `archive/` 整目录不擅自删除）；
+- `AGENTS.md`、`PROJECT_CONTEXT.md`、`PROGRESS.md`、`SUPPORTED_DEVICES.md`、`RELEASE_CHECKLIST.md`、`CHANGELOG.md` 等全部项目文档；
+- 正式图标、品牌素材、设备图标及本地参考图片（`极简白色电脑图标组.png`、`黑底白色外设图标目录.png`）；
+- 用户配置（`config.json`、`%LOCALAPPDATA%\BattDock\`）、设备数据及个人文件；
+- 尚未完成的开发/测试所需文件、未提交的源码修改；
+- **任何无法明确确认用途的文件或目录**；
+- GitHub 远端历史测试版 Release 与资产（不纳入本地自动清理；确需删除须单独列出并征得用户确认）。
+
+### 3. 安全执行流程与验收汇报
+1. **先核验线上正式版**：确认 GitHub 正式 Release 已发布为 `Latest`、全部 5 个正式资产已上传、版本号一致且下载/更新接口正常。
+2. **先扫描列清单、再逐项精准删除**：严禁使用不受限制的通配符批量删除；严禁仅因文件名含 `test`/`temp`/`debug` 就直接判定删除；删除前必须逐一核实实际路径与用途。
+3. **清理后必须汇报**：汇报本次删除的测试文件数量、释放的本地磁盘空间、保留的正式版本及回滚文件，以及是否存在无法确认用途、需要人工处理的文件。
