@@ -2279,7 +2279,10 @@
       fltLabelInp.value = flt.custom_label || "";
     }
 
-    const devOpts = [{ value: "auto", label: "自动（优先最低电量设备）" }].concat(
+    const devOpts = [
+      { value: "auto", label: "自动（全部已连接设备）" },
+      { value: "lowest", label: "仅最低电量设备（单设备）" },
+    ].concat(
       (state.all_devices || []).map((d) => ({ value: d.device_id, label: d.display_name }))
     );
     setCustomSelectOptions("cs-fltDev", devOpts, flt.device_id || "auto");

@@ -2580,7 +2580,7 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
         from floating_widget import draw_battery_icon
         from tray_icon import destroy_hicon_safe, pil_image_to_hicon
 
-        sizes = (16, 20, 24, 32, 64)
+        sizes = (16, 20, 24, 28, 32, 64)
         states = [
             (85, False, True, False),   # 正常绿色
             (25, False, True, False),   # 一级黄
@@ -2604,12 +2604,19 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
                     )
                     self.assertEqual(img.size, (sz, sz))
                     self.assertEqual(img.mode, "RGBA")
-                    # 必须含透明背景（非实心不透明方块）且含可见前景像素
+                    # 必须含透明背景（非实心不透明方块）且含满画布高占比前景像素
                     alpha = img.getchannel("A")
                     lo, hi = alpha.getextrema()
                     self.assertEqual(lo, 0)
-                    self.assertGreater(hi, 180)
-                    if sys.platform == "win32" and sz in (16, 24, 32):
+                    self.assertGreaterEqual(hi, 230)
+                    bbox = alpha.getbbox()
+                    self.assertIsNotNone(bbox)
+                    bw = bbox[2] - bbox[0]
+                    bh = bbox[3] - bbox[1]
+                    # 充分利用画布：宽度 >= 90%，高度 >= 60%（兼顾顶部嵌合充电闪电空间）
+                    self.assertGreaterEqual(bw, int(sz * 0.90), f"width too small at {sz}px: {bw}")
+                    self.assertGreaterEqual(bh, int(sz * 0.60), f"height too small at {sz}px: {bh}")
+                    if sys.platform == "win32" and sz in (16, 20, 24, 28, 32):
                         hicon = pil_image_to_hicon(img)
                         self.assertGreater(hicon, 0)
                         destroy_hicon_safe(hicon)
@@ -2619,10 +2626,27 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
         light_img = draw_battery_icon(size=32, percent=80, charging=False, connected=True, light_bg=True)
         self.assertNotEqual(dark_img.tobytes(), light_img.tobytes())
 
-        # 充电中与非充电同电量应存在闪电像素差异；已充满(full=True)不强行叠加充电闪电
-        chg_img = draw_battery_icon(size=32, percent=75, charging=True, connected=True, full=False)
-        norm_img = draw_battery_icon(size=32, percent=75, charging=False, connected=True, full=False)
+        # 实心填充像素面积应随真实电量单调递增（40% < 70% < 100%）
+        def _count_green(im):
+            raw = im.tobytes()
+            return sum(
+                1 for i in range(0, len(raw), 4)
+                if raw[i + 3] > 200 and raw[i + 1] > raw[i] + 40 and raw[i + 1] > raw[i + 2] + 30
+            )
+
+        g40 = _count_green(draw_battery_icon(size=24, percent=40, charging=False, connected=True))
+        g70 = _count_green(draw_battery_icon(size=24, percent=70, charging=False, connected=True))
+        g100 = _count_green(draw_battery_icon(size=24, percent=100, charging=False, connected=True))
+        self.assertGreater(g40, 0)
+        self.assertGreater(g70, g40)
+        self.assertGreater(g100, g70)
+
+        # 充电中与非充电同电量应存在闪电像素差异，且闪电不得遮挡过多绿色填充区
+        chg_img = draw_battery_icon(size=24, percent=75, charging=True, connected=True, full=False)
+        norm_img = draw_battery_icon(size=24, percent=75, charging=False, connected=True, full=False)
         self.assertNotEqual(chg_img.tobytes(), norm_img.tobytes())
+        self.assertGreater(_count_green(chg_img), _count_green(norm_img) * 0.55)
+
         full_chg = draw_battery_icon(size=32, percent=100, charging=True, connected=True, full=True)
         full_only = draw_battery_icon(size=32, percent=100, charging=False, connected=True, full=True)
         self.assertEqual(full_chg.tobytes(), full_only.tobytes())
@@ -2898,6 +2922,89 @@ class TestV276TrayIconAndHoverPopup(unittest.TestCase):
         self.assertIn("悬停显示设备电量", settings_html)
         self.assertIn("鼠标停留在系统托盘图标上时，快速查看已连接设备的电量。", settings_html)
         self.assertIn("tray_hover_popup_enabled", settings_html)
+
+    def test_v277_unified_floating_widget_multi_device_snap_and_popup_specs(self):
+        from app_config import FloatingWidgetConfig
+        from floating_widget import (
+            FLOATING_RADIUS_DIP,
+            FloatingDeviceItem,
+            compute_floating_logical_size,
+            render_floating_widget_pil,
+            snap_floating_position,
+        )
+        from mouse_battery_app import MouseBatteryApp
+        from providers.base import DeviceBattery, KIND_HEADSET, KIND_KEYBOARD, KIND_MOUSE
+        from tray_hover_popup import (
+            FADE_IN_MS,
+            FADE_OUT_MS,
+            POPUP_MIN_WIDTH_DIP,
+            POPUP_RADIUS_DIP,
+            POPUP_ROW_HEIGHT_DIP,
+            POPUP_SINGLE_MAX_WIDTH_DIP,
+            POPUP_SINGLE_ROW_HEIGHT_DIP,
+            build_tray_hover_rows,
+            compute_popup_logical_size,
+        )
+
+        # 1. 悬停浮层与悬浮窗圆角及动画参数统一规范校验
+        self.assertEqual(POPUP_RADIUS_DIP, FLOATING_RADIUS_DIP)
+        self.assertGreaterEqual(POPUP_RADIUS_DIP, 10)
+        self.assertGreaterEqual(POPUP_SINGLE_ROW_HEIGHT_DIP, 42)
+        self.assertLessEqual(POPUP_SINGLE_ROW_HEIGHT_DIP, 48)
+        self.assertGreaterEqual(POPUP_ROW_HEIGHT_DIP, 42)
+        self.assertGreaterEqual(FADE_IN_MS, 120)
+        self.assertLessEqual(FADE_IN_MS, 160)
+        self.assertGreaterEqual(FADE_OUT_MS, 100)
+        self.assertLessEqual(FADE_OUT_MS, 140)
+
+        devs = [
+            DeviceBattery(device_id="m1", name="VGN Dragonfly F2 Pro Max", brand="VGN", kind=KIND_MOUSE, percent=95, charging=True, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="h1", name="Logitech G Pro X 2 Lightspeed", brand="Logitech", kind=KIND_HEADSET, percent=82, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="k1", name="ATK68", brand="ATK", kind=KIND_KEYBOARD, percent=24, connected=True, online=True, connection_mode="2.4GHz"),
+        ]
+
+        # 单设备悬停浮层宽度落在 230~270 DIP
+        single_rows = build_tray_hover_rows([devs[0]])
+        sw, sh, svis, sscroll = compute_popup_logical_size(single_rows)
+        self.assertEqual(svis, 1)
+        self.assertFalse(sscroll)
+        self.assertGreaterEqual(sw, POPUP_MIN_WIDTH_DIP)
+        self.assertLessEqual(sw, POPUP_SINGLE_MAX_WIDTH_DIP)
+
+        # 2. 桌面悬浮窗单设备与多设备条目构建与高度自适应
+        app = MouseBatteryApp(start_hidden=False)
+        app.devices = devs
+        items_all = app._build_floating_device_items(FloatingWidgetConfig(enabled=True, device_id="auto"))
+        self.assertEqual(len(items_all), 3)
+        self.assertEqual(items_all[0].label, "VGN F2 Pro Max")
+        self.assertTrue(items_all[0].show_bolt)
+        self.assertEqual(items_all[2].value_text, "24%")
+
+        items_lowest = app._build_floating_device_items(FloatingWidgetConfig(enabled=True, device_id="lowest"))
+        self.assertEqual(len(items_lowest), 1)
+        self.assertEqual(items_lowest[0].device_id, "k1")
+
+        items_pinned = app._build_floating_device_items(FloatingWidgetConfig(enabled=True, device_id="m1", custom_label="主力鼠标"))
+        self.assertEqual(len(items_pinned), 1)
+        self.assertEqual(items_pinned[0].label, "主力鼠标")
+
+        w1, h1, _ = compute_floating_logical_size("medium", [items_all[0]])
+        w3, h3, _ = compute_floating_logical_size("medium", items_all)
+        self.assertGreater(h3, h1 * 2)
+        self.assertGreaterEqual(w1, 220)
+
+        # 3. 悬浮窗拖拽磁性吸附逻辑校验
+        sx, sy = snap_floating_position(10, 12, 240, 64, (0, 0, 1920, 1040), scale=1.0)
+        self.assertEqual((sx, sy), (16, 16))
+        rx, ry = snap_floating_position(1670, 965, 240, 64, (0, 0, 1920, 1040), scale=1.0)
+        self.assertEqual((rx, ry), (1920 - 240 - 16, 1040 - 64 - 16))
+
+        # 4. 离屏渲染支持单/多设备与 100%/150% DPI
+        for sc in (1.0, 1.5):
+            for dark in (False, True):
+                im_s = render_floating_widget_pil([items_all[0]], size_key="medium", is_dark=dark, scale=sc)
+                im_m = render_floating_widget_pil(items_all, size_key="medium", is_dark=dark, scale=sc)
+                self.assertGreater(im_m.height, im_s.height * 2)
 
 
 if __name__ == "__main__":

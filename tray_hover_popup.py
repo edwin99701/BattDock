@@ -44,15 +44,17 @@ from floating_widget import (
 )
 from providers.base import KIND_OTHER
 
-# 紧凑视觉规范常量（逻辑 DIP）
-POPUP_MIN_WIDTH_DIP = 220
-POPUP_MAX_WIDTH_DIP = 320
-POPUP_ROW_HEIGHT_DIP = 32
-POPUP_PAD_X_DIP = 12
-POPUP_PAD_Y_DIP = 8
-POPUP_RADIUS_DIP = 9
-POPUP_ICON_DIP = 16
-POPUP_ICON_GAP_DIP = 9
+# 统一 Windows 原生状态面板视觉规范常量（逻辑 DIP）
+POPUP_MIN_WIDTH_DIP = 232
+POPUP_SINGLE_MAX_WIDTH_DIP = 270
+POPUP_MAX_WIDTH_DIP = 310
+POPUP_SINGLE_ROW_HEIGHT_DIP = 44
+POPUP_ROW_HEIGHT_DIP = 42
+POPUP_PAD_X_DIP = 14
+POPUP_PAD_Y_DIP = 6
+POPUP_RADIUS_DIP = 10
+POPUP_ICON_DIP = 18
+POPUP_ICON_GAP_DIP = 10
 POPUP_VALUE_GAP_DIP = 12
 POPUP_BOLT_SLOT_DIP = 13
 POPUP_MAX_VISIBLE_ROWS = 6
@@ -61,8 +63,8 @@ POPUP_WORKAREA_MARGIN_DIP = 8
 
 SHOW_DELAY_SEC = 0.30
 HIDE_DELAY_SEC = 0.20
-FADE_IN_MS = 135
-FADE_OUT_MS = 105
+FADE_IN_MS = 140
+FADE_OUT_MS = 120
 HOVER_POLL_MS = 55
 
 _OVERFLOW_CLASS_NAMES = (
@@ -277,8 +279,10 @@ def compute_popup_logical_size(
         + bolt_w
         + scroll_w
     )
-    width_dip = max(POPUP_MIN_WIDTH_DIP, min(POPUP_MAX_WIDTH_DIP, int(needed_w)))
-    height_dip = POPUP_PAD_Y_DIP * 2 + vis_count * POPUP_ROW_HEIGHT_DIP
+    max_w = POPUP_SINGLE_MAX_WIDTH_DIP if vis_count == 1 else POPUP_MAX_WIDTH_DIP
+    row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if vis_count == 1 else POPUP_ROW_HEIGHT_DIP
+    width_dip = max(POPUP_MIN_WIDTH_DIP, min(max_w, int(needed_w)))
+    height_dip = POPUP_PAD_Y_DIP * 2 + vis_count * row_h_dip
     return width_dip, height_dip, vis_count, scrollable
 
 
@@ -522,8 +526,9 @@ class TrayHoverStateMachine:
 def _palette(is_dark: bool) -> dict[str, tuple[int, int, int]]:
     if is_dark:
         return {
-            "bg": (31, 35, 46),
+            "bg": (30, 34, 44),
             "border": (52, 59, 77),
+            "divider": (46, 52, 66),
             "text": (241, 245, 249),
             "muted": (126, 135, 153),
             "icon": (241, 245, 249),
@@ -538,7 +543,8 @@ def _palette(is_dark: bool) -> dict[str, tuple[int, int, int]]:
         }
     return {
         "bg": (255, 255, 255),
-        "border": (218, 224, 234),
+        "border": (220, 226, 236),
+        "divider": (236, 240, 246),
         "text": (24, 27, 34),
         "muted": (138, 146, 162),
         "icon": (17, 24, 39),
@@ -1154,7 +1160,8 @@ class TrayHoverPopup:
 
         pad_x = int(round(POPUP_PAD_X_DIP * sc))
         pad_y = int(round(POPUP_PAD_Y_DIP * sc))
-        row_h = int(round(POPUP_ROW_HEIGHT_DIP * sc))
+        row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if len(visible_rows) == 1 else POPUP_ROW_HEIGHT_DIP
+        row_h = int(round(row_h_dip * sc))
         icon_px = max(14, int(round(POPUP_ICON_DIP * sc)))
         icon_gap = int(round(POPUP_ICON_GAP_DIP * sc))
         val_gap = int(round(POPUP_VALUE_GAP_DIP * sc))
@@ -1199,10 +1206,19 @@ class TrayHoverPopup:
         sf_right.LineAlignment = StringAlignment.Center
         sf_right.FormatFlags = StringFormatFlags.NoWrap
 
+        from System.Drawing import Pen
+
         try:
             for idx, row in enumerate(visible_rows):
                 ry = pad_y + idx * row_h
                 is_inactive = row.alert_level in ("offline", "sleep", "unknown")
+
+                if idx > 0:
+                    pen_div = Pen(Color.FromArgb(*pal["divider"]), 1.0)
+                    try:
+                        g.DrawLine(pen_div, float(pad_x), float(ry), float(right_edge), float(ry))
+                    finally:
+                        pen_div.Dispose()
 
                 # 1. 统一黑白实心设备类型图标
                 gdi_icon = self._get_icon_ui(row.kind, icon_px, self._is_dark, is_inactive)
@@ -1217,15 +1233,18 @@ class TrayHoverPopup:
                 finally:
                     nb.Dispose()
 
-                # 3. 电量百分比或中文状态（右对齐，数字用等宽清晰字体，中文状态用中文字体零缺字）
+                # 3. 电量百分比或中文状态（右端统一齐平，与桌面悬浮窗完全一致）
                 val_rgb = _row_value_rgb(row, pal)
                 val_font = pct_font if row.value_text.isascii() else name_font
+                row_bolt_w = int(round(POPUP_BOLT_SLOT_DIP * sc)) if row.show_bolt else 0
+                row_val_right = right_edge - row_bolt_w
+                row_val_x = row_val_right - val_col_w
                 vb = SolidBrush(Color.FromArgb(*val_rgb))
                 try:
-                    g.DrawString(row.value_text, val_font, vb, RectangleF(float(val_x), float(ry), float(val_col_w), float(row_h)), sf_right)
+                    g.DrawString(row.value_text, val_font, vb, RectangleF(float(row_val_x), float(ry), float(val_col_w), float(row_h)), sf_right)
                     # 4. 充电小闪电（纯矢量抗锯齿绘制，不依赖系统 Emoji 字体）
                     if row.show_bolt:
-                        bcx = float(bolt_x) + float(bolt_slot) * 0.56
+                        bcx = float(row_val_right) + float(row_bolt_w) * 0.56
                         bcy = float(ry) + float(row_h) * 0.5
                         u = 1.05 * sc
                         pts = [
@@ -1340,7 +1359,8 @@ def render_hover_popup_pil(
     any_bolt = any(r.show_bolt for r in eff_rows)
     pad_x = int(round(POPUP_PAD_X_DIP * sc))
     pad_y = int(round(POPUP_PAD_Y_DIP * sc))
-    row_h = int(round(POPUP_ROW_HEIGHT_DIP * sc))
+    row_h_dip = POPUP_SINGLE_ROW_HEIGHT_DIP if vis_cnt == 1 else POPUP_ROW_HEIGHT_DIP
+    row_h = int(round(row_h_dip * sc))
     icon_px = max(14, int(round(POPUP_ICON_DIP * sc)))
     icon_gap = int(round(POPUP_ICON_GAP_DIP * sc))
     val_gap = int(round(POPUP_VALUE_GAP_DIP * sc))
@@ -1360,6 +1380,8 @@ def render_hover_popup_pil(
 
     for idx, row in enumerate(eff_rows[:vis_cnt]):
         ry = pad_y + idx * row_h
+        if idx > 0:
+            draw.line([(pad_x, ry), (right_edge, ry)], fill=(*pal["divider"], 255), width=1)
         is_inactive = row.alert_level in ("offline", "sleep", "unknown")
         ic_rgb = pal["icon_muted"] if is_inactive else pal["icon"]
         ic = render_device_icon_pil(row.kind, size=icon_px, is_dark=is_dark, color=(*ic_rgb, 255))
@@ -1380,11 +1402,12 @@ def render_hover_popup_pil(
         vh = vb[3] - vb[1]
         vy = ry + (row_h - vh) // 2 - vb[1]
         vrgb = _row_value_rgb(row, pal)
-        draw.text((val_right - vw, vy), row.value_text, font=v_font, fill=(*vrgb, 255))
+        row_bolt_w = int(round(POPUP_BOLT_SLOT_DIP * sc)) if row.show_bolt else 0
+        row_val_right = right_edge - row_bolt_w
+        draw.text((row_val_right - vw, vy), row.value_text, font=v_font, fill=(*vrgb, 255))
 
         if row.show_bolt:
-            # 4x 超采样绘制清晰闪电
-            bcx = bolt_x + bolt_slot * 0.58
+            bcx = row_val_right + row_bolt_w * 0.56
             bcy = ry + row_h * 0.5
             u = 1.05 * sc
             pts = [

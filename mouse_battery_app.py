@@ -71,6 +71,7 @@ from device_icons import get_device_icons_svg_map, render_device_icon_pil
 from floating_widget import (
     DesktopFloatingWidget,
     EDGE_MARGIN,
+    FloatingDeviceItem,
     _try_win11_round_corners,
     apply_non_activating_tool_style,
     apply_window_rounded_corners,
@@ -99,6 +100,7 @@ from providers.device_naming import (
     format_connection_mode_cn,
     format_device_subtitle,
     resolve_compact_device_label,
+    resolve_tray_hover_device_names,
 )
 
 if sys.platform == "win32":
@@ -1264,6 +1266,83 @@ class MouseBatteryApp:
             return (1, "电量偏低")
         return (1, "电量偏低")
 
+    def _build_floating_device_items(self, fcfg: FloatingWidgetConfig) -> list[FloatingDeviceItem]:
+        """构建桌面悬浮窗设备条目列表（自动模式同时支持单设备与多设备展示，保留单设备钉选与最低电量模式）。"""
+        ordered_pairs = sorted(
+            enumerate(self.devices),
+            key=lambda pair: (get_device_pref(self.cfg, pair[1].device_id).order, pair[0], pair[1].device_id),
+        )
+        ordered_devs = [d for _, d in ordered_pairs]
+        visible_devs = [d for d in ordered_devs if not get_device_pref(self.cfg, d.device_id).hidden] or ordered_devs
+
+        mode = (fcfg.device_id or "auto").strip()
+        if mode == "lowest":
+            picked, _ = self._pick_floating_device()
+            selected_devs = [picked] if picked is not None else []
+        elif mode not in ("auto", "all"):
+            selected_devs = [d for d in ordered_devs if d.device_id == mode]
+            if not selected_devs:
+                picked, _ = self._pick_floating_device()
+                selected_devs = [picked] if picked is not None else []
+        else:
+            selected_devs = visible_devs
+
+        if not selected_devs:
+            return []
+
+        aliases = {
+            d.device_id: get_device_pref(self.cfg, d.device_id).alias
+            for d in selected_devs
+            if get_device_pref(self.cfg, d.device_id).alias
+        }
+        if len(selected_devs) == 1 and (fcfg.custom_label or "").strip():
+            labels = [(fcfg.custom_label or "").strip()]
+        else:
+            labels = resolve_tray_hover_device_names(selected_devs, aliases=aliases)
+
+        items: list[FloatingDeviceItem] = []
+        for dev, lbl in zip(selected_devs, labels):
+            t1, t2, t3 = self._get_active_tier_thresholds(dev.device_id)
+            is_stale = bool(getattr(dev, "stale", False) or not dev.online)
+            live_pct = None if is_stale else dev.percent
+            sub = format_device_subtitle(
+                dev.connection_mode,
+                dev.connected,
+                dev.online,
+                dev.asleep,
+                False if is_stale else dev.charging,
+                False if is_stale else dev.full,
+                live_pct,
+            )
+            if is_stale and dev.percent is not None:
+                last_ts = getattr(dev, "last_success_ts", None) or dev.timestamp
+                ts_s = datetime.fromtimestamp(last_ts).strftime("%H:%M") if last_ts else ""
+                ref_s = f"上次 {dev.percent}% ({ts_s})" if ts_s else f"上次 {dev.percent}%"
+                detail = f"{dev.name} · {sub} · {ref_s}" if sub else f"{dev.name} · {ref_s}"
+            else:
+                pct_s = f"{live_pct}%" if live_pct is not None else "—"
+                detail = f"{dev.name} · {sub} · {pct_s}" if sub else f"{dev.name} · {pct_s}"
+
+            items.append(
+                FloatingDeviceItem(
+                    device_id=dev.device_id,
+                    kind=dev.kind,
+                    label=lbl,
+                    percent=live_pct,
+                    charging=(False if is_stale else bool(dev.charging)),
+                    full=(False if is_stale else bool(dev.full)),
+                    connected=bool(dev.connected),
+                    online=bool(dev.online),
+                    asleep=bool(dev.asleep),
+                    stale=is_stale,
+                    low_t1=t1,
+                    low_t2=t2,
+                    low_t3=t3,
+                    hover_detail=detail,
+                )
+            )
+        return items
+
     def _sync_floating_widget(self) -> None:
         fcfg = get_floating_config(self.cfg)
         dev, _full_name = self._pick_floating_device()
@@ -1275,22 +1354,8 @@ class MouseBatteryApp:
             alias=(pref.alias if pref else ""),
         )
         t1, t2, t3 = self._get_active_tier_thresholds(dev.device_id if dev else None)
-        hover_detail = ""
-        if dev is not None:
-            is_stale = bool(getattr(dev, "stale", False) or not dev.online)
-            live_pct = None if is_stale else dev.percent
-            sub = format_device_subtitle(
-                dev.connection_mode, dev.connected, dev.online,
-                dev.asleep, dev.charging if not is_stale else False, dev.full if not is_stale else False, live_pct,
-            )
-            if is_stale and dev.percent is not None:
-                last_ts = getattr(dev, "last_success_ts", None) or dev.timestamp
-                ts_s = datetime.fromtimestamp(last_ts).strftime("%H:%M") if last_ts else ""
-                ref_s = f"上次 {dev.percent}% ({ts_s})" if ts_s else f"上次 {dev.percent}%"
-                hover_detail = f"{dev.name}\n{sub} · {ref_s}" if sub else f"{dev.name}\n{ref_s}"
-            else:
-                pct_s = f"{live_pct}%" if live_pct is not None else "—"
-                hover_detail = f"{dev.name}\n{sub} · {pct_s}" if sub else f"{dev.name}\n{pct_s}"
+        floating_items = self._build_floating_device_items(fcfg)
+        hover_detail = "\n".join(it.hover_detail for it in floating_items if it.hover_detail)
         self.floating_widget.sync(
             fcfg,
             dev,
@@ -1301,6 +1366,7 @@ class MouseBatteryApp:
             low_t2=t2,
             low_t3=t3,
             animations_enabled=self._effective_animations(),
+            items=floating_items,
         )
         # 若低电量提醒窗正在显示，保证提醒窗始终维持独立最高优先级（高于悬浮窗且不抢焦点）
         self._keep_alert_above_other_windows()
