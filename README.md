@@ -16,7 +16,7 @@
 <br />
 
 <a href="https://github.com/edwin99701/BattDock/releases/latest">
-  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.7.5-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
+  <img src="https://img.shields.io/badge/%E2%AC%87%20%E4%B8%8B%E8%BD%BD%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC-BattDock%20v2.7.6-111827?style=for-the-badge" alt="下载最新版本 BattDock" />
 </a>
 
 </div>
@@ -39,14 +39,14 @@
 | | |
 | :--- | :--- |
 | **实时电量监控**<br>统一黑白实心设备类型图标（鼠标 / 耳机 / 键盘），多品牌只读适配、事件驱动热插拔缓存与官方规范型号命名 | **三级低电量提醒**<br>默认 `30% / 20% / 10%` 黄/橙/红分级提醒、单设备独立阈值与不抢游戏焦点的 5 秒紧凑迷你弹窗 |
-| **原生 Win32 动态托盘电池**<br>独立原生托盘控制器，动态矢量电池图标随实际电量与色阶联动，支持自愈重连、右键一键切换桌面悬浮窗 | **轻量桌面悬浮窗**<br>原生 WinForms 悬浮窗（零额外 WebView2 开销），默认精简为品牌名 + 悬停完整详情 + 同品牌自动区分，支持自定义名与位置锁定 |
+| **原生 Win32 极简动态托盘与悬停浮层**<br>自适应深浅任务栏的极简线条动态电池图标与自愈重连；鼠标悬停 300ms 快速弹出紧凑多设备电量浮层（不抢游戏焦点），支持右键一键切换桌面悬浮窗 | **轻量桌面悬浮窗**<br>原生 WinForms 悬浮窗（零额外 WebView2 开销），默认精简为品牌名 + 悬停完整详情 + 同品牌自动区分，支持自定义名与位置锁定 |
 | **Win10 / 11 双主题与任务栏原生切换**<br>浅色 / 深色 / 跟随系统自适应，Win11 原生 DWM 圆角 + Win10 兼容外轮廓圆角，支持任务栏点击切换与轻量平滑动效 | **一键在线更新与自动重启**<br>后台默认国内多节点高速通道优先并静默回退 GitHub，软件内展示简明更新摘要、SHA-256 校验、同盘安全回滚与自动重启升级 |
 
 ---
 
 ## 界面截图
 
-> 以下为 **BattDock** 实际运行截取画面（主视觉截取自 `v2.4.0`；`v2.5.0–v2.7.5` 在保持相同设计语言的前提下持续优化了设备管理拖拽排序、紧凑独立置顶提醒弹窗、游戏防抢焦点、关于页精简与原生托盘稳定性）。主窗口深色模式为展示统一设备图标、多设备卡片与分体耳塞独立电量的**演示界面**，不代表对应全部外设均已完成实体硬件测试（真实硬件验证状态见下方表格与 [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md)）。
+> 以下为 **BattDock** 实际运行截取画面（主视觉截取自 `v2.4.0`；`v2.5.0–v2.7.6` 在保持相同设计语言的前提下持续优化了极简动态托盘图标、托盘悬停紧凑电量浮层、设备管理拖拽排序、紧凑独立置顶提醒弹窗、游戏防抢焦点、关于页精简与原生托盘稳定性）。主窗口深色模式为展示统一设备图标、多设备卡片与分体耳塞独立电量的**演示界面**，不代表对应全部外设均已完成实体硬件测试（真实硬件验证状态见下方表格与 [`SUPPORTED_DEVICES.md`](./SUPPORTED_DEVICES.md)）。
 
 <table>
   <tr>
@@ -118,13 +118,13 @@
 ### 发布产物说明
 前往 [GitHub Releases（最新版本）](https://github.com/edwin99701/BattDock/releases/latest) 下载（国内用户可直接点击下方国内加速直链）：
 
-- **`BattDock-v2.7.5-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内免 UAC 一键自动更新。
-  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/BattDock/releases/download/v2.7.5/BattDock-v2.7.5-Setup.exe) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/BattDock/releases/download/v2.7.5/BattDock-v2.7.5-Setup.exe)
-- **`BattDock-v2.7.5-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
-  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/BattDock/releases/download/v2.7.5/BattDock-v2.7.5-Windows-x64-Portable.zip) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/BattDock/releases/download/v2.7.5/BattDock-v2.7.5-Windows-x64-Portable.zip)
+- **`BattDock-v2.7.6-Setup.exe`**（**推荐，Windows 标准安装程序**）：双击下一步即可安装（支持任意盘符与自定义路径），自动配置目录读写权限、创建桌面与开始菜单快捷方式，支持 Windows「应用与功能」一键标准卸载及后续软件内免 UAC 一键自动更新。
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/BattDock/releases/download/v2.7.6/BattDock-v2.7.6-Setup.exe) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/BattDock/releases/download/v2.7.6/BattDock-v2.7.6-Setup.exe)
+- **`BattDock-v2.7.6-Windows-x64-Portable.zip`**（**绿色便携版**）：免安装，解压至任意本地目录后双击 `BattDock.exe` 即可运行。
+  - 国内高速下载：[国内加速节点 1](https://gh-proxy.org/https://github.com/edwin99701/BattDock/releases/download/v2.7.6/BattDock-v2.7.6-Windows-x64-Portable.zip) ｜ [国内加速节点 2](https://ghfast.top/https://github.com/edwin99701/BattDock/releases/download/v2.7.6/BattDock-v2.7.6-Windows-x64-Portable.zip)
 - **`SHA256SUMS.txt`**：所有发布文件的 SHA-256 校验值清单，用于核对文件完整性。
 - **`update-summary.json`**：供软件内部直接读取的简明中文更新摘要。
-- **`VGNMouseBattery-v2.7.5-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
+- **`VGNMouseBattery-v2.7.6-win64-UpgradeBridge.zip`**：仅供早期 `v2.2.0` 旧版平滑升级迁移使用，新用户无需手动下载。
 
 ### 首次启动与在线更新
 1. **开机静默自启**：在安装向导或「设置 → 常规设置」中开启开机自启，默认以 `--background` 静默驻留系统托盘，不弹出窗口。
@@ -146,7 +146,7 @@
 # 1. 安装依赖（Python 3.12+）
 pip install -r requirements.txt
 
-# 2. 运行全部自动化单元测试（57 项）
+# 2. 运行全部自动化单元测试（63 项）
 python -m unittest discover -s tests -v
 
 # 3. 源码启动 BattDock

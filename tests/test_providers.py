@@ -2573,5 +2573,332 @@ class TestV275BatteryAccuracyChargingAndFonts(unittest.TestCase):
         self.assertTrue(len(resolve_winforms_font_family(numeric=True)) > 0)
 
 
+class TestV276TrayIconAndHoverPopup(unittest.TestCase):
+    """v2.7.6 系统托盘极简动态图标、悬停紧凑电量浮层、定位兼容与防干扰回归门禁。"""
+
+    def test_minimal_tray_battery_icon_sizes_states_and_taskbar_themes(self):
+        from floating_widget import draw_battery_icon
+        from tray_icon import destroy_hicon_safe, pil_image_to_hicon
+
+        sizes = (16, 20, 24, 32, 64)
+        states = [
+            (85, False, True, False),   # 正常绿色
+            (25, False, True, False),   # 一级黄
+            (15, False, True, False),   # 二级橙
+            (8, False, True, False),    # 三级红
+            (65, True, True, False),    # 充电中（带闪电）
+            (100, True, True, True),    # 已充满（真实 full 状态）
+            (None, False, True, False), # 休眠/未知灰态
+            (None, False, False, False),# 离线灰态
+        ]
+        for sz in sizes:
+            for light_bg in (False, True):
+                for pct, chg, conn, full in states:
+                    img = draw_battery_icon(
+                        size=sz,
+                        percent=pct,
+                        charging=chg,
+                        connected=conn,
+                        light_bg=light_bg,
+                        full=full,
+                    )
+                    self.assertEqual(img.size, (sz, sz))
+                    self.assertEqual(img.mode, "RGBA")
+                    # 必须含透明背景（非实心不透明方块）且含可见前景像素
+                    alpha = img.getchannel("A")
+                    lo, hi = alpha.getextrema()
+                    self.assertEqual(lo, 0)
+                    self.assertGreater(hi, 180)
+                    if sys.platform == "win32" and sz in (16, 24, 32):
+                        hicon = pil_image_to_hicon(img)
+                        self.assertGreater(hicon, 0)
+                        destroy_hicon_safe(hicon)
+
+        # 浅色任务栏与深色任务栏外框颜色应存在明确区分
+        dark_img = draw_battery_icon(size=32, percent=80, charging=False, connected=True, light_bg=False)
+        light_img = draw_battery_icon(size=32, percent=80, charging=False, connected=True, light_bg=True)
+        self.assertNotEqual(dark_img.tobytes(), light_img.tobytes())
+
+        # 充电中与非充电同电量应存在闪电像素差异；已充满(full=True)不强行叠加充电闪电
+        chg_img = draw_battery_icon(size=32, percent=75, charging=True, connected=True, full=False)
+        norm_img = draw_battery_icon(size=32, percent=75, charging=False, connected=True, full=False)
+        self.assertNotEqual(chg_img.tobytes(), norm_img.tobytes())
+        full_chg = draw_battery_icon(size=32, percent=100, charging=True, connected=True, full=True)
+        full_only = draw_battery_icon(size=32, percent=100, charging=False, connected=True, full=True)
+        self.assertEqual(full_chg.tobytes(), full_only.tobytes())
+
+    def test_tray_hover_device_name_simplification_and_duplicate_disambiguation(self):
+        from providers.base import DeviceBattery, KIND_HEADSET, KIND_KEYBOARD, KIND_MOUSE
+        from providers.device_naming import resolve_tray_hover_device_names
+
+        devs = [
+            DeviceBattery(device_id="m1", name="VGN Dragonfly F2 Pro Max", brand="VGN", kind=KIND_MOUSE, percent=75, charging=True, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="h1", name="SteelSeries Arctis Nova 7", brand="SteelSeries", kind=KIND_HEADSET, percent=82, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="k1", name="ATK68", brand="ATK", kind=KIND_KEYBOARD, percent=20, connected=True, online=True, connection_mode="2.4GHz"),
+        ]
+        names = resolve_tray_hover_device_names(devs)
+        self.assertEqual(names, ["VGN F2 Pro Max", "Arctis Nova 7", "ATK68"])
+
+        # 自定义名称优先级最高
+        aliased = resolve_tray_hover_device_names(devs, aliases={"m1": "主力鼠标"})
+        self.assertEqual(aliased[0], "主力鼠标")
+
+        # 同品牌同型号不同连接方式自动区分
+        dup_conn = [
+            DeviceBattery(device_id="d1", name="VGN Dragonfly F2 Pro Max", brand="VGN", kind=KIND_MOUSE, percent=75, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="d2", name="VGN Dragonfly F2 Pro Max", brand="VGN", kind=KIND_MOUSE, percent=90, connected=True, online=True, connection_mode="Wired"),
+        ]
+        dup_names = resolve_tray_hover_device_names(dup_conn)
+        self.assertEqual(len(set(dup_names)), 2)
+        self.assertIn("2.4G", dup_names[0])
+        self.assertIn("有线", dup_names[1])
+
+        # 完全相同的双设备以序号 #1 / #2 稳定区分
+        dup_same = [
+            DeviceBattery(device_id="s1", name="VGN Dragonfly F2 Pro Max", brand="VGN", kind=KIND_MOUSE, percent=75, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="s2", name="VGN Dragonfly F2 Pro Max", brand="VGN", kind=KIND_MOUSE, percent=60, connected=True, online=True, connection_mode="2.4GHz"),
+        ]
+        same_names = resolve_tray_hover_device_names(dup_same)
+        self.assertEqual(len(set(same_names)), 2)
+        self.assertTrue(same_names[0].endswith("#1"))
+        self.assertTrue(same_names[1].endswith("#2"))
+
+    def test_tray_hover_rows_no_fake_cached_percent_and_size_bounds(self):
+        from providers.base import DeviceBattery, KIND_HEADSET, KIND_KEYBOARD, KIND_MOUSE
+        from tray_hover_popup import (
+            POPUP_MAX_VISIBLE_ROWS,
+            POPUP_MAX_WIDTH_DIP,
+            POPUP_MIN_WIDTH_DIP,
+            build_tray_hover_rows,
+            compute_popup_logical_size,
+            render_hover_popup_pil,
+        )
+
+        devs = [
+            DeviceBattery(device_id="d1", name="VGN Dragonfly F2 Pro Max", brand="VGN", kind=KIND_MOUSE, percent=75, charging=True, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="d2", name="SteelSeries Arctis Nova 7", brand="SteelSeries", kind=KIND_HEADSET, percent=82, connected=True, online=True, connection_mode="2.4GHz"),
+            DeviceBattery(device_id="d3", name="ATK68", brand="ATK", kind=KIND_KEYBOARD, percent=20, connected=True, online=True, connection_mode="2.4GHz"),
+            # 过期缓存数据不得伪装实时电量
+            DeviceBattery(device_id="d4", name="Logitech G Pro X Superlight 2", brand="Logitech", kind=KIND_MOUSE, percent=64, connected=True, online=False, stale=True, from_cache=True),
+            # 休眠状态显示灰态休眠
+            DeviceBattery(device_id="d5", name="Razer Viper V3 Pro", brand="Razer", kind=KIND_MOUSE, percent=None, connected=True, online=False, asleep=True),
+            # 隐藏设备不应展示
+            DeviceBattery(device_id="d_hid", name="Hidden Mouse", brand="VGN", kind=KIND_MOUSE, percent=50, connected=True, online=True),
+        ]
+        rows = build_tray_hover_rows(devs, hidden_ids={"d_hid"})
+        self.assertEqual(len(rows), 5)
+        self.assertEqual((rows[0].name, rows[0].value_text, rows[0].show_bolt, rows[0].alert_level), ("VGN F2 Pro Max", "75%", True, "charging"))
+        self.assertEqual((rows[1].name, rows[1].value_text, rows[1].show_bolt, rows[1].alert_level), ("Arctis Nova 7", "82%", False, "normal"))
+        self.assertEqual((rows[2].name, rows[2].value_text, rows[2].show_bolt, rows[2].alert_level), ("ATK68", "20%", False, "tier2"))
+        self.assertEqual((rows[3].value_text, rows[3].alert_level, rows[3].percent), ("—", "unknown", None))
+        self.assertEqual((rows[4].value_text, rows[4].alert_level, rows[4].percent), ("休眠", "sleep", None))
+
+        w_dip, h_dip, vis, scrollable = compute_popup_logical_size(rows)
+        self.assertGreaterEqual(w_dip, POPUP_MIN_WIDTH_DIP)
+        self.assertLessEqual(w_dip, POPUP_MAX_WIDTH_DIP)
+        self.assertEqual(vis, 5)
+        self.assertFalse(scrollable)
+
+        # 超多设备（8 台）自动限高并启用滚动
+        many = [
+            DeviceBattery(device_id=f"x{i}", name=f"Device {i}", brand="VGN", kind=KIND_MOUSE, percent=90 - i * 8, connected=True, online=True)
+            for i in range(8)
+        ]
+        many_rows = build_tray_hover_rows(many)
+        mw, mh, mvis, mscroll = compute_popup_logical_size(many_rows)
+        self.assertEqual(mvis, POPUP_MAX_VISIBLE_ROWS)
+        self.assertTrue(mscroll)
+        self.assertGreaterEqual(mw, POPUP_MIN_WIDTH_DIP)
+        self.assertLessEqual(mw, POPUP_MAX_WIDTH_DIP)
+
+        # 多 DPI 离屏渲染验证无报错且比例准确
+        for sc in (1.0, 1.25, 1.5, 1.75, 2.0):
+            im = render_hover_popup_pil(rows[:3], is_dark=(sc > 1.3), scale=sc)
+            self.assertGreater(im.width, 200)
+            self.assertGreater(im.height, 80)
+
+    def test_tray_hover_state_machine_delays_and_no_flicker_on_passover(self):
+        from tray_hover_popup import TrayHoverStateMachine
+
+        sm = TrayHoverStateMachine(show_delay_sec=0.30, hide_delay_sec=0.20)
+        icon = (1700, 1044, 1724, 1076)
+        popup = (1600, 920, 1840, 1036)
+
+        # 1. 快速划过托盘图标（< 300ms 移开）不得闪烁弹出
+        sm.on_tray_move(10.00, (1712, 1060), icon)
+        self.assertEqual(sm.state, "pending_show")
+        self.assertIsNone(sm.tick(10.12, (1500, 900)))
+        self.assertEqual(sm.state, "idle")
+
+        # 2. 持续悬停 >= 300ms 后弹出
+        sm.on_tray_move(20.00, (1712, 1060), icon)
+        self.assertIsNone(sm.tick(20.20, (1712, 1060)))
+        self.assertEqual(sm.state, "pending_show")
+        self.assertEqual(sm.tick(20.32, (1712, 1060)), "show")
+        self.assertEqual(sm.state, "visible")
+
+        # 3. 移动到浮层本体上保持可见
+        self.assertIsNone(sm.tick(20.60, (1712, 980), popup_rect=popup))
+        self.assertEqual(sm.state, "visible")
+
+        # 4. 离开后 120ms 内返回取消隐藏
+        self.assertIsNone(sm.tick(21.00, (1200, 500), popup_rect=popup))
+        self.assertEqual(sm.state, "pending_hide")
+        self.assertIsNone(sm.tick(21.12, (1712, 980), popup_rect=popup))
+        self.assertEqual(sm.state, "visible")
+
+        # 5. 离开 >= 200ms 自动收起
+        self.assertIsNone(sm.tick(22.00, (1200, 500), popup_rect=popup))
+        self.assertEqual(sm.state, "pending_hide")
+        self.assertIsNone(sm.tick(22.15, (1200, 500), popup_rect=popup))
+        self.assertEqual(sm.tick(22.22, (1200, 500), popup_rect=popup), "hide")
+        self.assertEqual(sm.state, "idle")
+
+        # 6. force_hide 立即终止显示
+        sm.on_tray_move(30.00, (1712, 1060), icon)
+        sm.tick(30.35, (1712, 1060))
+        self.assertTrue(sm.force_hide())
+        self.assertEqual(sm.state, "idle")
+
+    def test_tray_hover_positioning_win10_four_edges_autohide_overflow_multimonitor_dpi(self):
+        from tray_hover_popup import compute_hover_popup_rect
+
+        pw, ph = 260, 120
+
+        # 1. 底部任务栏（Win10/11 标准）
+        x, y = compute_hover_popup_rect(
+            icon_rect=(1780, 1044, 1804, 1076),
+            cursor_pos=(1792, 1060),
+            popup_size=(pw, ph),
+            monitor_rect=(0, 0, 1920, 1080),
+            work_area=(0, 0, 1920, 1040),
+            scale=1.0,
+        )
+        self.assertGreaterEqual(x, 8)
+        self.assertLessEqual(x + pw, 1920 - 8)
+        self.assertLessEqual(y + ph, 1040)
+
+        # 2. Win10 顶部任务栏
+        x, y = compute_hover_popup_rect(
+            icon_rect=(1780, 4, 1804, 36),
+            cursor_pos=(1792, 20),
+            popup_size=(pw, ph),
+            monitor_rect=(0, 0, 1920, 1080),
+            work_area=(0, 40, 1920, 1080),
+            scale=1.0,
+        )
+        self.assertGreaterEqual(y, 40)
+        self.assertLessEqual(x + pw, 1920 - 8)
+
+        # 3. Win10 左侧任务栏
+        x, y = compute_hover_popup_rect(
+            icon_rect=(16, 960, 48, 984),
+            cursor_pos=(30, 972),
+            popup_size=(pw, ph),
+            monitor_rect=(0, 0, 1920, 1080),
+            work_area=(62, 0, 1920, 1080),
+            scale=1.0,
+        )
+        self.assertGreaterEqual(x, 62)
+        self.assertLessEqual(y + ph, 1080 - 8)
+
+        # 4. Win10 右侧任务栏
+        x, y = compute_hover_popup_rect(
+            icon_rect=(1872, 960, 1904, 984),
+            cursor_pos=(1888, 972),
+            popup_size=(pw, ph),
+            monitor_rect=(0, 0, 1920, 1080),
+            work_area=(0, 0, 1858, 1080),
+            scale=1.0,
+        )
+        self.assertLessEqual(x + pw, 1858)
+        self.assertLessEqual(y + ph, 1080 - 8)
+
+        # 5. 任务栏自动隐藏（work_area == monitor_rect）
+        x, y = compute_hover_popup_rect(
+            icon_rect=(1780, 1048, 1804, 1078),
+            cursor_pos=(1792, 1060),
+            popup_size=(pw, ph),
+            monitor_rect=(0, 0, 1920, 1080),
+            work_area=(0, 0, 1920, 1080),
+            scale=1.25,
+        )
+        self.assertLess(y + ph, 1048)
+        self.assertLessEqual(x + pw, 1920 - 8)
+
+        # 6. 托盘折叠区（overflow_rect）+ 负坐标副屏 + 150% DPI
+        ox, oy = compute_hover_popup_rect(
+            icon_rect=None,  # 模拟折叠区 Shell_NotifyIconGetRect 不可用，走光标安全回退
+            cursor_pos=(-220, 920),
+            popup_size=(360, 160),
+            monitor_rect=(-1920, 0, 0, 1080),
+            work_area=(-1920, 0, 0, 1040),
+            scale=1.5,
+            overflow_rect=(-280, 860, -140, 1000),
+        )
+        self.assertGreaterEqual(ox, -1920 + 10)
+        self.assertLessEqual(ox + 360, -280)
+        self.assertGreaterEqual(oy, 10)
+        self.assertLessEqual(oy + 160, 1040 - 10)
+
+    def test_tray_hover_toggle_tooltip_suppression_and_no_extra_polling(self):
+        from unittest.mock import MagicMock, patch
+        import mouse_battery_app as mba
+        from mouse_battery_app import MouseBatteryApp
+        from providers.base import DeviceBattery, KIND_MOUSE
+
+        app = MouseBatteryApp(start_hidden=False)
+        self.assertTrue(app.cfg.tray_hover_popup_enabled)
+
+        fake_tray = MagicMock()
+        fake_tray.set_icon.return_value = True
+        fake_tray.set_title.return_value = True
+        fake_tray.ensure_visible.return_value = True
+        fake_tray.is_menu_open.return_value = False
+        app._tray = fake_tray
+        app._push_state_to_ui = MagicMock()
+        app._sync_floating_widget = MagicMock()
+        app.devices = [
+            DeviceBattery(
+                device_id="vgn:1",
+                name="VGN Dragonfly F2 Pro Max",
+                brand="VGN",
+                kind=KIND_MOUSE,
+                percent=75,
+                charging=True,
+                connected=True,
+                online=True,
+                connection_mode="2.4GHz",
+            )
+        ]
+
+        # 开启悬停浮层时，原生 szTip 置空防重复弹窗
+        app._update_tray_visual()
+        fake_tray.set_title.assert_called_with("")
+
+        # 关闭「悬停显示设备电量」后，立即隐藏浮层并恢复普通系统托盘提示文本
+        app.tray_hover_popup.hide = MagicMock()
+        with patch.object(mba, "save_config"):
+            app.update_settings({"tray_hover_popup_enabled": False})
+        self.assertFalse(app.cfg.tray_hover_popup_enabled)
+        app.tray_hover_popup.hide.assert_called()
+        restored_title = fake_tray.set_title.call_args[0][0]
+        self.assertIn("VGN Dragonfly F2 Pro Max", restored_title)
+        self.assertIn("75%", restored_title)
+
+        # 悬停浮层构建行仅复用已有 self.devices，不触发 manager.poll()
+        app.manager.poll = MagicMock()
+        rows = app._build_tray_hover_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].name, "VGN F2 Pro Max")
+        app.manager.poll.assert_not_called()
+
+        # 设置页外观设置含「悬停显示设备电量」开关及规范说明文字
+        settings_html = (Path(__file__).resolve().parent.parent / "ui" / "settings.html").read_text(encoding="utf-8")
+        self.assertIn("悬停显示设备电量", settings_html)
+        self.assertIn("鼠标停留在系统托盘图标上时，快速查看已连接设备的电量。", settings_html)
+        self.assertIn("tray_hover_popup_enabled", settings_html)
+
+
 if __name__ == "__main__":
     unittest.main()

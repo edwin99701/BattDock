@@ -619,3 +619,112 @@ def format_alert_device_name(
             trimmed = candidate
 
     return trimmed, full_name
+
+
+_TRAY_HOVER_PREFIX_SIMPLIFY: tuple[tuple[re.Pattern[str], str], ...] = (
+    # 如 VGN Dragonfly F2 Pro Max -> VGN F2 Pro Max
+    (re.compile(r"^(VGN)\s+Dragonfly\s+([A-Z]\d+\b.*)$", re.IGNORECASE), r"\1 \2"),
+    # 如 SteelSeries Arctis Nova 7 -> Arctis Nova 7
+    (re.compile(r"^SteelSeries\s+(Arctis\b.*)$", re.IGNORECASE), r"\1"),
+)
+
+
+def _short_conn_tag(connection_mode: str) -> str:
+    m = (connection_mode or "").strip().lower()
+    if m in ("wired", "usb", "usb wired", "usb-wired", "cable"):
+        return "有线"
+    if m in ("bluetooth", "bt", "ble"):
+        return "蓝牙"
+    if m in ("2.4g", "2.4ghz", "2.4g无线", "dongle", "lightspeed", "hyperspeed", "slipstream", "omni", "speednova", "unifying", "bolt"):
+        return "2.4G"
+    return ""
+
+
+def simplify_tray_hover_device_name(device, alias: str = "") -> str:
+    """生成托盘悬停浮层使用的简洁准确设备名称（自定义别名优先，保留核心型号）。"""
+    custom = re.sub(r"\s+", " ", (alias or "").strip())
+    if custom:
+        return custom
+    if device is None:
+        return "未知设备"
+
+    raw_name = (getattr(device, "name", "") or "").strip()
+    vid = getattr(device, "vid", None)
+    pid = getattr(device, "pid", None)
+    brand = (getattr(device, "brand", "") or "").strip()
+    full_name = normalize_device_display_name(raw_name, vid=vid, pid=pid, brand=brand)
+
+    simplified = full_name
+    for pat, repl in _TRAY_HOVER_PREFIX_SIMPLIFY:
+        m = pat.match(simplified)
+        if m:
+            simplified = pat.sub(repl, simplified).strip()
+            break
+
+    # 去除尾部冗余营销词（保持至少核心型号不退化为纯品牌名）
+    brand_only = canonical_brand_name(brand, full_name).lower()
+    for pat in _ALERT_TRAILING_FLUFF_PATTERNS:
+        candidate = pat.sub("", simplified).strip(" -/·")
+        if candidate and candidate.lower() != brand_only:
+            simplified = candidate
+
+    return simplified or full_name
+
+
+def resolve_tray_hover_device_names(
+    devices: list,
+    aliases: Optional[dict[str, str]] = None,
+) -> list[str]:
+    """批量生成托盘悬停浮层设备简名，并确保同品牌同型号多设备可清晰区分。"""
+    alias_map = aliases or {}
+    base_names: list[str] = []
+    full_names: list[str] = []
+    for dev in devices or []:
+        did = str(getattr(dev, "device_id", "") or "")
+        al = (alias_map.get(did) or "").strip()
+        base = simplify_tray_hover_device_name(dev, alias=al)
+        full = al or normalize_device_display_name(
+            (getattr(dev, "name", "") or "").strip(),
+            vid=getattr(dev, "vid", None),
+            pid=getattr(dev, "pid", None),
+            brand=(getattr(dev, "brand", "") or "").strip(),
+        )
+        base_names.append(base)
+        full_names.append(full)
+
+    # 1. 仅当同组设备完整标准名确有差异时，才回退完整标准名以区分（避免两台完全同型号设备白白变长）
+    base_groups: dict[str, list[int]] = {}
+    for idx, nm in enumerate(base_names):
+        base_groups.setdefault(nm.lower(), []).append(idx)
+
+    resolved = list(base_names)
+    for idxs in base_groups.values():
+        if len(idxs) >= 2:
+            distinct_full = {full_names[i].lower() for i in idxs if full_names[i]}
+            if len(distinct_full) > 1:
+                for i in idxs:
+                    if full_names[i]:
+                        resolved[i] = full_names[i]
+
+    # 2. 若仍存在完全同型号重名，优先附加简洁连接方式标签（2.4G / 蓝牙 / 有线）
+    counts2: dict[str, int] = {}
+    for nm in resolved:
+        k = nm.lower()
+        counts2[k] = counts2.get(k, 0) + 1
+
+    dup_groups: dict[str, list[int]] = {}
+    for idx, nm in enumerate(resolved):
+        k = nm.lower()
+        if counts2.get(k, 0) >= 2:
+            dup_groups.setdefault(k, []).append(idx)
+
+    for idxs in dup_groups.values():
+        tags = [_short_conn_tag(getattr(devices[i], "connection_mode", "")) for i in idxs]
+        if all(tags) and len(set(tags)) == len(tags):
+            for i, tag in zip(idxs, tags):
+                resolved[i] = f"{resolved[i]} ({tag})"
+        else:
+            for seq, i in enumerate(idxs, start=1):
+                resolved[i] = f"{resolved[i]} #{seq}"
+
+    return resolved

@@ -19,7 +19,8 @@ from typing import Any, Optional
 
 import webview
 
-from tray_icon import TrayIconController, TrayMenuEntry
+from tray_icon import TrayIconController, TrayMenuEntry, get_tray_icon_pixel_size
+from tray_hover_popup import TrayHoverPopup, TrayHoverRow, build_tray_hover_rows
 
 from app_config import (
     APP_AUTHOR,
@@ -30,6 +31,7 @@ from app_config import (
     RESOURCE_DIR,
     AppConfig,
     FloatingWidgetConfig,
+    detect_windows_light_taskbar,
     get_device_pref,
     get_device_tiers,
     get_floating_config,
@@ -1019,7 +1021,7 @@ class MouseBatteryApp:
         self._update_cancel = threading.Event()
         self._last_update_check_mono: float = 0.0
         self._last_tray_icon_key: Optional[tuple[Any, ...]] = None
-        self._last_tray_title: str = ""
+        self._last_tray_title: Optional[str] = None
         self._update_state: dict[str, Any] = {
             "status": "idle",  # idle | checking | up_to_date | available | downloading | verifying | preparing | restarting | error
             "current_version": APP_VERSION,
@@ -1052,6 +1054,16 @@ class MouseBatteryApp:
             get_dpi_scale=lambda: _get_dpi_scale(self.hwnd) if self.hwnd else 1.0,
             on_position_saved=self._on_floating_position_saved,
             on_double_click=self.show_main_window,
+        )
+
+        # 系统托盘悬停紧凑电量浮层（独立非激活工具窗，复用当前设备快照，零新增轮询）
+        self.tray_hover_popup = TrayHoverPopup(
+            get_native_host=self._get_alive_native_host,
+            get_rows_snapshot=self._build_tray_hover_rows,
+            get_theme=self._effective_theme,
+            get_animations_enabled=self._effective_animations,
+            is_enabled=lambda: bool(self.cfg.tray_hover_popup_enabled),
+            is_menu_open=self._is_tray_menu_open,
         )
 
     def _get_alive_native_host(self):
@@ -1597,6 +1609,7 @@ class MouseBatteryApp:
         """从系统托盘、悬浮窗双击或重复运行 EXE 唤出主窗口：检测实例有效性、自动恢复/重建并清除残留状态。"""
         if self._quitting:
             return
+        self._hide_tray_hover_popup(instant=True)
 
         if not _is_window_alive(self.window, self.hwnd):
             self._recreate_main_window()
@@ -1651,6 +1664,7 @@ class MouseBatteryApp:
         """打开或前置独立设置窗口：默认进入“常规设置”，以主窗口为基准居中显示且零闪烁。"""
         if self._quitting:
             return
+        self._hide_tray_hover_popup(instant=True)
         target_sec = section or "general"
         px, py, pw, ph, scale = self._compute_settings_target_phys_rect()
 
@@ -1843,6 +1857,7 @@ class MouseBatteryApp:
             "show_progress_bar",
             "show_device_icon",
             "animations_enabled",
+            "tray_hover_popup_enabled",
             "topmost",
         )
         for key in simple_bools:
@@ -1915,6 +1930,8 @@ class MouseBatteryApp:
         if self.settings_hwnd:
             _apply_window_chrome(self.settings_hwnd, is_dark)
 
+        if not self.cfg.tray_hover_popup_enabled:
+            self._hide_tray_hover_popup(instant=True)
         self._push_state_to_ui()
         self._update_tray_visual()
         self._refresh_tray_menu()
@@ -2682,6 +2699,7 @@ class MouseBatteryApp:
                     pass
 
         self._close_alert_window(instant=True)
+        self.tray_hover_popup.close()
         self.floating_widget.close()
         self.manager.stop()
         with self._tray_lock:
@@ -3071,37 +3089,82 @@ class MouseBatteryApp:
             full_device_name=full_name,
         )
 
+    def _is_tray_menu_open(self) -> bool:
+        tray = self._tray
+        return bool(tray is not None and tray.is_menu_open())
+
+    def _hide_tray_hover_popup(self, instant: bool = True) -> None:
+        popup = getattr(self, "tray_hover_popup", None)
+        if popup is not None:
+            try:
+                popup.hide(instant=instant)
+            except Exception:
+                pass
+
+    def _build_tray_hover_rows(self) -> list[TrayHoverRow]:
+        """直接复用统一设备管理层最新快照生成悬停浮层紧凑行（零新增轮询与 HID 通信）。"""
+        ordered_pairs = sorted(
+            enumerate(self.devices),
+            key=lambda pair: (get_device_pref(self.cfg, pair[1].device_id).order, pair[0], pair[1].device_id),
+        )
+        ordered_devs = [d for _, d in ordered_pairs]
+        aliases: dict[str, str] = {}
+        hidden_ids: set[str] = set()
+        for d in ordered_devs:
+            pref = get_device_pref(self.cfg, d.device_id)
+            if pref.alias:
+                aliases[d.device_id] = pref.alias
+            if pref.hidden:
+                hidden_ids.add(d.device_id)
+        return build_tray_hover_rows(
+            ordered_devs,
+            aliases=aliases,
+            tier_lookup=self._get_active_tier_thresholds,
+            hidden_ids=hidden_ids,
+        )
+
+    def _on_tray_environment_change(self) -> None:
+        """响应 Windows 任务栏主题切换或 DPI/显示器变更，自动刷新托盘图标与浮层样式。"""
+        if self._quitting:
+            return
+        self._update_tray_visual()
+        if self.cfg.theme == "system":
+            self._push_state_to_ui()
+            self._sync_floating_widget()
+
     def _update_tray_visual(self) -> None:
-        """托盘栏始终使用动态矢量电池图标，串行更新、失败保留重试状态并在需要时自愈补注册。"""
+        """托盘栏始终使用极简动态矢量电池图标，串行更新、失败保留重试状态并在需要时自愈补注册。"""
         with self._tray_lock:
             tray = self._tray
             if tray is None or self._quitting:
                 return
             try:
                 td, _name = self._pick_floating_device()
-                rules = self.cfg.tier_rules if isinstance(self.cfg.tier_rules, list) else []
-                t1 = int(rules[0]["threshold"]) if len(rules) > 0 else 30
-                t2 = int(rules[1]["threshold"]) if len(rules) > 1 else 20
-                t3 = int(rules[2]["threshold"]) if len(rules) > 2 else 10
+                t1, t2, t3 = self._get_active_tier_thresholds(td.device_id if td is not None else None)
+                light_taskbar = detect_windows_light_taskbar()
+                icon_px = get_tray_icon_pixel_size()
                 if td is not None:
                     td_stale = bool(getattr(td, "stale", False) or not td.online)
                     live_pct = None if td_stale else td.percent
                     live_chg = False if td_stale else bool(td.charging)
+                    live_full = False if td_stale else bool(td.full)
                     live_conn = bool(td.connected) and not td_stale
-                    icon_key = (live_pct, live_chg, live_conn, t1, t2, t3)
+                    icon_key = (live_pct, live_chg, live_conn, live_full, t1, t2, t3, light_taskbar, icon_px)
                 else:
                     td_stale = False
-                    icon_key = (None, False, False, t1, t2, t3)
+                    icon_key = (None, False, False, False, t1, t2, t3, light_taskbar, icon_px)
 
                 if icon_key != self._last_tray_icon_key:
                     img = draw_battery_icon(
-                        size=64,
+                        size=icon_px,
                         percent=icon_key[0],
                         charging=icon_key[1],
                         connected=icon_key[2],
                         low_t1=t1,
                         low_t2=t2,
                         low_t3=t3,
+                        light_bg=light_taskbar,
+                        full=icon_key[3],
                     )
                     if tray.set_icon(img):
                         self._last_tray_icon_key = icon_key
@@ -3115,7 +3178,10 @@ class MouseBatteryApp:
                 else:
                     tray.ensure_visible()
 
-                if not self.devices:
+                if self.cfg.tray_hover_popup_enabled:
+                    # 开启自定义悬停浮层时清空原生 szTip，防止与 Windows 原生 Tooltip 重复弹出
+                    next_title = ""
+                elif not self.devices:
                     next_title = f"{APP_NAME}（未检测到外设）"
                 else:
                     lines = []
@@ -3146,6 +3212,11 @@ class MouseBatteryApp:
                 if next_title != self._last_tray_title:
                     if tray.set_title(next_title):
                         self._last_tray_title = next_title
+
+                # 若悬停浮层当前处于显示状态，实时同步最新电量与充电状态
+                popup = getattr(self, "tray_hover_popup", None)
+                if popup is not None:
+                    popup.sync_if_visible()
             except Exception:
                 pass
 
@@ -3177,10 +3248,19 @@ class MouseBatteryApp:
             ]
             tray = TrayIconController(
                 name=APP_TRAY_NAME,
-                initial_icon=draw_battery_icon(size=64, percent=None, charging=False, connected=False),
-                title=APP_NAME,
+                initial_icon=draw_battery_icon(
+                    size=get_tray_icon_pixel_size(),
+                    percent=None,
+                    charging=False,
+                    connected=False,
+                    light_bg=detect_windows_light_taskbar(),
+                ),
+                title="" if self.cfg.tray_hover_popup_enabled else APP_NAME,
                 menu_entries=entries,
                 on_left_click=self.show_main_window,
+                on_hover_move=self.tray_hover_popup.on_tray_hover_move,
+                on_interaction_start=lambda: self._hide_tray_hover_popup(instant=True),
+                on_environment_change=self._on_tray_environment_change,
             )
             self._tray = tray
         tray.start(wait_timeout=1.5)

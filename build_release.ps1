@@ -40,6 +40,7 @@ Write-Host "[2/6] 使用 PyInstaller 构建 BattDock.exe（含品牌图标与 Wi
     --hidden-import brand `
     --hidden-import device_icons `
     --hidden-import tray_icon `
+    --hidden-import tray_hover_popup `
     --hidden-import updater `
     --hidden-import floating_widget `
     --hidden-import providers `

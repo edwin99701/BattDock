@@ -131,6 +131,7 @@ class AppConfig:
     show_progress_bar: bool = True
     show_device_icon: bool = True
     animations_enabled: bool = True  # 界面动画开关（默认开启，并遵循系统动画偏好）
+    tray_hover_popup_enabled: bool = True  # 系统托盘悬停显示紧凑设备电量浮层（默认开启）
 
     # 桌面悬浮窗
     floating: dict[str, Any] = field(default_factory=lambda: asdict(FloatingWidgetConfig()))
@@ -232,6 +233,23 @@ def detect_windows_dark_mode() -> bool:
         ) as key:
             val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
             return int(val) == 0
+    except OSError:
+        return False
+
+
+def detect_windows_light_taskbar() -> bool:
+    """检测 Windows 10/11 系统任务栏是否为浅色模式（SystemUsesLightTheme == 1 为浅色，默认深色）。"""
+    if sys.platform != "win32":
+        return False
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            0,
+            winreg.KEY_READ,
+        ) as key:
+            val, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
+            return int(val) == 1
     except OSError:
         return False
 

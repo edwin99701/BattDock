@@ -1271,6 +1271,10 @@
               <div class="row-text"><span class="row-label">显示设备类型图标</span><span class="row-hint">在卡片左侧展示鼠标、耳机、耳塞图标</span></div>
               <button id="sw-showIcon" class="toggle" onclick="toggleBool('show_device_icon')"><span class="toggle-knob"></span></button>
             </div>
+            <div class="row">
+              <div class="row-text"><span class="row-label">悬停显示设备电量</span><span class="row-hint">鼠标停留在系统托盘图标上时，快速查看已连接设备的电量。</span></div>
+              <button id="sw-trayHover" class="toggle" onclick="toggleBool('tray_hover_popup_enabled')"><span class="toggle-knob"></span></button>
+            </div>
           </div>
         </section>
 
@@ -2260,6 +2264,7 @@
     setSeg("seg-density", cfg.list_density || "comfortable");
     setSw("sw-showBar", cfg.show_progress_bar !== false);
     setSw("sw-showIcon", cfg.show_device_icon !== false);
+    setSw("sw-trayHover", cfg.tray_hover_popup_enabled !== false);
 
     // 悬浮窗
     setSw("sw-fltEnable", flt.enabled);

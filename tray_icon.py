@@ -41,13 +41,20 @@ class TrayMenuEntry:
 # Win32 常量
 WM_DESTROY = 0x0002
 WM_CLOSE = 0x0010
+WM_SETTINGCHANGE = 0x001A
 WM_DISPLAYCHANGE = 0x007E
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
+WM_RBUTTONDOWN = 0x0204
 WM_RBUTTONUP = 0x0205
+WM_DPICHANGED = 0x02E0
 WM_USER = 0x0400
 WM_TRAY_CALLBACK = WM_USER + 11
 WM_TRAY_STOP = WM_USER + 12
+
+SM_CXSMICON = 49
 
 WS_POPUP = 0x80000000
 WS_EX_TOOLWINDOW = 0x00000080
@@ -127,6 +134,14 @@ if sys.platform == "win32":
             ("hBalloonIcon", wintypes.HICON),
         ]
         _anonymous_ = ("version_or_timeout",)
+
+    class _NOTIFYICONIDENTIFIER(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("hWnd", wintypes.HWND),
+            ("uID", wintypes.UINT),
+            ("guidItem", _GUID),
+        ]
 
     class _WNDCLASSEXW(ctypes.Structure):
         _fields_ = [
@@ -282,12 +297,58 @@ if sys.platform == "win32":
     _gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
     _gdi32.DeleteObject.restype = wintypes.BOOL
 
+    _user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    _user32.GetSystemMetrics.restype = ctypes.c_int
+    _user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    _user32.FindWindowW.restype = wintypes.HWND
+    try:
+        _user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+        _user32.GetDpiForWindow.restype = wintypes.UINT
+    except Exception:
+        pass
+    try:
+        _user32.GetSystemMetricsForDpi.argtypes = [ctypes.c_int, wintypes.UINT]
+        _user32.GetSystemMetricsForDpi.restype = ctypes.c_int
+    except Exception:
+        pass
+
     _shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
     _shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+    try:
+        _shell32.Shell_NotifyIconGetRect.argtypes = [
+            ctypes.POINTER(_NOTIFYICONIDENTIFIER),
+            ctypes.POINTER(wintypes.RECT),
+        ]
+        _shell32.Shell_NotifyIconGetRect.restype = ctypes.c_long
+    except Exception:
+        pass
 
     WM_TASKBARCREATED = int(_user32.RegisterWindowMessageW("TaskbarCreated") or 0)
 else:
     WM_TASKBARCREATED = 0
+
+
+def get_tray_icon_pixel_size() -> int:
+    """获取当前任务栏 DPI 下最清晰的系统托盘小图标像素尺寸（16/20/24/28/32 等）。"""
+    if sys.platform != "win32":
+        return 32
+    try:
+        dpi = 96
+        tray_hwnd = _user32.FindWindowW("Shell_TrayWnd", None)
+        if tray_hwnd and hasattr(_user32, "GetDpiForWindow"):
+            d = int(_user32.GetDpiForWindow(tray_hwnd) or 0)
+            if d >= 72:
+                dpi = d
+        if hasattr(_user32, "GetSystemMetricsForDpi"):
+            px = int(_user32.GetSystemMetricsForDpi(SM_CXSMICON, dpi) or 0)
+            if 16 <= px <= 64:
+                return px
+        px = int(_user32.GetSystemMetrics(SM_CXSMICON) or 0)
+        if 16 <= px <= 64:
+            return px
+    except Exception:
+        pass
+    return 32
 
 
 def pil_image_to_hicon(image: Image.Image) -> int:
@@ -374,20 +435,28 @@ class TrayIconController:
         menu_entries: list[TrayMenuEntry],
         on_left_click: Optional[Callable[[], Any]] = None,
         *,
+        on_hover_move: Optional[Callable[[tuple[int, int], Optional[tuple[int, int, int, int]]], Any]] = None,
+        on_interaction_start: Optional[Callable[[], Any]] = None,
+        on_environment_change: Optional[Callable[[], Any]] = None,
         _notify_api: Optional[Callable[[int, Any], bool]] = None,
         _icon_factory: Optional[Callable[[Image.Image], int]] = None,
         _icon_destroyer: Optional[Callable[[int], None]] = None,
+        _icon_rect_api: Optional[Callable[[int, int], Optional[tuple[int, int, int, int]]]] = None,
     ) -> None:
         self._name = str(name or "BattDock")
         self._image: Image.Image = initial_icon
-        self._title: str = str(title or self._name)[:127]
+        self._title: str = (self._name if title is None else str(title))[:127]
         self._menu_entries: list[TrayMenuEntry] = list(menu_entries or [])
         self._on_left_click = on_left_click
+        self._on_hover_move = on_hover_move
+        self._on_interaction_start = on_interaction_start
+        self._on_environment_change = on_environment_change
 
         # 可注入底层 Win32 API 钩子，便于全自动生命周期单元测试
         self._notify_api = _notify_api or self._win32_shell_notify
         self._icon_factory = _icon_factory or pil_image_to_hicon
         self._icon_destroyer = _icon_destroyer or destroy_hicon_safe
+        self._icon_rect_api = _icon_rect_api or self._win32_get_icon_rect
 
         self._lock = threading.RLock()
         self._ready_event = threading.Event()
@@ -398,6 +467,7 @@ class TrayIconController:
         self._running: bool = False
         self._registered: bool = False
         self._visible: bool = False
+        self._menu_open: bool = False
         self._thread: Optional[threading.Thread] = None
         self._retry_timer: Optional[threading.Timer] = None
         self._wndproc_ref: Any = None
@@ -409,6 +479,42 @@ class TrayIconController:
         self._modify_failures: int = 0
         self._reregister_count: int = 0
         self._last_error: str = ""
+
+    @staticmethod
+    def _win32_get_icon_rect(hwnd: int, uid: int) -> Optional[tuple[int, int, int, int]]:
+        """通过原生 Shell_NotifyIconGetRect 查询托盘图标屏幕物理坐标矩形（兼容 Win10/11 多屏与 DPI）。"""
+        if sys.platform != "win32" or not hwnd or not hasattr(_shell32, "Shell_NotifyIconGetRect"):
+            return None
+        try:
+            ident = _NOTIFYICONIDENTIFIER()
+            ident.cbSize = ctypes.sizeof(_NOTIFYICONIDENTIFIER)
+            ident.hWnd = wintypes.HWND(hwnd)
+            ident.uID = int(uid)
+            rect = wintypes.RECT()
+            hr = int(_shell32.Shell_NotifyIconGetRect(ctypes.byref(ident), ctypes.byref(rect)))
+            if hr == 0:
+                w = int(rect.right - rect.left)
+                h = int(rect.bottom - rect.top)
+                if 8 <= w <= 256 and 8 <= h <= 256:
+                    return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+        except Exception:
+            pass
+        return None
+
+    def get_icon_rect(self) -> Optional[tuple[int, int, int, int]]:
+        """返回当前托盘图标的屏幕矩形 (left, top, right, bottom)，不可用时返回 None。"""
+        with self._lock:
+            hwnd = self._hwnd
+            registered = self._registered
+        if not hwnd or not registered:
+            return None
+        try:
+            return self._icon_rect_api(hwnd, self.TRAY_UID)
+        except Exception:
+            return None
+
+    def is_menu_open(self) -> bool:
+        return bool(self._menu_open)
 
     @staticmethod
     def _win32_shell_notify(code: int, nid: Any) -> bool:
@@ -579,9 +685,9 @@ class TrayIconController:
                 self._schedule_retry_locked(1)
             return re_ok
 
-    def set_title(self, title: str) -> bool:
-        """线程安全地更新系统托盘悬停提示文本（支持最长 127 字符多设备摘要）。"""
-        clean = str(title or self._name)[:127]
+    def set_title(self, title: Optional[str]) -> bool:
+        """线程安全地更新系统托盘悬停提示文本（传空字符串 "" 可静默抑制系统原生 Tooltip）。"""
+        clean = (self._name if title is None else str(title))[:127]
         with self._lock:
             self._title = clean
             if self._stop_event.is_set() or not self._hwnd:
@@ -698,6 +804,12 @@ class TrayIconController:
         hmenu = _user32.CreatePopupMenu()
         if not hmenu:
             return
+        if self._on_interaction_start is not None:
+            try:
+                self._on_interaction_start()
+            except Exception:
+                pass
+        self._menu_open = True
         actions: dict[int, Callable[[], Any]] = {}
         try:
             cmd_id = 1
@@ -748,6 +860,7 @@ class TrayIconController:
             # 按微软文档建议在 TrackPopupMenuEx 后投递空消息确保菜单焦点彻底退出
             _user32.PostMessageW(wintypes.HWND(hwnd), 0, 0, 0)
         finally:
+            self._menu_open = False
             _user32.DestroyMenu(hmenu)
 
         fn = actions.get(selected)
@@ -789,7 +902,29 @@ class TrayIconController:
                     return 0
                 if msg == WM_TRAY_CALLBACK:
                     evt = int(lp) & 0xFFFF
+                    if evt == WM_MOUSEMOVE:
+                        if not self._menu_open and self._on_hover_move is not None:
+                            pt = wintypes.POINT()
+                            if _user32.GetCursorPos(ctypes.byref(pt)):
+                                icon_rect = self.get_icon_rect()
+                                try:
+                                    self._on_hover_move((int(pt.x), int(pt.y)), icon_rect)
+                                except Exception:
+                                    pass
+                        return 0
+                    if evt in (WM_LBUTTONDOWN, WM_RBUTTONDOWN):
+                        if self._on_interaction_start is not None:
+                            try:
+                                self._on_interaction_start()
+                            except Exception:
+                                pass
+                        return 0
                     if evt in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
+                        if self._on_interaction_start is not None:
+                            try:
+                                self._on_interaction_start()
+                            except Exception:
+                                pass
                         if self._on_left_click is not None:
                             threading.Thread(
                                 target=self._run_action_safe,
@@ -803,13 +938,34 @@ class TrayIconController:
                 elif WM_TASKBARCREATED and msg == WM_TASKBARCREATED:
                     self._handle_shell_recreate()
                     return 0
-                elif msg == WM_DISPLAYCHANGE:
+                elif msg == WM_SETTINGCHANGE:
+                    if self._on_environment_change is not None:
+                        param_txt = ""
+                        if lp:
+                            try:
+                                param_txt = ctypes.wstring_at(lp)
+                            except Exception:
+                                param_txt = ""
+                        if not param_txt or param_txt == "ImmersiveColorSet":
+                            threading.Thread(
+                                target=self._run_action_safe,
+                                args=(self._on_environment_change,),
+                                daemon=True,
+                            ).start()
+                    return 0
+                elif msg in (WM_DISPLAYCHANGE, WM_DPICHANGED):
                     # 显示分辨率或 DPI 缩放变化时仅确保图标在线，绝不先删除图标引发丢失风险
                     with self._lock:
                         if not self._stop_event.is_set() and self._hwnd and self._hicon:
                             nid = self._build_nid(NIF_ICON, hicon=self._hicon)
                             if not self._notify_api(NIM_MODIFY, nid):
                                 self._handle_shell_recreate()
+                    if self._on_environment_change is not None:
+                        threading.Thread(
+                            target=self._run_action_safe,
+                            args=(self._on_environment_change,),
+                            daemon=True,
+                        ).start()
                     return 0
                 elif msg == WM_DESTROY:
                     _user32.PostQuitMessage(0)

@@ -366,75 +366,138 @@ def draw_battery_icon(
     low_t2: int = 20,
     low_t3: int = 10,
     light_bg: bool = False,
+    full: bool = False,
 ) -> Image.Image:
-    """高对比度矢量电池图标（用于托盘、悬浮窗与低电量迷你弹窗，兼容深浅背景）。"""
-    scale = 4
+    """极简线条横向电池图标（透明底、自适应浅/深色任务栏、三级低电配色与高辨识充电闪电）。
+
+    支持 16×16、20×20、24×24、32×32、64×64 等全尺寸清晰渲染：
+    - 正常电量绿色，低电量与三级阈值统一（黄/橙/红），休眠/离线/未知/过期灰态空轮廓；
+    - 充电中（charging=True 且未 full）在中心叠加清晰闪电，并对填充条做轻量镂空避让，
+      确保任意电量与 16×16 小尺寸下均清晰可辨；
+    - 无百分比文字、无复杂渐变与阴影。
+    """
+    size = max(16, int(size or 64))
+    scale = 8 if size <= 32 else 4
     s = size * scale
+
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    if not connected or percent is None:
-        outline_col = (100, 116, 139, 235) if light_bg else (160, 170, 185, 230)
-        inner_bg = (226, 232, 240, 180) if light_bg else (15, 23, 42, 85)
-        fill_col = (148, 163, 184, 180)
+    is_offline = (not connected) or (percent is None)
+    if is_offline:
+        outline_col = (100, 116, 139, 232) if light_bg else (156, 163, 175, 228)
+        fill_col = (148, 163, 184, 0)
         pct = 0
+        show_bolt = False
     else:
-        outline_col = (51, 65, 85, 245) if light_bg else (248, 250, 252, 255)
-        inner_bg = (226, 232, 240, 200) if light_bg else (15, 23, 42, 130)
+        outline_col = (30, 41, 59, 245) if light_bg else (244, 247, 252, 250)
         pct = max(0, min(100, int(percent)))
-        if charging:
-            fill_col = (34, 197, 94, 255)
+        is_full_state = bool(full)
+        show_bolt = bool(charging) and (not is_full_state)
+        if charging or is_full_state:
+            fill_col = (22, 163, 74, 255) if light_bg else (34, 197, 94, 255)
         elif pct <= low_t3:
-            fill_col = (239, 68, 68, 255)
+            fill_col = (220, 38, 38, 255) if light_bg else (239, 68, 68, 255)
         elif pct <= low_t2:
-            fill_col = (245, 158, 11, 255)
+            fill_col = (234, 88, 12, 255) if light_bg else (245, 158, 11, 255)
         elif pct <= low_t1:
-            fill_col = (234, 179, 8, 255)
+            fill_col = (202, 138, 4, 255) if light_bg else (234, 179, 8, 255)
         else:
-            fill_col = (34, 197, 94, 255)
+            fill_col = (22, 163, 74, 255) if light_bg else (34, 197, 94, 255)
 
-    stroke = max(scale, int(round(s * 0.085)))
-    bx0 = int(round(s * 0.04))
-    by0 = int(round(s * 0.16))
-    bx1 = int(round(s * 0.84))
-    by1 = int(round(s * 0.84))
-    radius = max(2, int(round(s * 0.14)))
+    # 针对 16/20/24/32 小尺寸做像素网格对齐，消除边缘半像素发虚
+    def _snap(val_ratio: float) -> int:
+        if size <= 32:
+            return int(round(val_ratio * size)) * scale
+        return int(round(val_ratio * s))
 
-    draw.rounded_rectangle([bx0, by0, bx1, by1], radius=radius, fill=inner_bg, outline=outline_col, width=stroke)
+    stroke = max(scale, int(round(s * (0.088 if size <= 20 else 0.078))))
+    if size <= 20:
+        stroke = max(int(round(scale * 1.25)), min(stroke, int(round(scale * 1.6))))
+    bx0 = _snap(0.05)
+    bx1 = _snap(0.84)
+    by0 = _snap(0.20)
+    by1 = _snap(0.80)
+    if by1 - by0 < 6 * scale:
+        by0 = _snap(0.18)
+        by1 = _snap(0.82)
+    radius = max(scale, int(round(s * 0.135)))
 
-    cap_x0 = bx1 + max(1, int(round(s * 0.03)))
-    cap_x1 = int(round(s * 0.97))
-    cap_y0 = int(round(s * 0.33))
-    cap_y1 = int(round(s * 0.67))
-    draw.rounded_rectangle([cap_x0, cap_y0, cap_x1, cap_y1], radius=max(1, int(round(s * 0.05))), fill=outline_col)
+    # 1. 极简横向圆角电池外框（透明内部，完美贴合浅/深色任务栏）
+    draw.rounded_rectangle(
+        [bx0, by0, bx1, by1],
+        radius=radius,
+        fill=(0, 0, 0, 0),
+        outline=outline_col,
+        width=stroke,
+    )
 
-    inset = stroke + max(1, int(round(s * 0.035)))
+    # 2. 右侧圆角电极帽
+    cap_gap = max(int(round(scale * 0.55)), int(round(s * 0.032)))
+    cap_x0 = bx1 + cap_gap
+    cap_w = max(scale, int(round(s * 0.082)))
+    cap_x1 = min(s - max(1, scale // 4), cap_x0 + cap_w)
+    cap_y0 = int(round(s * 0.365))
+    cap_y1 = int(round(s * 0.635))
+    draw.rounded_rectangle(
+        [cap_x0, cap_y0, cap_x1, cap_y1],
+        radius=max(1, int(round((cap_x1 - cap_x0) * 0.48))),
+        fill=outline_col,
+    )
+
+    # 3. 内部电量比例填充层（与边框保持清晰呼吸间隙）
+    inner_gap = max(int(round(scale * 0.68)), int(round(s * 0.046)))
+    inset = stroke + inner_gap
     fx0 = bx0 + inset
     fy0 = by0 + inset
     fx1_max = bx1 - inset
     fy1 = by1 - inset
-    if pct > 0 and fx1_max > fx0:
-        min_w = max(2, int(round((fx1_max - fx0) * 0.09)))
+
+    fill_layer = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    fdraw = ImageDraw.Draw(fill_layer)
+    if pct > 0 and fx1_max > fx0 and fy1 > fy0:
+        min_w = max(scale, int(round((fx1_max - fx0) * 0.10)))
         fw = max(min_w, int(round((fx1_max - fx0) * (pct / 100.0))))
-        draw.rounded_rectangle(
+        fill_r = max(1, int(round(min(fw, fy1 - fy0) * 0.22)))
+        fdraw.rounded_rectangle(
             [fx0, fy0, min(fx1_max, fx0 + fw), fy1],
-            radius=max(1, int(round(s * 0.05))),
+            radius=fill_r,
             fill=fill_col,
         )
 
-    if connected and charging:
+    # 4. 充电小闪电：对填充层做紧凑镂空避让，再绘制高对比度极简实心闪电，确保 16px–64px 全尺寸清晰一致
+    if show_bolt:
         cx = (bx0 + bx1) / 2.0
         cy = (by0 + by1) / 2.0
-        u = s * 0.042
+        u = s * (0.056 if size <= 20 else 0.050)
         bolt = [
-            (cx + 1.2 * u, cy - 4.4 * u),
-            (cx - 2.6 * u, cy + 0.5 * u),
-            (cx - 0.1 * u, cy + 0.5 * u),
-            (cx - 1.2 * u, cy + 4.4 * u),
-            (cx + 2.6 * u, cy - 0.5 * u),
-            (cx + 0.1 * u, cy - 0.5 * u),
+            (cx + 1.25 * u, cy - 4.9 * u),
+            (cx - 2.85 * u, cy + 0.55 * u),
+            (cx - 0.15 * u, cy + 0.55 * u),
+            (cx - 1.25 * u, cy + 4.9 * u),
+            (cx + 2.85 * u, cy - 0.55 * u),
+            (cx + 0.15 * u, cy - 0.55 * u),
         ]
-        draw.polygon(bolt, fill=(255, 255, 255, 255))
+        # 仅在填充层做紧凑 0.75px 透明避让，既保持绿条与闪电分离，又避免 64px 出现粗黑圈
+        halo_px = max(int(round(scale * 0.75)), int(round(s * 0.026)))
+        cut_mask = Image.new("L", (s, s), 0)
+        cdraw = ImageDraw.Draw(cut_mask)
+        cdraw.polygon(bolt, fill=255)
+        for dx, dy in (
+            (-halo_px, 0), (halo_px, 0), (0, -halo_px), (0, halo_px),
+            (-halo_px, -halo_px), (halo_px, -halo_px), (-halo_px, halo_px), (halo_px, halo_px),
+        ):
+            shifted = [(px + dx, py + dy) for px, py in bolt]
+            cdraw.polygon(shifted, fill=255)
+        empty_rgba = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        fill_layer.paste(empty_rgba, (0, 0), cut_mask)
+
+        img = Image.alpha_composite(img, fill_layer)
+        bdraw = ImageDraw.Draw(img)
+        bolt_col = (15, 23, 42, 255) if light_bg else (255, 255, 255, 255)
+        bdraw.polygon(bolt, fill=bolt_col)
+    else:
+        img = Image.alpha_composite(img, fill_layer)
 
     return img.resize((size, size), Image.Resampling.LANCZOS)
 
