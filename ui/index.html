@@ -128,9 +128,16 @@
   .chg-inline {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
     color: var(--bat-charging);
     font-weight: 500;
+    line-height: 1.35;
+  }
+
+  .status-bolt {
+    display: block;
+    flex: none;
+    color: var(--bat-charging);
   }
 
   /* 电量进度条：350ms 宽度平滑过渡 + 200ms 状态色平滑过渡 */
@@ -256,6 +263,9 @@
   }
 
   .sub-pct {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     font-size: 14.5px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -345,6 +355,18 @@
 
   .status-dot.paused {
     background: #94A3B8;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    :root[data-anim="on"]:not([data-window-hidden]) .status-dot:not(.paused),
+    :root[data-anim="on"]:not([data-window-hidden]) .is-charging > .status-bolt {
+      animation: status-breathe 2.6s ease-in-out infinite;
+    }
+  }
+
+  @keyframes status-breathe {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.58; transform: scale(0.92); }
   }
 
   .refresh-btn.spinning svg {
@@ -467,7 +489,7 @@
     budLeft: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="8" r="3.5"/><path d="M12.5 11.2V19"/></svg>`,
     budRight: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="13" cy="8" r="3.5"/><path d="M11.5 11.2V19"/></svg>`,
     budCase: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="6" width="16" height="12" rx="4"/><line x1="4" y1="11" x2="20" y2="11"/></svg>`,
-    bolt: `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h7l-1 8 10-12h-7l0-8z"/></svg>`,
+    bolt: `<svg class="status-bolt" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-12h-7l0-8z"/></svg>`,
     lowBat: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="17" height="10" rx="2"/><line x1="22" y1="10" x2="22" y2="14"/><rect x="5" y="10" width="3.5" height="4" fill="currentColor" stroke="none"/></svg>`
   };
 
@@ -566,11 +588,14 @@
     const isStale = Boolean(dev.stale || !dev.online);
     const livePct = isStale ? null : (dev.live_percent !== undefined ? dev.live_percent : dev.percent);
     const hasPct = livePct !== null && livePct !== undefined;
+    const fullyCharged = dev.full || (dev.charging && hasPct && livePct >= 100);
+    const isCharging = dev.connected && !dev.asleep && !isStale && dev.charging && !fullyCharged;
+    const chargeStatus = `<span class="chg-inline${isCharging ? " is-charging" : ""}">${ICONS.bolt}<span>${fullyCharged ? "已充满" : "充电中"}</span></span>`;
 
     if (dev.sub_batteries) {
       let subHtml = "";
-      if (!isStale && dev.charging) {
-        subHtml = conn ? `<span>${conn}</span><span>·</span><span class="chg-inline">${ICONS.bolt}充电中</span>` : `<span class="chg-inline">${ICONS.bolt}充电中</span>`;
+      if (isCharging || (!isStale && dev.connected && !dev.asleep && fullyCharged)) {
+        subHtml = conn ? `<span>${conn}</span><span>·</span>${chargeStatus}` : chargeStatus;
       } else if (!dev.connected) {
         subHtml = conn ? `<span>${conn}</span><span>·</span><span>未连接</span>` : `<span>未连接</span>`;
       } else if (isStale) {
@@ -579,7 +604,11 @@
       } else if (conn) {
         subHtml = `<span>${conn}</span>`;
       }
-      el.querySelector(".dev-sub").innerHTML = subHtml;
+      const subEl = el.querySelector(".dev-sub");
+      if (subEl.dataset.sig !== subHtml) {
+        subEl.innerHTML = subHtml;
+        subEl.dataset.sig = subHtml;
+      }
       const sb = dev.sub_batteries;
       const parts = [
         ["left", isStale ? null : sb.left_percent, isStale ? false : sb.left_charging],
@@ -590,8 +619,13 @@
         const item = el.querySelector(`.sub-item[data-part="${key}"]`);
         const known = pct !== null && pct !== undefined;
         const pctEl = item.querySelector(".sub-pct");
-        pctEl.className = known ? "sub-pct" : "sub-pct unknown";
-        pctEl.textContent = known ? `${pct}%${chg ? " ⚡" : ""}` : "—";
+        const partCharging = known && chg && pct < 100;
+        pctEl.className = `sub-pct${known ? "" : " unknown"}${partCharging ? " is-charging" : ""}`;
+        const pctHtml = known ? `<span>${escHtml(pct)}%</span>${chg ? ICONS.bolt : ""}` : "—";
+        if (pctEl.dataset.sig !== pctHtml) {
+          pctEl.innerHTML = pctHtml;
+          pctEl.dataset.sig = pctHtml;
+        }
         const fill = item.querySelector(".progress-fill");
         fill.className = `progress-fill ${subBarClass(pct, chg)}`;
         const nextW = `${known ? Math.max(0, Math.min(100, pct)) : 0}%`;
@@ -612,8 +646,7 @@
     if (!dev.connected) statePart = `<span>未连接</span>`;
     else if (dev.asleep) statePart = `<span>休眠中</span>`;
     else if (isStale) statePart = `<span>${escHtml(dev.status_detail || "读取失败")}</span>`;
-    else if (dev.full || (dev.charging && hasPct && livePct >= 100)) statePart = `<span class="chg-inline">${ICONS.bolt}已充满</span>`;
-    else if (dev.charging) statePart = `<span class="chg-inline">${ICONS.bolt}充电中</span>`;
+    else if (fullyCharged || isCharging) statePart = chargeStatus;
     else if (!dev.online && !hasPct) statePart = `<span>未连接</span>`;
 
     if (isStale && dev.percent !== null && dev.percent !== undefined) {
@@ -645,8 +678,8 @@
       rightHtml = `<span style="color:var(--crit-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill crit">电量紧急</span><span class="dev-pct crit">${livePct}%</span>`;
     } else if (lvl === "tier2") {
       rightHtml = `<span style="color:var(--warn-pct-text);display:inline-flex">${ICONS.lowBat}</span><span class="status-pill warn">低电量</span><span class="dev-pct warn">${livePct}%</span>`;
-    } else if (dev.charging) {
-      rightHtml = `<span class="dev-pct"><span style="color:var(--bat-charging);display:inline-flex">${ICONS.bolt}</span>${livePct}%</span>`;
+    } else if (isCharging) {
+      rightHtml = `<span class="dev-pct is-charging">${ICONS.bolt}<span>${livePct}%</span></span>`;
     } else {
       rightHtml = `<span class="dev-pct">${livePct}%</span>`;
     }
@@ -825,8 +858,19 @@
 
   window.addEventListener("blur", () => resetInteractionState(false));
 
-  // 窗口最小化或隐藏至托盘后停止任何进行中的前端动画并清除残留选中/悬停状态
+  let nativeWindowHidden = false;
+  function syncStatusVisibility() {
+    document.documentElement.toggleAttribute("data-window-hidden", nativeWindowHidden || document.hidden);
+  }
+  window.setStatusWindowHidden = (hidden) => {
+    nativeWindowHidden = hidden;
+    syncStatusVisibility();
+  };
+  syncStatusVisibility();
+
+  // 清除隐藏或恢复后的残留选中和悬停状态。
   document.addEventListener("visibilitychange", () => {
+    syncStatusVisibility();
     if (document.hidden) {
       resetInteractionState(true);
     } else {

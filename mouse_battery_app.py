@@ -1511,13 +1511,19 @@ class MouseBatteryApp:
         else:
             self._reveal_main_if_needed()
 
-    def _reset_window_interaction_state(self, win: Optional[webview.Window], hiding: bool = False) -> None:
+    def _reset_window_interaction_state(
+        self, win: Optional[webview.Window], hiding: bool = False, *, minimized: bool = False
+    ) -> None:
         """清除窗口残留焦点、悬停、按下与文本选中状态，保持键盘导航与数据完整。"""
         if not _is_window_alive(win):
             return
         _clear_native_pointer_state(win)
         flag = "true" if hiding else "false"
-        _safe_eval_js(win, f"window.resetInteractionState && resetInteractionState({flag});")
+        script = f"window.resetInteractionState && resetInteractionState({flag});"
+        if win is self.window:
+            status_hidden = "true" if hiding or minimized else "false"
+            script += f"window.setStatusWindowHidden && setStatusWindowHidden({status_hidden});"
+        _safe_eval_js(win, script)
 
     def _hook_os_session_ending(self) -> None:
         if self._session_hooked or sys.platform != "win32":
@@ -1588,6 +1594,7 @@ class MouseBatteryApp:
             apply_window_rounded_corners(self.hwnd, radius_dip=10, scale=scale)
             _attach_rounded_resize_hook(win, radius_dip=10)
             if not self._allow_show:
+                self._reset_window_interaction_state(win, hiding=True)
                 _set_form_visibility(win, visible=False, opacity=0.0)
 
         self._push_state_to_ui(force=True)
@@ -1599,7 +1606,7 @@ class MouseBatteryApp:
         """响应任务栏点击最小化或标题栏最小化：清理拖拽与悬停残留，绝不中断后台监控。"""
         self._drag_state.pop("main", None)
         if _is_window_alive(self.window, self.hwnd):
-            self._reset_window_interaction_state(self.window, hiding=False)
+            self._reset_window_interaction_state(self.window, minimized=True)
 
     def _on_main_window_restored(self) -> None:
         """响应任务栏点击恢复或系统还原：同步圆角/最大化状态、清除残留高亮并刷新最新电量。"""

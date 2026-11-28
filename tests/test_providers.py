@@ -912,7 +912,7 @@ class TestV252StabilityAndLifecycle(unittest.TestCase):
             self.assertFalse(app._stop_event.is_set())
             app.quit_app.assert_not_called()
             app._recreate_main_window.assert_not_called()
-            app._reset_window_interaction_state.assert_called_once_with(app.window, hiding=False)
+            app._reset_window_interaction_state.assert_called_once_with(app.window, minimized=True)
 
             app._reset_window_interaction_state.reset_mock()
             with patch.object(mba, "_apply_window_chrome") as mock_chrome, \
